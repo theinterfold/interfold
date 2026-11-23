@@ -228,6 +228,24 @@ async fn synchronized_contribution_reopens_each_flushed_phase_and_rejects_resamp
         .await?
         .is_none());
     root.scope("share").remove_sync().await?;
+    let other = inputs(&setup)?;
+    let other_plan = other
+        .keys
+        .synchronized_decryption_definition(id, PROFILE, &other.ciphertext)?
+        .unwrap();
+    let other_store = ContributionStore::for_definition(
+        &data.repositories(),
+        other_plan,
+        &confirmed,
+        signer,
+        &setup.cipher,
+    )?;
+    assert!(live
+        .reserve_if_authorized(&other_store, &other.keys, false)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("different plan"));
     let replacement = crate::synchronized::LiveReservation::default();
     replacement
         .reserve_if_authorized(&open(&data)?, &keys, true)

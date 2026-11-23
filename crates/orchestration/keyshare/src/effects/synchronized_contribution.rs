@@ -10,7 +10,10 @@ impl ThresholdKeyshare {
         id: &E3id,
         ec: &EventContext<Sequenced>,
     ) {
-        if self.effects_enabled && self.canonical_keys.first_live_opening(id).as_ref() == Some(ec) {
+        if self.effects_enabled
+            && self.state.get().is_some_and(|state| state.e3_id == *id)
+            && self.canonical_keys.first_live_opening(id).as_ref() == Some(ec)
+        {
             self.live_opening = true;
         }
     }

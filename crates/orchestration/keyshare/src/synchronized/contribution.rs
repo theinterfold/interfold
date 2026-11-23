@@ -29,8 +29,13 @@ fn new_seed() -> Zeroizing<[u8; 32]> {
 }
 
 /// Owned by the live keyshare actor, never serialized. Ambiguous writes retry the same seed.
+struct PendingSeed {
+    binding: B256,
+    seed: Zeroizing<[u8; 32]>,
+}
+
 #[derive(Clone, Default)]
-pub(crate) struct LiveReservation(Arc<Mutex<Option<Zeroizing<[u8; 32]>>>>);
+pub(crate) struct LiveReservation(Arc<Mutex<Option<PendingSeed>>>);
 
 impl LiveReservation {
     pub(crate) async fn reserve_if_authorized(
@@ -45,9 +50,18 @@ impl LiveReservation {
                 && observed
                 && keys.take_first_reservation(&store.plan, store.owner)
             {
-                *pending = Some(new_seed());
+                *pending = Some(PendingSeed {
+                    binding: store.binding,
+                    seed: new_seed(),
+                });
             }
-            pending.clone()
+            if let Some(proposal) = pending.as_ref() {
+                ensure!(
+                    proposal.binding == store.binding,
+                    "pending reservation belongs to a different plan or owner"
+                );
+            }
+            pending.as_ref().map(|p| p.seed.clone())
         };
         if let Some(seed) = seed {
             store.allocation(Some(&seed)).await?;
