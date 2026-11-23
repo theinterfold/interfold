@@ -341,6 +341,7 @@ fn start_publickey_aggregator(aggregator: PublicKeyAggregator) -> Recipient<Inte
 }
 
 pub struct ThresholdPlaintextAggregatorExtension {
+    runtime: Option<e3_zk_prover::synchronized::fixed_set::DecryptionRuntime>,
     bus: BusHandle,
     sortition: Addr<Sortition>,
     proof_aggregation_enabled: bool,
@@ -349,6 +350,55 @@ pub struct ThresholdPlaintextAggregatorExtension {
 }
 
 impl ThresholdPlaintextAggregatorExtension {
+    pub fn with_decryption_runtime(
+        mut self: Box<Self>,
+        runtime: e3_zk_prover::synchronized::fixed_set::DecryptionRuntime,
+    ) -> Box<Self> {
+        self.runtime = Some(runtime);
+        self
+    }
+
+    fn synchronized(&self, ctx: &E3Context) -> bool {
+        ctx.get_dependency(META_KEY).is_some_and(|m| {
+            m.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized
+        })
+    }
+
+    fn start_synchronized(&self, ctx: &mut E3Context, through: u64) {
+        if ctx.get_event_recipient("plaintext").is_some()
+            || ctx.get_event_recipient("threshold_keyshare").is_none()
+        {
+            return;
+        }
+        if !ctx
+            .get_dependency(META_KEY)
+            .is_some_and(|m| m.params_profile.admission_enabled())
+        {
+            return;
+        }
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        let id = ctx.e3_id.clone();
+        let store = ctx
+            .repositories()
+            .store
+            .scope(e3_events::StoreKeys::plaintext_recovery(&id))
+            .scope("synchronized-v1");
+        let actor = crate::synchronized_plaintext::FixedSetPlaintext::new(
+            self.bus.clone(),
+            id,
+            self.canonical_keys.clone(),
+            runtime,
+            self.eventstore.clone(),
+            store,
+            load_is_active_aggregator(ctx),
+            ctx.effects_enabled(),
+            through,
+        );
+        ctx.set_event_recipient("plaintext", Some(actor.start().recipient()));
+    }
+
     pub fn create(
         bus: &BusHandle,
         sortition: &Addr<Sortition>,
@@ -357,6 +407,7 @@ impl ThresholdPlaintextAggregatorExtension {
         eventstore: Recipient<EventStoreQueryBy<SeqAgg>>,
     ) -> Box<Self> {
         Box::new(Self {
+            runtime: None,
             bus: bus.clone(),
             sortition: sortition.clone(),
             proof_aggregation_enabled,
@@ -574,6 +625,10 @@ fn create_decryptionshare_buffer(
 #[async_trait]
 impl E3Extension for ThresholdPlaintextAggregatorExtension {
     fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent) {
+        if self.synchronized(ctx) {
+            self.start_synchronized(ctx, evt.seq());
+            return;
+        }
         if let InterfoldEventData::AggregatorChanged(_) = evt.get_data() {
             if let Some(ciphertext) = ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned() {
                 self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx());
@@ -628,6 +683,21 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
     }
 
     async fn hydrate(&self, ctx: &mut E3Context, snapshot: &E3ContextSnapshot) -> Result<()> {
+        if self.synchronized(ctx) {
+            let mut through = 0;
+            crate::history::visit_e3_history(&self.eventstore, &ctx.e3_id, |event| {
+                if matches!(
+                    event.get_data(),
+                    InterfoldEventData::DecryptionshareCreated(_)
+                ) {
+                    through = event.seq();
+                }
+                Ok(())
+            })
+            .await?;
+            self.start_synchronized(ctx, through);
+            return Ok(());
+        }
         self.remember_canonical_committee(ctx);
 
         let mut ciphertext = None;

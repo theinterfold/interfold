@@ -3581,6 +3581,7 @@ dependencies = [
  "e3-request",
  "e3-sortition",
  "e3-sync",
+ "e3-task-pool",
  "e3-test-support",
  "e3-trbfv",
  "e3-utils",

@@ -29,8 +29,10 @@ Each checkpoint is immutable and locally authenticated/encrypted. It binds the C
 owner, and sealed predecessor. A visible insert whose flush failed must be flushed successfully
 before releasing its value. A conflict, corrupt record, missing predecessor or lost store is not
 authorization to resample. Never restore an older private store into an active E3: complete loss of
-local history cannot be detected from an empty database alone. Live dispatch, deadline enforcement
-and terminal cleanup must be wired before activation. See
+local history cannot be detected from an empty database alone. Terminal keyshare cleanup retires the
+private slots. Standbys pin the verified party sequences in `synchronized-v1` under plaintext
+recovery; the started ordered batch and final intent are write-once. Restart rechecks signed inputs
+from retained history, the current plan, and the saved proof before release. See
 [threshold decryption](threshold-decryption.md).
 
 ## Contracts and actual boundaries
