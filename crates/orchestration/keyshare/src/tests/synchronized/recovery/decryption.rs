@@ -42,19 +42,12 @@ async fn received(rx: &mut UnboundedReceiver<InterfoldEvent>) -> Result<Interfol
 
 #[derive(Message)]
 #[rtype(result = "Result<()>")]
-struct Drive(bool);
-impl Handler<Drive> for ThresholdKeyshare {
+struct DriveDefinition;
+impl Handler<DriveDefinition> for ThresholdKeyshare {
     type Result = Result<()>;
-    fn handle(&mut self, msg: Drive, ctx: &mut Self::Context) -> Self::Result {
-        self.effects_enabled = true;
-        if msg.0 {
-            let id = self.state.try_get()?.e3_id;
-            let ec = self
-                .canonical_keys
-                .first_live_opening(&id)
-                .context("historical output cannot reserve noise")?;
-            self.observe_contribution_opening(&id, &ec);
-        }
+    fn handle(&mut self, _: DriveDefinition, ctx: &mut Self::Context) -> Self::Result {
+        // Only bypass request admission. The real opening and EffectsEnabled mailboxes
+        // must have established every other prerequisite.
         self.drive_contribution_definition(ctx)
     }
 }
@@ -63,6 +56,7 @@ impl Handler<Drive> for ThresholdKeyshare {
 async fn local(
     owner: usize,
     first: bool,
+    opening: &InterfoldEvent,
     bus: &BusHandle,
     keys: &CanonicalPublicKeys,
     rt: &DecryptionRuntime,
@@ -115,7 +109,15 @@ async fn local(
     node.synchronized_setup = Some(restored);
     let node = node.start();
     let mut output = listen(bus, EventType::DecryptionshareCreated);
-    node.send(Drive(first)).await??;
+    let enabled = keyshare_event(EffectsEnabled::new(), 1, EventSource::Local);
+    if first {
+        node.send(enabled).await?;
+        node.send(opening.clone()).await?;
+    } else {
+        node.send(opening.clone()).await?;
+        node.send(enabled).await?;
+    }
+    node.send(DriveDefinition).await??;
     let InterfoldEventData::DecryptionshareCreated(bundle) =
         received(&mut output).await?.into_data()
     else {
@@ -160,22 +162,14 @@ pub(super) async fn qualify(
         &libs,
     )
     .await?;
-    let manifest: Value = serde_json::from_str(include_str!(
-        "../../../../../../../circuits/qualification/sync-insecure-64/minimum/manifest.json"
-    ))?;
-    let pin = |i: usize| -> Result<B256> {
-        Ok(manifest["circuits"][i]["vkHash"]
-            .as_str()
-            .unwrap()
-            .parse()?)
-    };
+    let pins = e3_request::canonical_key::SynchronizedChildPins::insecure_minimum()?;
     let wrapper_artifact = artifact(
         "contracts/verifiers/bfv/SynchronizedDecryptionVerifier.sol/SynchronizedDecryptionVerifier.json",
     )?;
     let wrapper = deploy(
         &chain.provider,
         &wrapper_artifact,
-        (verifier, registry, pin(0)?, pin(1)?).abi_encode_params(),
+        (verifier, registry, pins.c6, pins.c7).abi_encode_params(),
         &HashMap::new(),
     )
     .await?;
@@ -218,6 +212,7 @@ pub(super) async fn qualify(
         .recover(&journal, &[AggregateId::new(31337)], HashSet::new())
         .await?;
     projection.attach(&bus).await?;
+    let mut openings = listen(&bus, EventType::CiphertextOutputPublished);
     for log in receipt.logs() {
         ensure!(log.address() == controller);
         let data: InterfoldEventData = match log.topic0() {
@@ -253,6 +248,8 @@ pub(super) async fn qualify(
         )?;
     }
     bus.flush_event_pipeline().await?;
+    let opening = received(&mut openings).await?;
+    ensure!(keys.first_live_opening(id).as_ref() == Some(opening.get_ctx()));
     let restarted = CanonicalPublicKeys::default();
     CanonicalKeyProjection::new(restarted.clone(), HashMap::from([(31337, controller)]))
         .recover(&journal, &[AggregateId::new(31337)], HashSet::new())
@@ -267,12 +264,12 @@ pub(super) async fn qualify(
         prover: prover.clone(),
         pool: e3_task_pool::TaskPool::new(2, 1),
         task_scope: "qualification-node".into(),
-        deadline: Arc::new(move |id| {
+        timing: Arc::new(move |id| {
             let p = reader.clone();
-            Box::pin(async move { e3_evm::read_decryption_deadline(&p, controller, &id).await })
+            Box::pin(async move { e3_evm::read_decryption_window(&p, controller, &id).await })
         }),
     };
-    let deadline = (rt.deadline)(id.clone()).await?;
+    let deadline = rt.open_deadline(id, None).await?;
     let mut ready = listen(&bus, EventType::AggregationInputsReady);
     let mut results = listen(&bus, EventType::PlaintextAggregated);
     let mut candidates = listen(&bus, EventType::DecryptionshareCreated);
@@ -280,26 +277,30 @@ pub(super) async fn qualify(
     let open =
         || -> Result<DataStore> { Ok(DataStore::from_sled_store(&SledStore::new(&bus, &disk)?)) };
     let db = open()?;
-    let collector = |db: &DataStore, output_bus: &BusHandle, active, effects, through| {
+    let collector = |db: &DataStore,
+                     output_bus: &BusHandle,
+                     projection: &CanonicalPublicKeys,
+                     active,
+                     effects| {
         FixedSetPlaintext::new(
             output_bus.clone(),
             id.clone(),
-            keys.clone(),
+            projection.clone(),
             rt.clone(),
             journal.clone(),
             db.scope("review-standby"),
             active,
             effects,
-            through,
         )
         .start()
     };
-    let standby = collector(&db, &bus, false, true, 0);
+    let standby = collector(&db, &bus, &keys, false, true);
     bus.subscribe(
         EventType::DecryptionshareCreated,
         standby.clone().recipient(),
     );
     let produce = |owner: usize, first: bool| {
+        let opening = &opening;
         let local_bus = test_bus_with_deduplication(false).0;
         let (rt, keys, root, saved, signer) = (
             &rt,
@@ -308,7 +309,12 @@ pub(super) async fn qualify(
             &setups[owner],
             &signers[owner],
         );
-        async move { local(owner, first, &local_bus, keys, rt, root, saved, signer, dir).await }
+        async move {
+            local(
+                owner, first, opening, &local_bus, keys, rt, root, saved, signer, dir,
+            )
+            .await
+        }
     };
     let a = produce(0, true).await?;
     ensure!(
@@ -323,7 +329,7 @@ pub(super) async fn qualify(
     send(a.clone(), 101)?;
     send(a, 102)?;
     bus.flush_event_pipeline().await?;
-    let _outsider = received(&mut candidates).await?;
+    let outsider = received(&mut candidates).await?;
     let first = received(&mut candidates).await?;
     let duplicate = received(&mut candidates).await?;
     ensure!(first.get_data() == duplicate.get_data() && first.seq() < duplicate.seq());
@@ -333,6 +339,12 @@ pub(super) async fn qualify(
         chain.provider.anvil_set_next_block_timestamp(at).await?;
         chain.provider.evm_mine(None).await?;
         let outcome = checkpoint.failureCondition(numeric).call().await?;
+        let open = rt.open_deadline(id, Some(deadline)).await;
+        if expired {
+            ensure!(open.unwrap_err().to_string().contains("deadline expired"));
+        } else {
+            ensure!(open? == deadline);
+        }
         ensure!(outcome.expired == expired && outcome.deadline == U256::from(deadline));
         if expired {
             ensure!(FailureReason::try_from(outcome.reason)? == FailureReason::DecryptionTimeout);
@@ -364,7 +376,7 @@ pub(super) async fn qualify(
     let _mixed = received(&mut candidates).await?;
     let _bad = received(&mut candidates).await?;
     let second = received(&mut candidates).await?;
-    let ready_event = received(&mut ready).await?;
+    received(&mut ready).await?;
     ensure!(results.try_recv().is_err());
     // Take the proving artifact offline: the former standby can commit to the batch,
     // but cannot possibly have checkpointed a final proof before it loses its role.
@@ -413,7 +425,16 @@ pub(super) async fn qualify(
         .await?
         .is_none());
     fs::rename(&offline, &circuit)?;
-    let resumed = collector(&db, &bus, false, false, ready_event.seq());
+    let recovered_keys = CanonicalPublicKeys::default();
+    CanonicalKeyProjection::new(recovered_keys.clone(), HashMap::from([(31337, controller)]))
+        .recover(
+            &journal,
+            &[AggregateId::new(31337)],
+            HashSet::from([id.clone()]),
+        )
+        .await?;
+    ensure!(recovered_keys.synchronized_candidates(id) == Some((outsider.seq(), second.seq())));
+    let resumed = collector(&db, &bus, &recovered_keys, false, false);
     ensure!(results.try_recv().is_err());
     resumed
         .send(keyshare_event(
@@ -439,16 +460,12 @@ pub(super) async fn qualify(
     let db = open()?;
     let replay_bus = test_bus_with_deduplication(false).0;
     let mut replayed = listen(&replay_bus, EventType::PlaintextAggregated);
-    let cached = collector(&db, &replay_bus, false, true, ready_event.seq());
+    let cached = collector(&db, &replay_bus, &recovered_keys, false, true);
     ensure!(
         received(&mut replayed).await?.into_data()
             == InterfoldEventData::PlaintextAggregated(intent.clone()),
         "demoted restart must release the verified checkpoint without reproving C7"
     );
-    cached
-        .send(keyshare_event(e3_events::Shutdown, 204, EventSource::Local))
-        .await?;
-    db.shutdown().await?;
     fs::rename(&offline, &circuit)?;
     let writer = e3_evm::EthProvider::new(
         ProviderBuilder::new()
@@ -504,14 +521,17 @@ pub(super) async fn qualify(
         .provider
         .anvil_set_next_block_timestamp(deadline)
         .await?;
-    let mined = e3_evm::publish_synchronized_plaintext_definition(
-        writer.clone(),
-        &keys,
-        controller,
-        &intent,
-    )
-    .await?
-    .context("expected first write")?;
+    // The live writer is polled by its own actor. Signing inline here would nest its debug
+    // crypto stack under the entire DKG, disk-recovery and decryption rehearsal.
+    let mined = {
+        let (writer, keys, intent) = (writer.clone(), keys.clone(), intent.clone());
+        actix::spawn(async move {
+            e3_evm::publish_synchronized_plaintext_definition(writer, &keys, controller, &intent)
+                .await
+        })
+        .await??
+        .context("expected first write")?
+    };
     ensure!(
         mined.status()
             && chain
@@ -533,5 +553,30 @@ pub(super) async fn qualify(
             .await?
             .is_none()
     );
+    let scope = db.scope("review-standby");
+    let prefix = scope.scope("").scope_bytes().to_vec();
+    ensure!(db.keys_with_prefix(prefix.clone()).await?.len() == 4);
+    let sibling = db.scope("review-standby-other").scope("result");
+    sibling.write_sync(37u64).await?;
+    cached
+        .send(keyshare_event(
+            E3StageChanged {
+                e3_id: id.clone(),
+                previous_stage: E3Stage::CiphertextReady,
+                new_stage: E3Stage::Complete,
+            },
+            204,
+            EventSource::Evm,
+        ))
+        .await?;
+    ensure!(cached
+        .send(keyshare_event(e3_events::Shutdown, 205, EventSource::Local))
+        .await
+        .is_err());
+    ensure!(
+        db.keys_with_prefix(prefix).await?.is_empty()
+            && sibling.read_checked::<u64>().await? == Some(37)
+    );
+    db.shutdown().await?;
     Ok(())
 }
