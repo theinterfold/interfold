@@ -93,7 +93,7 @@ describe("v0.19 cutover", function () {
     ]);
     expect(txs[0].to).to.equal(addr(2));
     expect(txs[txs.length - 1].to).to.equal(addr(9));
-    const pk = interfoldInterface.parseTransaction({ data: txs[4].data })!;
+    const pk = interfoldInterface.parseTransaction({ data: txs[5].data })!;
     expect(pk.args[0]).to.equal(BFV_SCHEME_ID);
     expect(pk.args[1]).to.equal(addr(4));
   });

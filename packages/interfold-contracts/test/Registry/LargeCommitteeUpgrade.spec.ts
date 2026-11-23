@@ -114,10 +114,11 @@ describe("Large committee publication through the upgraded registry", function (
     for (const operator of operators) {
       await registry.connect(operator).submitTicket(e3Id, 1);
     }
+    // The threshold reads true only while the committee is still forming.
+    expect(await registry.committeeThresholdMet(e3Id)).to.equal(true);
     const deadline = await registry.getCommitteeDeadline(e3Id);
     await time.setNextBlockTimestamp(deadline + 1n);
     await registry.finalizeCommittee(e3Id);
-    expect(await registry.committeeThresholdMet(e3Id)).to.equal(true);
 
     const pkCommitment = ethers.id("large-committee-public-key");
     await registry.publishCommittee(
