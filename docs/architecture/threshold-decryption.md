@@ -93,6 +93,24 @@ that retained share; retrying with a fresh noise draw is not a new decryption re
 witness JSON contains private openings and noise; it is not a log, transport payload or recovery
 record.
 
+**Fixed-set runtime policy for review (#2460).** For a disabled insecure Minimum definition the node
+can derive a read-only C6 plan from confirmed `CiphertextReady`, the confirmed registry setup, and
+the ciphertext publication (inline or DA reference). A local DA result can supply bytes but cannot
+set either their Keccak hash or the published SAFE commitment. Check both and decode one
+two-component level-zero ciphertext before allocating private work. The node checks the signer at
+the designated committee ID; the coordinator, arrival order, and retry correlation are not inputs to
+this choice. A second position or different publication is not a retry. Terminal history retires the
+plan even if key authority remains for hydration.
+
+The proposed host policy is one private noise allocation per designated owner for that E3. Proof or
+network retries consume the same allocation and contribution. A missing designated owner waits only
+through the request's inclusive on-chain decryption deadline, including before the first complete
+batch; promotion must not renew it. After expiry use the canonical `DecryptionTimeout` path, not a
+substitute or a peer-invalid verdict. Effect dispatch must recheck admission, phase, deadline and
+the current plan after replay. Those live actors and the protocol-owner review remain pending.
+Secure Minimum needs a secure DKG-to-registry route before the secure end-to-end qualification in
+[#2461](https://github.com/theinterfold/interfold/issues/2461).
+
 C7 admission binds the exact selected C6 commitments, ordered party IDs, ciphertext index, and
 plaintext. A C7 result replayed before `EffectsEnabled` is held in memory and used only if it binds
 to the batch this node reaches; a resumed C7 phase applies it under a fresh chain-scoped

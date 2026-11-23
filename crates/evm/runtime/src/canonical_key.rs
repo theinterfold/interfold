@@ -136,6 +136,7 @@ impl CanonicalKeyProjection {
             _ => None,
         };
         if let Some(id) = terminal {
+            self.keys.retire_synchronized_output(&id);
             // An older context snapshot still needs its rosters to hydrate before terminal replay.
             if self.hydrating_contexts.contains(&id) {
                 self.keys.forget_bytes(&id);
@@ -161,6 +162,37 @@ impl CanonicalKeyProjection {
             return Ok(());
         }
         match event.get_data() {
+            InterfoldEventData::CiphertextOutputReferencePublished(output)
+                if chain_fact && self.synchronized_request(&output.e3_id) =>
+            {
+                self.keys.remember_synchronized_output(
+                    &output.e3_id,
+                    output.content_hash.into(),
+                    output.ciphertext_commitment,
+                )?;
+            }
+            InterfoldEventData::E3StageChanged(stage)
+                if chain_fact
+                    && stage.new_stage == e3_events::E3Stage::CiphertextReady
+                    && self.synchronized_request(&stage.e3_id) =>
+            {
+                self.keys
+                    .remember_synchronized_ciphertext_ready(&stage.e3_id);
+            }
+            InterfoldEventData::CiphertextOutputPublished(output)
+                if self.synchronized_request(&output.e3_id) =>
+            {
+                if chain_fact {
+                    let [bytes] = output.ciphertext_output.as_slice() else {
+                        anyhow::bail!("expected one published synchronized ciphertext")
+                    };
+                    self.keys.remember_synchronized_output(
+                        &output.e3_id,
+                        alloy::primitives::keccak256(&bytes[..]),
+                        output.ciphertext_commitment,
+                    )?;
+                }
+            }
             InterfoldEventData::CiphertextOutputPublished(output)
                 if (chain_fact || event.source() == EventSource::Local)
                     && self.requests.contains_key(&output.e3_id) =>
@@ -352,6 +384,12 @@ impl CanonicalKeyProjection {
             _ => {}
         }
         Ok(())
+    }
+
+    fn synchronized_request(&self, id: &E3id) -> bool {
+        self.requests.get(id).is_some_and(|r| {
+            r.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized
+        })
     }
 
     fn record_proof(
