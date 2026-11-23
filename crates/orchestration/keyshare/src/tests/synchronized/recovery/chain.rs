@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 //! Real registry/proof/signature qualification below disabled request admission. Only the
-//! finalized committee and controller lifecycle are harnessed; no production writer is implied.
+//! finalized committee and controller lifecycle are harnessed. Decryption uses the writer effect.
 
 use super::{publication::Recovered, *};
 use alloy::{
@@ -150,9 +150,16 @@ impl Chain {
             .wallet(signer)
             .connect_http(anvil.endpoint_url())
             .erased();
+        let lifecycle = deploy(
+            &provider,
+            &artifact("contracts/lib/InterfoldLifecycle.sol/InterfoldLifecycle.json")?,
+            vec![],
+            &HashMap::new(),
+        )
+        .await?;
         let controller = deploy(&provider,
-            &artifact("contracts/test/SynchronizedDkgRegistryHarness.sol/SynchronizedDkgControllerHarness.json")?,
-            vec![], &HashMap::new()).await?;
+            &artifact("contracts/test/SynchronizedDecryptionControllerHarness.sol/SynchronizedDecryptionControllerHarness.json")?,
+            vec![], &HashMap::from([("InterfoldLifecycle".to_string(),lifecycle)])).await?;
         Ok(Self {
             anvil,
             provider,
@@ -229,6 +236,7 @@ impl Chain {
         proof: &Proof,
         directory: &Path,
         signers: &[PrivateKeySigner],
+        prover: &ZkProver,
     ) -> Result<()> {
         let selected = recovered[0]
             .0
@@ -629,9 +637,24 @@ impl Chain {
             }
         }
         ensure!(recovered_keys.decryption_domains(id).is_none() && !PROFILE.admission_enabled());
+        decryption::qualify(
+            self,
+            registry,
+            recovered,
+            &local_setups,
+            signers,
+            prover,
+            history,
+            public_key,
+            directory,
+        )
+        .await?;
         Ok(())
     }
 }
+
+#[path = "decryption.rs"]
+mod decryption;
 
 async fn reopen_history(
     history: &[InterfoldEvent<Unsequenced>],

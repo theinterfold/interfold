@@ -500,6 +500,8 @@ pub(super) async fn qualify(
         serde_json::to_vec(&json!({
             "vk": prover.circuits_dir(CircuitVariant::Evm, &namespace)
                 .join(CircuitName::DkgAggregator.dir_path()).join("dkg_aggregator.vk"),
+            "decryption_vk": prover.circuits_dir(CircuitVariant::Evm, &namespace)
+                .join(CircuitName::DecryptionAggregator.dir_path()).join("decryption_aggregator.vk"),
             "interfold": context.setup.interfold_address.to_string(),
             "crypto_config_id": context.setup.crypto_config_id.to_string(),
             "setup_tree": prepared["expected_tree_hash"],
@@ -540,6 +542,7 @@ pub(super) async fn qualify(
             &publication,
             directory,
             signers,
+            prover,
         )
         .await?;
     Ok(())
