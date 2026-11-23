@@ -482,6 +482,36 @@ mod task_group_tests {
         assert_eq!(compute_retry_delay(100), Duration::from_secs(300));
     }
 
+    #[test]
+    fn a_secure_large_c5_takes_two_slots_and_at_least_eight_threads() {
+        let c5 = |params_profile, committee: CiphernodesCommitteeSize| {
+            let values = committee.values();
+            ComputeRequestKind::Zk(ZkRequest::PkAggregation(
+                e3_events::PkAggregationProofRequest {
+                    keyshare_bytes: Vec::new(),
+                    aggregated_pk_bytes: e3_utils::ArcBytes::default(),
+                    params_profile,
+                    committee_n: values.n,
+                    committee_h: values.h,
+                    committee_threshold: values.threshold,
+                },
+            ))
+        };
+        let small_pool = TaskPool::new(4, 2);
+        let large_pool = TaskPool::new(16, 2);
+        let slot = e3_task_pool::SLOT_UNITS;
+        let secure_large = c5(BfvProfile::SsSecure8192, CiphernodesCommitteeSize::Large);
+
+        assert_eq!(job_weight(&secure_large, &small_pool), (2 * slot, Some(8)));
+        assert_eq!(job_weight(&secure_large, &large_pool), (2 * slot, None));
+        for other in [
+            c5(BfvProfile::SsSecure8192, CiphernodesCommitteeSize::Small),
+            c5(BfvProfile::SsInsecure64, CiphernodesCommitteeSize::Large),
+        ] {
+            assert_eq!(job_weight(&other, &small_pool), (slot, None));
+        }
+    }
+
     #[actix::test]
     async fn superseded_attempt_interrupts_worker_retry_without_cancelling_its_e3() {
         let pool = TaskPool::new(1, 1);
