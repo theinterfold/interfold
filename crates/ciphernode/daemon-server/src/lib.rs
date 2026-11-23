@@ -26,6 +26,11 @@ const MAX_HEAD_BYTES: u64 = 16 * 1024;
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 const READ_LIMIT: Duration = Duration::from_secs(10);
 
+/// The node listens on loopback, so a proxy the environment names must not carry these requests.
+fn loopback_client() -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder().no_proxy().build()
+}
+
 pub struct ServerInfo {
     pub port: u16,
 }
@@ -34,7 +39,8 @@ pub async fn connect_daemon(maybe_config: Option<&NodeConfig>) -> Option<ServerI
     let config = maybe_config?;
     let port = config.ctrl_port();
     let url = format!("http://{}:{}", TCP_ADDRESS, port);
-    reqwest::Client::new()
+    loopback_client()
+        .ok()?
         .head(&url)
         .timeout(std::time::Duration::from_secs(1))
         .send()
@@ -49,8 +55,7 @@ pub async fn run_on_daemon<T: Serialize>(
     cli: T,
 ) -> anyhow::Result<()> {
     let url = format!("http://{}:{}", TCP_ADDRESS, server.port);
-    let client = reqwest::Client::new();
-    let resp = client.post(&url).json(&cli).send().await?;
+    let resp = loopback_client()?.post(&url).json(&cli).send().await?;
     let status = resp.status();
     let text = resp.text().await?;
     // The node answers an error with its message, which says more than the status code.
@@ -160,6 +165,9 @@ mod tests {
     use std::cell::Cell;
     use tokio::net::TcpListener;
 
+    /// Longer than the server's own read limit, so only a hung test reaches it.
+    const TEST_LIMIT: Duration = Duration::from_secs(30);
+
     /// Serves one connection on a loopback port with a handler that echoes the command, and counts
     /// how often the handler ran.
     async fn serve_once(listener: TcpListener, calls: &Cell<usize>) {
@@ -192,7 +200,8 @@ mod tests {
         let calls = Cell::new(0);
         let (out, mut lines) = Console::channel();
         let client = run_on_daemon(out, ServerInfo { port }, "status");
-        let ((), sent) = tokio::join!(serve_once(listener, &calls), client);
+        let both = async { tokio::join!(serve_once(listener, &calls), client) };
+        let ((), sent) = timeout(TEST_LIMIT, both).await.unwrap();
         sent.unwrap();
         assert_eq!(calls.get(), 1);
         assert_eq!(lines.recv().await.unwrap(), "ran \"status\"");
@@ -206,10 +215,13 @@ mod tests {
             "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
             MAX_BODY_BYTES + 1
         );
-        let ((), response) = tokio::join!(
-            serve_once(listener, &calls),
-            send_raw(port, request.as_bytes())
-        );
+        let both = async {
+            tokio::join!(
+                serve_once(listener, &calls),
+                send_raw(port, request.as_bytes())
+            )
+        };
+        let ((), response) = timeout(TEST_LIMIT, both).await.unwrap();
         assert!(response.starts_with("HTTP/1.1 400 "), "{response}");
         assert_eq!(calls.get(), 0);
     }
@@ -219,7 +231,8 @@ mod tests {
         let (listener, port) = listener().await;
         let calls = Cell::new(0);
         let request = vec![b'a'; MAX_HEAD_BYTES as usize];
-        let ((), response) = tokio::join!(serve_once(listener, &calls), send_raw(port, &request));
+        let both = async { tokio::join!(serve_once(listener, &calls), send_raw(port, &request)) };
+        let ((), response) = timeout(TEST_LIMIT, both).await.unwrap();
         assert!(response.starts_with("HTTP/1.1 400 "), "{response}");
         assert_eq!(calls.get(), 0);
     }
