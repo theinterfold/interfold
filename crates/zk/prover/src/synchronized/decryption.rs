@@ -65,7 +65,9 @@ pub(super) fn child_key(
         };
         ensure!(
             artifacts.key_hash_bytes == expected.0,
-            "installed {role} VK differs from the qualified request pin {expected}"
+            e3_zk_witness::WitnessError::VerificationKey(format!(
+                "installed {role} VK differs from the qualified request pin {expected}"
+            ))
         );
     }
     key(&artifacts)
