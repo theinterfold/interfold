@@ -195,6 +195,13 @@ async fn synchronized_native_worker_real_c6_and_signed_reuse() -> Result<()> {
                 .err()
                 .context("proved with mismatched child VK")?;
             assert!(
+                matches!(
+                    error.downcast_ref::<e3_zk_witness::WitnessError>(),
+                    Some(e3_zk_witness::WitnessError::VerificationKey(_))
+                ),
+                "{error:#}"
+            );
+            assert!(
                 error.to_string().contains("qualified request pin"),
                 "{error:#}"
             );
