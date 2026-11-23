@@ -13,7 +13,9 @@ use e3_trbfv::synchronized::SealedPrfKeys;
 
 mod contribution;
 mod publication;
-pub use contribution::{ContributionProgress, ContributionStore, NoiseAllocation};
+pub use contribution::{
+    ContributionProgress, ContributionStore, ContributionWorker, LocalContribution, NoiseAllocation,
+};
 pub use publication::ConfirmedSynchronizedDkgSetup;
 mod setup;
 pub use setup::SynchronizedSetupIntent;

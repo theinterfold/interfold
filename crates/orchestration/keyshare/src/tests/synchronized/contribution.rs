@@ -64,6 +64,13 @@ fn inputs(setup: &Setup) -> Result<Inputs> {
     let keys = CanonicalPublicKeys::default();
     keys.remember_synchronized_context(id.clone(), context)?;
     let committee: Vec<_> = setup.signers.iter().map(|s| s.address()).collect();
+    let DecryptionKeyPlan::Proceed {
+        synchronized: Some(other_material),
+        ..
+    } = setup.plan(0)?
+    else {
+        unreachable!()
+    };
     let key = CanonicalPublicKey {
         pk_commitment: e3_bfv_client::compute_pk_commitment(
             pk.clone(),
@@ -86,8 +93,8 @@ fn inputs(setup: &Setup) -> Result<Inputs> {
             dealer_batch: a.dealer_batch,
             party_ids: a.dealers.clone(),
             threshold_pk_commits: a.threshold_keys.clone(),
-            sk_agg_commits: vec![scalar(1)?, a.sk_commitment],
-            key_bundle_commits: vec![scalar(2)?, a.key_bundle],
+            sk_agg_commits: vec![other_material.sk_commitment.unwrap(), a.sk_commitment],
+            key_bundle_commits: vec![other_material.key_bundle.unwrap(), a.key_bundle],
         }),
     };
     keys.insert_synchronized_dkg_authority(id.clone(), key.clone())?;
@@ -318,3 +325,6 @@ async fn synchronized_contribution_reopens_each_flushed_phase_and_rejects_resamp
     }
     Ok(())
 }
+
+#[path = "native_c6.rs"]
+mod native_c6;

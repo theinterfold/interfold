@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-//! Private, write-once checkpoints. No event publication or worker dispatch at this boundary.
+//! Private, write-once checkpoints. Only a known first authorization may create an allocation.
 
 use super::ConfirmedSynchronizedDkgSetup;
 use crate::ThresholdKeyshareRepositoryFactory;
@@ -20,7 +20,11 @@ use e3_zk_config::{
     CircuitName,
 };
 use rand::RngCore;
+use std::sync::Arc;
 use zeroize::Zeroizing;
+
+mod worker;
+pub use worker::{ContributionWorker, LocalContribution};
 
 /// Replaying the v1 sampler starts the same private stream at offset zero.
 pub struct NoiseAllocation {
@@ -44,15 +48,17 @@ pub enum ContributionProgress {
     Signed(DecryptionshareCreated),
 }
 
-pub struct ContributionStore<'a> {
+pub struct ContributionStore {
     store: DataStore,
-    cipher: &'a Cipher,
+    cipher: Arc<Cipher>,
+    outgoing: e3_trbfv::synchronized::SealedPrfKeys,
+    incoming: e3_trbfv::synchronized::SealedPrfKeys,
     plan: SynchronizedDecryptionPlan,
     owner: u32,
     binding: B256,
 }
 
-impl<'a> ContributionStore<'a> {
+impl ContributionStore {
     /// Below-admission definition; the live caller must rederive the plan and `confirmed_setup`
     /// and check effects/terminal state before releasing work.
     pub fn for_definition(
@@ -60,7 +66,7 @@ impl<'a> ContributionStore<'a> {
         plan: SynchronizedDecryptionPlan,
         setup: &ConfirmedSynchronizedDkgSetup<'_>,
         local_signer: Address,
-        cipher: &'a Cipher,
+        cipher: &Arc<Cipher>,
     ) -> Result<Self> {
         let owner = setup.recipient();
         ensure!(
@@ -78,7 +84,9 @@ impl<'a> ContributionStore<'a> {
         let binding = plan.local_contribution_binding_v1(owner)?;
         Ok(Self {
             store,
-            cipher,
+            cipher: cipher.clone(),
+            outgoing: setup.outgoing_keys().clone(),
+            incoming: setup.incoming_keys().clone(),
             plan,
             owner,
             binding,
@@ -105,7 +113,8 @@ impl<'a> ContributionStore<'a> {
                 let Some(bytes) = proposed else {
                     return Ok(None);
                 };
-                let sealed = SensitiveBytes::new([header.as_slice(), bytes].concat(), self.cipher)?;
+                let sealed =
+                    SensitiveBytes::new([header.as_slice(), bytes].concat(), &self.cipher)?;
                 if store.write_if_absent_sync(&sealed).await? {
                     (sealed, true)
                 } else {
@@ -119,7 +128,7 @@ impl<'a> ContributionStore<'a> {
                 }
             }
         };
-        let mut plain = value.access(self.cipher)?;
+        let mut plain = value.access(&self.cipher)?;
         ensure!(
             plain.starts_with(header.as_slice()),
             "contribution belongs to another context or predecessor"
@@ -196,8 +205,13 @@ impl<'a> ContributionStore<'a> {
         Ok(ContributionProgress::Signed(bundle))
     }
 
-    pub async fn record_generated(&self, share: &ArcBytes) -> Result<()> {
+    #[cfg(test)]
+    pub(crate) async fn record_generated(&self, share: &ArcBytes) -> Result<()> {
         let (_, parent) = self.allocation(false).await?;
+        self.record_generated_at(share, parent).await
+    }
+
+    async fn record_generated_at(&self, share: &ArcBytes, parent: B256) -> Result<()> {
         if self
             .store
             .scope("signed")
@@ -258,8 +272,16 @@ impl<'a> ContributionStore<'a> {
                 && signed.verify_address(&signer)?,
             "signed contribution differs from local owner, phase, or native share"
         );
-        let cfg = Configs::for_profile(self.plan.profile(), self.plan.committee())?;
         let proof = &signed.payload.proof;
+        self.validate_proof_row(proof, share)
+    }
+
+    fn validate_proof_row(&self, proof: &e3_events::Proof, share: &ArcBytes) -> Result<()> {
+        ensure!(
+            proof.circuit == CircuitName::ThresholdShareDecryption,
+            "expected local C6"
+        );
+        let cfg = Configs::for_profile(self.plan.profile(), self.plan.committee())?;
         let row = PublicSignals::decode(&cfg, proof.circuit, &proof.public_signals)?;
         let poly = e3_trbfv::helpers::try_poly_pb_from_bytes(share, &cfg.threshold)?;
         let commitment = e3_zk_witness::compute_threshold_decryption_share_commitment(
@@ -270,7 +292,7 @@ impl<'a> ContributionStore<'a> {
         ensure!(
             self.plan.matches_c6(self.owner, &row)
                 && row.decryption_share_commitment() == Some(super::commitment_field(&commitment)?),
-            "signed C6 row differs from the confirmed plan or full native share"
+            "C6 row differs from the confirmed plan or full native share"
         );
         Ok(())
     }

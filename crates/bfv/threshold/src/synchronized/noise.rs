@@ -16,6 +16,21 @@ pub fn contribution_noise_v1(
     committee: CiphernodesCommitteeSize,
     seed: &[u8; 32],
 ) -> Result<Vec<BigInt>> {
+    let (noise, params) = noise_generator(profile, committee)?;
+    Ok(sample_uniform_coefficients_bigint(
+        &noise.smudging_bound().clone().into(),
+        params.degree(),
+        &mut ChaCha20Rng::from_seed(*seed),
+    ))
+}
+
+pub(super) fn noise_generator(
+    profile: BfvProfile,
+    committee: CiphernodesCommitteeSize,
+) -> Result<(
+    SmudgingNoiseGenerator,
+    std::sync::Arc<fhe::bfv::BfvParameters>,
+)> {
     ensure!(
         profile.protocol() == BfvDecryptionProtocol::Synchronized,
         "SS does not use per-owner noise"
@@ -23,7 +38,7 @@ pub fn contribution_noise_v1(
     profile.validate_committee(committee)?;
     let preset = profile.threshold_preset();
     let params = BfvParamSet::from(preset).build_arc();
-    let noise = SmudgingNoiseGenerator::new(SmudgingBoundCalculatorConfig::new(
+    let generator = SmudgingNoiseGenerator::new(SmudgingBoundCalculatorConfig::new(
         params.clone(),
         committee.values().n,
         preset
@@ -32,11 +47,7 @@ pub fn contribution_noise_v1(
             .z as usize,
         preset.lambda()?,
     )?)?;
-    Ok(sample_uniform_coefficients_bigint(
-        &noise.smudging_bound().clone().into(),
-        params.degree(),
-        &mut ChaCha20Rng::from_seed(*seed),
-    ))
+    Ok((generator, params))
 }
 
 #[cfg(test)]

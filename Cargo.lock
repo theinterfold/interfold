@@ -4217,6 +4217,7 @@ dependencies = [
  "e3-polynomial-fhe",
  "e3-request",
  "e3-sync",
+ "e3-task-pool",
  "e3-trbfv",
  "e3-utils",
  "e3-zk-build",
