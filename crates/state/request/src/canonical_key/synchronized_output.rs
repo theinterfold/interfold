@@ -12,6 +12,7 @@ pub(super) struct Publication {
     bytes: Option<(ArcBytes, EventContext<Sequenced>)>,
     observed_live: bool,
     reservations: std::collections::BTreeSet<u32>,
+    candidates: Option<(u64, u64)>,
     // Only populated after opening the exact confirmed bytes. Retiring the publication drops it.
     plan: Arc<std::sync::OnceLock<SynchronizedDecryptionPlan>>,
 }
@@ -166,6 +167,24 @@ mod binding_tests {
 }
 
 impl CanonicalPublicKeys {
+    /// Journal locations are search hints, never verified inputs. One range per known E3.
+    pub fn note_synchronized_candidate(&self, id: &E3id, seq: u64) {
+        let mut keys = self.0.write().expect("canonical key lock");
+        let p = keys.synchronized_outputs.entry(id.clone()).or_default();
+        let (first, last) = p.candidates.get_or_insert((seq, seq));
+        *first = (*first).min(seq);
+        *last = (*last).max(seq);
+    }
+
+    pub fn synchronized_candidates(&self, id: &E3id) -> Option<(u64, u64)> {
+        self.0
+            .read()
+            .expect("canonical key lock")
+            .synchronized_outputs
+            .get(id)?
+            .candidates
+    }
+
     /// Keep one opening for both actors and the writer, including when the original delivery
     /// precedes CiphertextReady or falls before the snapshot cursor. Never replace its cause.
     pub fn remember_synchronized_opening(

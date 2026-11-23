@@ -14,7 +14,7 @@ use e3_request::canonical_key::{CanonicalPublicKeys, SynchronizedDecryptionPlan}
 use e3_task_pool::{scoped_task_group, TaskTimeouts};
 use e3_utils::ArcBytes;
 use e3_zk_prover::synchronized::fixed_set::{
-    before_expiry, reconstruct, verify_contribution, verify_saved_result, DecryptionRuntime,
+    reconstruct, verify_contribution, verify_saved_result, DecryptionRuntime,
 };
 use std::{collections::BTreeMap, ops::RangeInclusive, time::Duration};
 
@@ -64,6 +64,9 @@ impl Collection {
                     self.runtime.prover.clone(),
                 );
                 let job = plan.e3_id().to_string();
+                self.runtime
+                    .open_deadline(plan.e3_id(), Some(deadline))
+                    .await?;
                 let verified = self
                     .runtime
                     .pool
@@ -73,7 +76,6 @@ impl Collection {
                         TaskTimeouts::default(),
                         move || {
                             plan.check_current(&keys, &ct)?;
-                            before_expiry(deadline)?;
                             Ok::<_, anyhow::Error>(
                                 verify_contribution(&prover, &plan, &bundle, &job)?
                                     .then_some(bundle),
@@ -101,6 +103,9 @@ impl Collection {
             pages.reached_end(),
             "history ended before the observed contribution sequence"
         );
+        self.runtime
+            .open_deadline(plan.e3_id(), Some(deadline))
+            .await?;
         Ok((rows, retry))
     }
 }
@@ -114,12 +119,14 @@ pub struct FixedSetPlaintext {
     checkpoints: DataStore,
     active: bool,
     effects: bool,
-    busy: bool,
+    running: Option<SpawnHandle>,
+    retry: Option<SpawnHandle>,
+    failures: u32,
+    ended: bool,
     published: bool,
     ready: bool,
     standby_waiting: bool,
     checked: u64,
-    through: u64,
     deadline: Option<u64>,
     rows: VerifiedRows,
 }
@@ -135,7 +142,6 @@ impl FixedSetPlaintext {
         checkpoints: DataStore,
         active: bool,
         effects: bool,
-        through: u64,
     ) -> Self {
         Self {
             bus,
@@ -146,12 +152,14 @@ impl FixedSetPlaintext {
             checkpoints,
             active,
             effects,
-            busy: false,
+            running: None,
+            retry: None,
+            failures: 0,
+            ended: false,
             published: false,
             ready: false,
             standby_waiting: false,
             checked: 0,
-            through,
             deadline: None,
             rows: BTreeMap::new(),
         }
@@ -160,13 +168,18 @@ impl FixedSetPlaintext {
     fn drive(&mut self, ctx: &mut Context<Self>) -> Result<()> {
         if !self.effects
             || self.bus.is_shutting_down()
-            || self.busy
+            || self.ended
+            || self.running.is_some()
+            || self.retry.is_some()
             || self.published
             || (self.standby_waiting && !self.active)
         {
             return Ok(());
         }
-        if self.rows.is_empty() && self.checked >= self.through {
+        let Some((first, through)) = self.keys.synchronized_candidates(&self.id) else {
+            return Ok(());
+        };
+        if self.rows.is_empty() && self.checked >= through {
             return Ok(());
         }
         let Some((ct, ec)) = self.keys.synchronized_opening(&self.id) else {
@@ -184,37 +197,34 @@ impl FixedSetPlaintext {
             return Ok(());
         };
         let Some(deadline) = self.deadline else {
-            self.busy = true;
-            ctx.spawn(
-                (self.runtime.deadline)(self.id.clone())
-                    .into_actor(self)
-                    .map(|result, actor, ctx| {
-                        actor.busy = false;
-                        match result {
-                            Ok(deadline) => {
-                                actor.deadline = Some(deadline);
-                                actor.wake(ctx);
+            let runtime = self.runtime.clone();
+            let id = self.id.clone();
+            self.running = Some(
+                ctx.spawn(
+                    async move { runtime.open_deadline(&id, None).await }
+                        .into_actor(self)
+                        .map(|result, actor, ctx| {
+                            actor.running = None;
+                            match result {
+                                Ok(deadline) => {
+                                    actor.deadline = Some(deadline);
+                                    actor.wake(ctx);
+                                }
+                                Err(error) => actor.defer(ctx, error),
                             }
-                            Err(error) => {
-                                tracing::warn!(%error,"could not read frozen decryption deadline")
-                            }
-                        }
-                    }),
+                        }),
+                ),
             );
             return Ok(());
         };
         // The chain failure watch marks DecryptionTimeout. It starts from CiphertextReady,
         // independently of our role or readiness; promotion never creates another window.
-        if before_expiry(deadline).is_err() {
-            return Ok(());
-        }
         let pinned_count = plan.designated().len();
         if self.rows.len() < pinned_count {
-            if self.checked >= self.through {
+            if self.checked >= through {
                 return Ok(());
             }
-            let range = self.checked + 1..=self.through;
-            let end = self.through;
+            let range = first.max(self.checked + 1)..=through;
             let collection = Collection {
                 journal: self.journal.clone(),
                 keys: self.keys.clone(),
@@ -222,25 +232,27 @@ impl FixedSetPlaintext {
                 runtime: self.runtime.clone(),
             };
             let rows = self.rows.clone();
-            self.busy = true;
-            ctx.spawn(
-                async move { collection.admit(plan, ct, deadline, range, rows).await }
-                    .into_actor(self)
-                    .map(move |result, actor, ctx| {
-                        actor.busy = false;
-                        match result {
-                            Ok((rows, retry)) => {
-                                actor.rows = rows;
-                                actor.checked = retry.map_or(end, |seq| seq - 1);
-                                if retry.is_none() || actor.rows.len() == pinned_count {
-                                    actor.wake(ctx);
+            self.running = Some(
+                ctx.spawn(
+                    async move { collection.admit(plan, ct, deadline, range, rows).await }
+                        .into_actor(self)
+                        .map(move |result, actor, ctx| {
+                            actor.running = None;
+                            match result {
+                                Ok((rows, retry)) => {
+                                    actor.rows = rows;
+                                    actor.checked = retry.map_or(through, |seq| seq - 1);
+                                    if retry.is_none() || actor.rows.len() == pinned_count {
+                                        actor.failures = 0;
+                                        actor.wake(ctx);
+                                    } else {
+                                        actor.back_off(ctx);
+                                    }
                                 }
+                                Err(error) => actor.defer(ctx, error),
                             }
-                            Err(error) => {
-                                tracing::warn!(%error,"retaining designated C6 history for retry")
-                            }
-                        }
-                    }),
+                        }),
+                ),
             );
             return Ok(());
         }
@@ -262,73 +274,123 @@ impl FixedSetPlaintext {
         let rt = self.runtime.clone();
         let group = scoped_task_group(&rt.task_scope, &self.id);
         let job = plan.e3_id().to_string();
-        self.busy = true;
-        ctx.spawn(
-            async move {
-                let started = start.restore().await?;
-                if !active && started.is_none() {
-                    return Ok(None);
+        self.running = Some(
+            ctx.spawn(
+                async move {
+                    rt.open_deadline(plan.e3_id(), Some(deadline)).await?;
+                    plan.check_current(&keys, &ct)?;
+                    let started = start.restore().await?;
+                    if !active && started.is_none() {
+                        return Ok(None);
+                    }
+                    start.record(&sequences).await?;
+                    let saved = output.restore().await?;
+                    let current_plan = plan.clone();
+                    let bytes = ct.clone();
+                    let prover = rt.prover.clone();
+                    let result = rt
+                        .pool
+                        .spawn_in_group(
+                            group,
+                            "synchronized reconstruction and final proof".into(),
+                            TaskTimeouts::default(),
+                            move || {
+                                plan.check_current(&keys, &ct)?;
+                                if let Some(saved) = saved {
+                                    ensure!(
+                                        verify_saved_result(
+                                            &prover, &plan, &bundles, &saved, &job
+                                        )?,
+                                        "saved proof differs from admitted batch"
+                                    );
+                                    Ok(saved)
+                                } else {
+                                    reconstruct(&prover, &plan, &ct, &bundles, &job)
+                                }
+                            },
+                        )
+                        .await??;
+                    output.record(&result).await?;
+                    rt.open_deadline(current_plan.e3_id(), Some(deadline))
+                        .await?;
+                    Ok::<_, anyhow::Error>(Some((current_plan, bytes, result)))
                 }
-                start.record(&sequences).await?;
-                let saved = output.restore().await?;
-                let current_plan = plan.clone();
-                let bytes = ct.clone();
-                let result = rt
-                    .pool
-                    .spawn_in_group(
-                        group,
-                        "synchronized reconstruction and final proof".into(),
-                        TaskTimeouts::default(),
-                        move || {
-                            plan.check_current(&keys, &ct)?;
-                            before_expiry(deadline)?;
-                            if let Some(saved) = saved {
-                                ensure!(
-                                    verify_saved_result(&rt.prover, &plan, &bundles, &saved, &job)?,
-                                    "saved proof differs from admitted batch"
-                                );
-                                Ok(saved)
-                            } else {
-                                reconstruct(&rt.prover, &plan, &ct, &bundles, &job)
+                .into_actor(self)
+                .map(move |result, actor, ctx| {
+                    actor.running = None;
+                    match result {
+                        Ok(Some((plan, ct, intent))) => {
+                            if actor.bus.is_shutting_down() {
+                                return;
                             }
-                        },
-                    )
-                    .await??;
-                output.record(&result).await?;
-                Ok::<_, anyhow::Error>(Some((current_plan, bytes, result)))
-            }
-            .into_actor(self)
-            .map(move |result, actor, ctx| {
-                actor.busy = false;
-                match result {
-                    Ok(Some((plan, ct, intent))) => {
-                        if actor.bus.is_shutting_down() {
-                            return;
+                            let result = plan
+                                .check_current(&actor.keys, &ct)
+                                .and_then(|_| actor.bus.publish(intent, ec));
+                            match result {
+                                Ok(()) => actor.published = true,
+                                Err(error) => actor.defer(ctx, error),
+                            }
                         }
-                        let result = plan
-                            .check_current(&actor.keys, &ct)
-                            .and_then(|_| before_expiry(deadline))
-                            .and_then(|_| actor.bus.publish(intent, ec));
-                        match result {
-                            Ok(()) => actor.published = true,
-                            Err(error) => tracing::warn!(%error,"final publication held"),
-                        }
+                        Ok(None) if actor.active => actor.wake(ctx),
+                        Ok(None) => actor.standby_waiting = true,
+                        Err(error) => actor.defer(ctx, error),
                     }
-                    Ok(None) if actor.active => actor.wake(ctx),
-                    Ok(None) => actor.standby_waiting = true,
-                    Err(error) => {
-                        tracing::warn!(%error, "retaining synchronized final inputs for retry")
-                    }
-                }
-            }),
+                }),
+            ),
         );
         Ok(())
     }
 
     fn wake(&mut self, ctx: &mut Context<Self>) {
         if let Err(error) = self.drive(ctx) {
-            tracing::warn!(%error,"synchronized collection deferred");
+            self.defer(ctx, error);
         }
+    }
+
+    fn defer(&mut self, ctx: &mut Context<Self>, error: anyhow::Error) {
+        tracing::warn!(e3_id=%self.id, %error, "synchronized collection deferred");
+        self.back_off(ctx);
+    }
+
+    fn back_off(&mut self, ctx: &mut Context<Self>) {
+        self.failures = self.failures.saturating_add(1);
+        let delay = e3_utils::backoff_delay(
+            Duration::from_secs(2),
+            self.failures,
+            Duration::from_secs(60),
+        );
+        self.retry = Some(ctx.run_later(delay, |actor, ctx| {
+            actor.retry = None;
+            actor.wake(ctx);
+        }));
+    }
+
+    fn retire(&mut self, ctx: &mut Context<Self>) {
+        self.ended = true;
+        if let Some(handle) = self.running.take() {
+            ctx.cancel_future(handle);
+        }
+        let store = self.checkpoints.clone();
+        ctx.wait(
+            async move {
+                // Include the slash: similarly named sibling scopes are not part of this E3.
+                for key in store
+                    .keys_with_prefix(store.scope("").scope_bytes().to_vec())
+                    .await?
+                {
+                    store.base(key).remove_sync().await?;
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+            .into_actor(self)
+            .map(|result, actor, ctx| match result {
+                Ok(()) => ctx.stop(),
+                Err(error) => {
+                    tracing::warn!(%error, e3_id=%actor.id, "retrying terminal plaintext cleanup");
+                    ctx.run_later(Duration::from_secs(2), Self::retire);
+                }
+            }),
+        );
     }
 }
 
@@ -363,18 +425,22 @@ impl Handler<InterfoldEvent> for FixedSetPlaintext {
                     self.standby_waiting = false;
                 }
             }
-            Data::DecryptionshareCreated(b) if b.e3_id == self.id => {
-                self.through = self.through.max(event.seq())
-            }
+            Data::DecryptionshareCreated(b) if b.e3_id == self.id => (),
             Data::E3StageChanged(stage)
                 if stage.new_stage.is_terminal() && event.source() == EventSource::Evm =>
             {
-                ctx.stop();
+                self.retire(ctx);
                 return;
             }
-            Data::E3RequestComplete(_) | Data::E3Failed(_) | Data::Shutdown(_)
-                if event.source() != EventSource::Net =>
-            {
+            Data::E3RequestComplete(_) if event.source() != EventSource::Net => {
+                self.retire(ctx);
+                return;
+            }
+            Data::E3Failed(_) if event.source() == EventSource::Evm => {
+                self.retire(ctx);
+                return;
+            }
+            Data::E3Failed(_) | Data::Shutdown(_) if event.source() != EventSource::Net => {
                 ctx.stop();
                 return;
             }

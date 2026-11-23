@@ -364,7 +364,7 @@ impl ThresholdPlaintextAggregatorExtension {
         })
     }
 
-    fn start_synchronized(&self, ctx: &mut E3Context, through: u64) {
+    fn start_synchronized(&self, ctx: &mut E3Context) {
         if ctx.get_event_recipient("plaintext").is_some()
             || ctx.get_event_recipient("threshold_keyshare").is_none()
         {
@@ -394,7 +394,6 @@ impl ThresholdPlaintextAggregatorExtension {
             store,
             load_is_active_aggregator(ctx),
             ctx.effects_enabled(),
-            through,
         );
         ctx.set_event_recipient("plaintext", Some(actor.start().recipient()));
     }
@@ -626,7 +625,7 @@ fn create_decryptionshare_buffer(
 impl E3Extension for ThresholdPlaintextAggregatorExtension {
     fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent) {
         if self.synchronized(ctx) {
-            self.start_synchronized(ctx, evt.seq());
+            self.start_synchronized(ctx);
             return;
         }
         if let InterfoldEventData::AggregatorChanged(_) = evt.get_data() {
@@ -684,18 +683,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
 
     async fn hydrate(&self, ctx: &mut E3Context, snapshot: &E3ContextSnapshot) -> Result<()> {
         if self.synchronized(ctx) {
-            let mut through = 0;
-            crate::history::visit_e3_history(&self.eventstore, &ctx.e3_id, |event| {
-                if matches!(
-                    event.get_data(),
-                    InterfoldEventData::DecryptionshareCreated(_)
-                ) {
-                    through = event.seq();
-                }
-                Ok(())
-            })
-            .await?;
-            self.start_synchronized(ctx, through);
+            self.start_synchronized(ctx);
             return Ok(());
         }
         self.remember_canonical_committee(ctx);

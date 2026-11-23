@@ -36,6 +36,9 @@ pub struct CanonicalKeyProjection {
     candidates: HashMap<E3id, Vec<PublicKeyAggregated>>,
     closed: HashMap<E3id, bool>,
     hydrating_contexts: HashSet<E3id>,
+    // A peer can beat our request observation. Keep a conservative scan floor per chain,
+    // rather than retaining a map keyed by unauthenticated E3 IDs.
+    early_share_floor: HashMap<u64, u64>,
     synchronized_authorities:
         HashMap<E3id, crate::contracts::ISynchronizedDkgPublication::Authority>,
     synchronized_proofs: HashMap<E3id, SynchronizedPublicationObservation>,
@@ -53,6 +56,7 @@ impl CanonicalKeyProjection {
             candidates: HashMap::new(),
             closed: HashMap::new(),
             hydrating_contexts: HashSet::new(),
+            early_share_floor: HashMap::new(),
             synchronized_authorities: HashMap::new(),
             synchronized_proofs: HashMap::new(),
         }
@@ -162,6 +166,20 @@ impl CanonicalKeyProjection {
             return Ok(());
         }
         match event.get_data() {
+            InterfoldEventData::DecryptionshareCreated(share) => {
+                let id = &share.e3_id;
+                if self.synchronized_request(id) || self.hydrating_contexts.contains(id) {
+                    self.keys.note_synchronized_candidate(id, event.seq());
+                } else if !self.requests.contains_key(id)
+                    && self.interfold_addresses.contains_key(&id.chain_id())
+                {
+                    let first = self
+                        .early_share_floor
+                        .entry(id.chain_id())
+                        .or_insert(event.seq());
+                    *first = (*first).min(event.seq());
+                }
+            }
             InterfoldEventData::CiphertextOutputReferencePublished(output)
                 if chain_fact && self.synchronized_request(&output.e3_id) =>
             {
@@ -230,6 +248,17 @@ impl CanonicalKeyProjection {
                                 previous == request,
                                 "confirmed synchronized request changed"
                             );
+                        }
+                    }
+                    if dormant_setup
+                        && !self.requests.contains_key(&request.e3_id)
+                        && !self.hydrating_contexts.contains(&request.e3_id)
+                    {
+                        if let Some(&first) = self.early_share_floor.get(&request.e3_id.chain_id())
+                        {
+                            self.keys.note_synchronized_candidate(&request.e3_id, first);
+                            self.keys
+                                .note_synchronized_candidate(&request.e3_id, event.seq());
                         }
                     }
                     self.requests
