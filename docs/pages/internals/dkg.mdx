@@ -800,13 +800,14 @@ announcer with the least queued work supplies queue capacity, including for retr
 eviction, shared work moves to a less loaded announcer. Queue growth from one peer cannot discard
 another announcer's only pending document.
 
-Capacity planning uses four concurrent N=19, H=14 E3s and a 2x margin. Each E3 can emit 380 document
-notifications and 173 ordinary publications, including six Ready updates per party. This gives 4,424
-publications per round with the margin. Each seen-ID cache reserves four rounds for initial traffic
-and early retries, plus 15 IDs/s for six hours: 341,696 entries. A node needs 54 remote documents
-per E3; four E3s with the margin need 432 queue slots, rounded up to 512. Early notifications have
-3,040 slots because the recipient is not yet known. These entries distinguish the announcing peer,
-document, and party filter, so committee selection preserves each peer's attribution.
+Capacity planning uses four concurrent N=45, H=34 E3s and a 2x margin. Each E3 can emit 2,070
+document notifications and 407 ordinary publications, including six Ready updates per party. This
+gives 19,816 publications per round with the margin. Each seen-ID cache reserves four rounds for
+initial traffic and early retries, plus 67 IDs/s for six hours: 1,526,464 entries. A node needs 132
+remote documents per E3; four E3s with the margin need 1,056 queue slots, rounded up to 2,048. Early
+notifications have 16,560 slots because the recipient is not yet known. These entries distinguish
+the announcing peer, document, and party filter, so committee selection preserves each peer's
+attribution.
 
 Seen-ID caches admit every new ID. Peers borrow idle space; at capacity, a peer at its fair share
 replaces its own oldest ID. A peer below its share reclaims space from the largest owner. Early

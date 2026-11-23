@@ -939,7 +939,7 @@ run `interfold node reset-data`, which keeps the wallet key.
 
 A full node can receive an E3 event before the actor that consumes it starts. The request router
 keeps these events in order for recipients declared by the installed extensions. Each E3 has a limit
-of 4,096 deferred entries and 1 GiB of accounted bytes. The router has a shared limit of 16,384
+of 5,552 deferred entries and 1 GiB of accounted bytes. The router has a shared limit of 22,208
 entries and 3 GiB. Each recipient copy counts toward both limits, including shared payload bytes.
 
 Each entry reserves its encoded bytes, nested inline storage, and 64 bytes per allocation candidate.
@@ -949,15 +949,17 @@ payload byte. Shared bytes retain no spare capacity, and deferred copies compact
 shared keys and threshold shares. Each entry also reserves twice its inline event size for queue
 capacity.
 
-These limits cover four concurrent E3s with the `small` committee (N=19, H=14), the largest on
+The byte limits cover four concurrent E3s with the `small` committee (N=19, H=14), the largest on
 mainnet, and the secure 8192-degree preset. They are not sized for the `large` committee (N=45,
-H=34) that Sepolia and local chains also route. The slashing recipients start at committee
-finalization. Keyshare and public-key recipients start at local selection. Only the plaintext
-recipient retains the complete local DKG history until ciphertext output arrives.
+H=34) that Sepolia and local chains also route; the entry limits are. The slashing recipients start
+at committee finalization. Keyshare and public-key recipients start at local selection. Only the
+plaintext recipient retains the complete local DKG history until ciphertext output arrives.
 
-The late-recipient allowance is 1,536 records and 640 MiB per E3. It includes the C1–C3 witnesses,
+The late-recipient allowance is 2,992 records and 640 MiB per E3. It includes the C1–C3 witnesses,
 the complete request payloads retained by computation failures, C4 inputs, peer shares, and document
 envelopes. Four such histories use 2.5 GiB, leaving 512 MiB of margin below the shared byte limit.
+The entry limits suit four `large` committees (N=45, H=34); the byte limits suit the `small`
+committee.
 
 The 3 GiB ceiling includes allocation reservations, but it does not measure exact resident memory.
 In an 8 GiB memory budget, allow another 1.5 GiB for fragmentation, freed storage, and an in-flight
