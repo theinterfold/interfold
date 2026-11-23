@@ -15,18 +15,50 @@ use alloy_primitives::{Address, B256, U256};
 use e3_evm::log_window::is_range_limit_error;
 use e3_evm_contracts::{IBondingRegistry, ICiphernodeRegistry, IInterfold};
 use e3_protocol::{node::LogPosition, UnixSecs};
-use futures::{future::try_join_all, ready, stream::BoxStream, Stream, StreamExt};
+use futures::{
+    ready,
+    stream::{self, BoxStream},
+    Stream, StreamExt, TryStreamExt,
+};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     pin::Pin,
+    sync::{Arc, Mutex, PoisonError},
     task::{Context, Poll},
 };
+
+const MAX_CACHED_BLOCK_TIMES: usize = 4_096;
+const MAX_CONCURRENT_RPC: usize = 16;
+
+#[derive(Default)]
+struct BlockTimeCache {
+    times: HashMap<u64, UnixSecs>,
+    order: VecDeque<u64>,
+}
+
+impl BlockTimeCache {
+    fn get(&self, block: u64) -> Option<UnixSecs> {
+        self.times.get(&block).copied()
+    }
+
+    fn insert(&mut self, block: u64, time: UnixSecs) {
+        if self.times.insert(block, time).is_none() {
+            self.order.push_back(block);
+        }
+        while self.order.len() > MAX_CACHED_BLOCK_TIMES {
+            if let Some(oldest) = self.order.pop_front() {
+                self.times.remove(&oldest);
+            }
+        }
+    }
+}
 
 /// A chain node over JSON-RPC.
 #[derive(Clone)]
 pub struct ChainNode<P> {
     provider: P,
     contracts: Contracts,
+    timestamps: Arc<Mutex<BlockTimeCache>>,
 }
 
 impl<P> ChainNode<P> {
@@ -34,6 +66,7 @@ impl<P> ChainNode<P> {
         Self {
             provider,
             contracts,
+            timestamps: Arc::new(Mutex::new(BlockTimeCache::default())),
         }
     }
 }
@@ -85,7 +118,57 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
                 false => LogsError::Failed(error),
             }
         })?;
+
         let mut times: BTreeMap<u64, UnixSecs> = BTreeMap::new();
+        let mut missing: BTreeSet<u64> = BTreeSet::new();
+        {
+            let cache = self
+                .timestamps
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            for log in &logs {
+                let (Some(block), Some(_), Some(_)) =
+                    (log.block_number, log.log_index, log.transaction_hash)
+                else {
+                    return Err(RpcError("a log without its block position".into()).into());
+                };
+                if let Some(time) = log.block_timestamp {
+                    times.insert(block, time);
+                } else if let Some(time) = cache.get(block) {
+                    times.insert(block, time);
+                } else if !times.contains_key(&block) {
+                    missing.insert(block);
+                }
+            }
+        }
+
+        if !missing.is_empty() {
+            let fetched: Vec<(u64, UnixSecs)> =
+                stream::iter(missing)
+                    .map(|block| async move {
+                        Ok::<_, RpcError>((block, self.block_time(block).await?))
+                    })
+                    .buffer_unordered(MAX_CONCURRENT_RPC)
+                    .try_collect()
+                    .await?;
+            let mut cache = self
+                .timestamps
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            for (block, time) in fetched {
+                cache.insert(block, time);
+                times.insert(block, time);
+            }
+        } else if !times.is_empty() {
+            let mut cache = self
+                .timestamps
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            for (&block, &time) in &times {
+                cache.insert(block, time);
+            }
+        }
+
         let mut raw = Vec::with_capacity(logs.len());
         for log in logs {
             let (Some(block), Some(log_index), Some(transaction)) =
@@ -93,11 +176,10 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
             else {
                 return Err(RpcError("a log without its block position".into()).into());
             };
-            let time = match log.block_timestamp.or_else(|| times.get(&block).copied()) {
-                Some(time) => time,
-                None => self.block_time(block).await?,
-            };
-            times.insert(block, time);
+            let time = log
+                .block_timestamp
+                .or_else(|| times.get(&block).copied())
+                .ok_or_else(|| RpcError(format!("missing timestamp for block {block}").into()))?;
             raw.push(RawLog {
                 address: log.address(),
                 topics: log.topics().to_vec(),
@@ -118,18 +200,12 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
     async fn sortition(&self, e3: U256, block: u64) -> Result<Sortition, RpcError> {
         let registry = ICiphernodeRegistry::new(self.contracts.registry, &self.provider);
         let at = BlockId::number(block);
-        let request = registry
-            .getSortitionRequest(e3)
-            .block(at)
-            .call()
-            .await
-            .map_err(RpcError::new)?;
-        let seed = registry
-            .sortitionSeed(e3)
-            .block(at)
-            .call()
-            .await
-            .map_err(RpcError::new)?;
+        let req_call = registry.getSortitionRequest(e3).block(at);
+        let seed_call = registry.sortitionSeed(e3).block(at);
+        let (request, seed) = tokio::try_join!(
+            async { req_call.call().await.map_err(RpcError::new) },
+            async { seed_call.call().await.map_err(RpcError::new) },
+        )?;
         Ok(Sortition {
             ticket_price: request.ticketPrice,
             committee_deadline: secs(request.committeeDeadline),
@@ -177,11 +253,19 @@ impl<P: Provider + Send + Sync> Rpc for ChainNode<P> {
         at: UnixSecs,
     ) -> Result<BTreeSet<Address>, RpcError> {
         let bonding = IBondingRegistry::new(self.contracts.bonding, &self.provider);
-        let reads = operators.iter().map(|operator| {
-            let read = bonding.eligibilityAt(*operator, U256::from(at));
-            async move { read.call().await.map(|answer| (*operator, answer.active)) }
-        });
-        let answers = try_join_all(reads).await.map_err(RpcError::new)?;
+        let reads: Vec<_> = operators
+            .iter()
+            .copied()
+            .map(|operator| {
+                let read = bonding.eligibilityAt(operator, U256::from(at));
+                async move { read.call().await.map(|answer| (operator, answer.active)) }
+            })
+            .collect();
+        let answers: Vec<(Address, bool)> = stream::iter(reads)
+            .buffer_unordered(MAX_CONCURRENT_RPC)
+            .try_collect()
+            .await
+            .map_err(RpcError::new)?;
         Ok(answers
             .into_iter()
             .filter_map(|(operator, active)| active.then_some(operator))

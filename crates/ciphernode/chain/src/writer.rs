@@ -21,8 +21,9 @@ use e3_protocol::{
     node::{Submission, Transaction},
     proof::{verifier_calldata, ZkProof},
 };
+use futures::{stream, StreamExt};
 use reverts::{Reading, Verdict};
-use std::{fmt::Display, future::Future, iter, time::Duration};
+use std::{collections::HashMap, fmt::Display, future::Future, iter, time::Duration};
 use tracing::{debug, info, warn};
 
 /// What the shared bindings do not carry.
@@ -129,6 +130,16 @@ pub trait Account {
     fn key_chunk(&self, chunk: &KeyChunk)
         -> impl Future<Output = Result<OnChain, RpcError>> + Send;
 
+    /// Optional batch read of chunks `0..count` for `first`'s candidate in a single log scan.
+    /// Returning `None` falls back to per-chunk [`Account::key_chunk`] calls.
+    fn key_chunks(
+        &self,
+        _first: &KeyChunk,
+        _count: u16,
+    ) -> impl Future<Output = Option<Result<HashMap<u16, OnChain>, RpcError>>> + Send {
+        async { None }
+    }
+
     /// Counts `call` as driven, by a sender that still sends it, for as long as the result lives.
     fn drive(&self, call: &Call) -> impl Send + '_;
 
@@ -172,13 +183,78 @@ impl<A: Account, B: BlobStore> Writer<A, B> {
     }
 
     /// Sends `submission`'s calls in order, each until the chain says it is finished; a call the
-    /// chain can no longer take ends the submission. The node stops the calls of an E3 it no longer
-    /// owes.
+    /// chain can no longer take ends the submission. Key chunks are checked in a single log scan
+    /// and submitted concurrently when the account supports batched chunk reads. The node stops
+    /// the calls of an E3 it no longer owes.
     pub async fn submit(&self, submission: &Submission) -> Result<(), WriteError> {
         let blobs = self.blobs.of(submission.e3);
-        for step in calls(&self.contracts, &blobs, submission)? {
-            if deliver(&self.account, &submission.e3, &step).await == Delivered::Obsolete {
-                break;
+        let steps = calls(&self.contracts, &blobs, submission)?;
+        let first_chunk_pos = steps
+            .iter()
+            .position(|step| step.chunk.is_some())
+            .unwrap_or(steps.len());
+        let (ordered, chunk_steps) = steps.split_at(first_chunk_pos);
+        for step in ordered {
+            if deliver(&self.account, &submission.e3, step).await == Delivered::Obsolete {
+                return Ok(());
+            }
+        }
+        if chunk_steps.is_empty() {
+            return Ok(());
+        }
+        let first_chunk = chunk_steps[0]
+            .chunk
+            .as_ref()
+            .expect("chunk_steps starts at a chunk");
+        let count = u16::try_from(chunk_steps.len()).unwrap_or(u16::MAX);
+        match self.account.key_chunks(first_chunk, count).await {
+            Some(batch_result) => {
+                let statuses = match batch_result {
+                    Ok(map) => Some(map),
+                    Err(error) => {
+                        warn!(
+                            e3 = %submission.e3, %error,
+                            "the chain's chunks could not be read; sending"
+                        );
+                        None
+                    }
+                };
+                const MAX_CONCURRENT_CHUNKS: usize = 8;
+                stream::iter(chunk_steps)
+                    .for_each_concurrent(MAX_CONCURRENT_CHUNKS, |step| {
+                        let initial = statuses.as_ref().and_then(|map| {
+                            step.chunk
+                                .as_ref()
+                                .map(|c| map.get(&c.index).copied().unwrap_or(OnChain::Absent))
+                        });
+                        async move {
+                            if initial == Some(OnChain::Confirmed) {
+                                if let Some(chunk) = &step.chunk {
+                                    info!(
+                                        e3 = %submission.e3, call = step.call.label, index = chunk.index,
+                                        "nothing to send: the chain has it already"
+                                    );
+                                }
+                                return;
+                            }
+                            let skip_first_chunk_read = initial == Some(OnChain::Absent);
+                            let _ = deliver_with_hint(
+                                &self.account,
+                                &submission.e3,
+                                step,
+                                skip_first_chunk_read,
+                            )
+                            .await;
+                        }
+                    })
+                    .await;
+            }
+            None => {
+                for step in chunk_steps {
+                    if deliver(&self.account, &submission.e3, step).await == Delivered::Obsolete {
+                        break;
+                    }
+                }
             }
         }
         Ok(())
@@ -224,16 +300,26 @@ pub async fn acknowledge<A: Account>(account: &A, call: &Call) -> bool {
 
 /// `of` names what the call is for, in logs.
 async fn deliver<A: Account>(account: &A, of: &(dyn Display + Sync), step: &Step) -> Delivered {
+    deliver_with_hint(account, of, step, false).await
+}
+
+async fn deliver_with_hint<A: Account>(
+    account: &A,
+    of: &(dyn Display + Sync),
+    step: &Step,
+    mut skip_chunk_read: bool,
+) -> Delivered {
     let (label, mut wait) = (step.call.label, FIRST_RETRY);
     // Driven through the waits between attempts too, so the account frees no nonce of a call that
     // still goes out.
     let _driving = account.drive(&step.call);
     loop {
-        match attempt(account, of, step).await {
+        match attempt(account, of, step, skip_chunk_read).await {
             Ok(Some(delivered)) => return delivered,
             Ok(None) => {}
             Err(error) => warn!(%of, call = label, %error, "the attempt failed"),
         }
+        skip_chunk_read = false;
         tokio::time::sleep(wait).await;
         wait = (wait * 2).min(LONGEST_RETRY);
     }
@@ -244,24 +330,27 @@ async fn attempt<A: Account>(
     account: &A,
     of: &(dyn Display + Sync),
     step: &Step,
+    skip_chunk_read: bool,
 ) -> Result<Option<Delivered>, RpcError> {
     let call = &step.call;
-    if let Some(chunk) = &step.chunk {
-        match account.key_chunk(chunk).await {
-            Ok(OnChain::Confirmed) => {
-                info!(
-                    %of, call = call.label, index = chunk.index,
-                    "nothing to send: the chain has it already"
-                );
-                return Ok(Some(Delivered::Done));
+    if !skip_chunk_read {
+        if let Some(chunk) = &step.chunk {
+            match account.key_chunk(chunk).await {
+                Ok(OnChain::Confirmed) => {
+                    info!(
+                        %of, call = call.label, index = chunk.index,
+                        "nothing to send: the chain has it already"
+                    );
+                    return Ok(Some(Delivered::Done));
+                }
+                Ok(OnChain::Unconfirmed) => return Ok(None),
+                Ok(OnChain::Absent) => {}
+                // Finding out must not hold up the key: a repeated chunk costs only gas.
+                Err(error) => warn!(
+                    %of, call = call.label, %error,
+                    "the chain's chunks could not be read; sending"
+                ),
             }
-            Ok(OnChain::Unconfirmed) => return Ok(None),
-            Ok(OnChain::Absent) => {}
-            // Finding out must not hold up the key: a repeated chunk costs only gas.
-            Err(error) => warn!(
-                %of, call = call.label, %error,
-                "the chain's chunks could not be read; sending"
-            ),
         }
     }
     let gas = match account.estimate(call).await? {

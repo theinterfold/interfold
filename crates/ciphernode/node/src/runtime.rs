@@ -15,7 +15,7 @@ use alloy_signer_local::PrivateKeySigner;
 use e3_blobs::BlobStore;
 use e3_chain::{Account, Contracts, ReadError, Reader, Rpc, RpcError, Writer};
 use e3_data_availability::DataAvailabilityReader;
-use e3_engine::{EffectKey, Engine};
+use e3_engine::{BatchOp, EffectKey, Engine};
 use e3_jobs::JobRunner;
 use e3_journal::Journal;
 use e3_p2p::{Inbox, Network};
@@ -34,6 +34,9 @@ use std::{
 };
 use tokio::{sync::mpsc, task::JoinSet, time::Instant};
 use tracing::{debug, info, warn};
+
+/// Maximum queued events collapsed into a single atomic journal group-commit transaction.
+const MAX_BATCH_OPS: usize = 128;
 
 /// How long a failed chain read waits before it runs again.
 const RETRY_AFTER: Duration = Duration::from_secs(30);
@@ -174,6 +177,7 @@ where
     let mut recovered = Some(recovered);
     sweep(&parts.blobs, engine.machine());
     let mut admitted = engine.machine().admission();
+    let mut admission_epoch = engine.machine().admission_epoch();
     parts.network.admit(admitted.clone());
     let (chain_id, start_block) = (settings.contracts.chain_id, settings.start_block);
     let from = engine
@@ -203,6 +207,7 @@ where
         AbortOnDrop(tokio::spawn(serving))
     });
     let mut essential: JoinSet<NodeError> = JoinSet::new();
+    let mut cleanup: JoinSet<()> = JoinSet::new();
     let (heartbeat, poll, sender) = (parts.heartbeat, settings.poll_interval, events.clone());
     let startup_timeout = settings.startup_timeout;
     essential.spawn(read_chain(
@@ -252,6 +257,7 @@ where
         }
         let mut drained = false;
         loop {
+            while cleanup.try_join_next().is_some() {}
             let machine = engine.machine();
             if machine.drained() && !drained {
                 info!(
@@ -261,7 +267,7 @@ where
                 );
             }
             drained = machine.drained();
-            let event = match queue.pop_front() {
+            let first = match queue.pop_front() {
                 Some(event) => event,
                 None => tokio::select! {
                     event = next_event(&mut receiver, engine.next_deadline()) => event?,
@@ -291,84 +297,140 @@ where
                     _ = board_update.tick() => {
                         board.machine(engine.machine());
                         board.peers(effects.network.connected());
+                        board.adapter_stats(
+                            effects.blobs.cache_stats(),
+                            effects.network.stats(),
+                        );
                         continue;
                     }
                     ended = essential.join_next() => return Err(ended_task(ended)),
                     () = &mut stop => return Ok(engine),
                 },
             };
-            let (input, answers) = match event {
-                Event::Input(input) => (input, None),
-                Event::Result(key, input) => (input, Some(key)),
-                Event::Done(key) => {
-                    engine.acknowledge(key)?;
-                    continue;
-                }
-                Event::CaughtUp(listed) => {
-                    let machine = engine.machine();
-                    // The node's operators come from logs, so the chain shows whether it read them
-                    // all. A chain node behind the journal cannot say yet.
-                    let current = machine
-                        .applied(chain_id)
-                        .is_none_or(|at| at.block <= listed.block);
-                    let read = machine.listed(chain_id);
-                    if current && read != listed.operators {
-                        return Err(NodeError::MissedRegistrations {
-                            listed: listed.operators,
-                            block: listed.block,
-                            read,
-                            start_block,
-                        });
-                    }
-                    let Some(recovered) = recovered.take() else {
-                        continue;
-                    };
-                    let (owed, over): (Vec<_>, Vec<_>) = recovered
-                        .into_iter()
-                        .partition(|work| machine.owes(&work.effect.e3(), work.effect.scope()));
-                    for work in over {
-                        engine.acknowledge(work.key)?;
-                    }
-                    queue.extend(effects.dispatch(owed));
-                    if !drain && engine.machine().draining() {
-                        queue.push_back(Event::Input(Input::Drain(false)));
-                    }
-                    // The recovered calls go out again from here, so a call no one sends now is one
-                    // the node no longer owes.
-                    let keeper = keeper.clone();
-                    essential.spawn(async move {
-                        match free_abandoned_nonces(|| keeper.free_abandoned()).await {}
+
+            if let Event::CaughtUp(listed) = first {
+                let machine = engine.machine();
+                // The node's operators come from logs, so the chain shows whether it read them
+                // all. A chain node behind the journal cannot say yet.
+                let current = machine
+                    .applied(chain_id)
+                    .is_none_or(|at| at.block <= listed.block);
+                let read = machine.listed(chain_id);
+                if current && read != listed.operators {
+                    return Err(NodeError::MissedRegistrations {
+                        listed: listed.operators,
+                        block: listed.block,
+                        read,
+                        start_block,
                     });
-                    continue;
                 }
-            };
-            debug!(input = %brief(&input), "applying");
+                let Some(recovered) = recovered.take() else {
+                    continue;
+                };
+                let (owed, over): (Vec<_>, Vec<_>) = recovered
+                    .into_iter()
+                    .partition(|work| machine.owes(&work.effect.e3(), work.effect.scope()));
+                if !over.is_empty() {
+                    let ops: Vec<BatchOp<Input>> =
+                        over.into_iter().map(|work| BatchOp::Ack(work.key)).collect();
+                    let op_count = ops.len();
+                    let (next, _) = tokio::task::spawn_blocking(move || engine.apply_batch(ops))
+                        .await
+                        .map_err(|e| NodeError::TaskPanicked("journal commit", e.to_string()))??;
+                    engine = next;
+                    board.record_batch(op_count);
+                }
+                queue.extend(effects.dispatch(owed));
+                if !drain && engine.machine().draining() {
+                    queue.push_back(Event::Input(Input::Drain(false)));
+                }
+                // The recovered calls go out again from here, so a call no one sends now is one
+                // the node no longer owes.
+                let keeper = keeper.clone();
+                essential.spawn(async move {
+                    match free_abandoned_nonces(|| keeper.free_abandoned()).await {}
+                });
+                continue;
+            }
+
+            // Group-commit all immediately ready events (from `queue` and `receiver`) in one
+            // atomic `redb` write transaction off the Tokio worker thread. Stop before any
+            // `Event::CaughtUp` so all preceding chain facts commit first.
+            let ts = now();
+            let mut ops: Vec<BatchOp<Input>> = Vec::with_capacity(16);
+            push_batch_op(&mut ops, ts, first);
+            while ops.len() < MAX_BATCH_OPS {
+                match queue.front() {
+                    Some(Event::CaughtUp(_)) | None => break,
+                    Some(_) => {
+                        let next = queue.pop_front().expect("checked front");
+                        push_batch_op(&mut ops, ts, next);
+                    }
+                }
+            }
+            if !matches!(queue.front(), Some(Event::CaughtUp(_))) {
+                while ops.len() < MAX_BATCH_OPS {
+                    match receiver.try_recv() {
+                        Ok(Event::CaughtUp(listed)) => {
+                            queue.push_front(Event::CaughtUp(listed));
+                            break;
+                        }
+                        Ok(next) => push_batch_op(&mut ops, ts, next),
+                        Err(_) => break,
+                    }
+                }
+            }
+
+            let op_count = ops.len();
             let working: BTreeSet<E3Id> = engine.machine().working().copied().collect();
-            // The answer to an effect and the end of that effect are one commit, so a crash
-            // cannot leave an answered effect to run again.
-            let (next, pending) = match answers {
-                Some(key) => engine.answer(now(), input, key)?,
-                None => engine.apply(now(), input)?,
-            };
+            let may_fold: BTreeSet<E3Id> = working
+                .iter()
+                .copied()
+                .filter(|e3| engine.machine().might_fold(e3))
+                .collect();
+            // The answers to effects and any newly emitted durable effects commit atomically in
+            // one journal transaction on the blocking pool.
+            let (next, pending) = tokio::task::spawn_blocking(move || engine.apply_batch(ops))
+                .await
+                .map_err(|e| NodeError::TaskPanicked("journal commit", e.to_string()))??;
             engine = next;
-            // Before the step's effects go out: a peer can ask for what they announce at once.
-            let admission = engine.machine().admission();
-            if admission != admitted {
-                effects.network.admit(admission.clone());
-                admitted = admission;
+            board.record_batch(op_count);
+
+            // Before the batch's effects go out: a peer can ask for what they announce at once.
+            let next_epoch = engine.machine().admission_epoch();
+            if next_epoch != admission_epoch {
+                let admission = engine.machine().admission();
+                if admission != admitted {
+                    effects.network.admit(admission.clone());
+                    admitted = admission;
+                }
+                admission_epoch = next_epoch;
             }
             queue.extend(effects.dispatch(pending));
             for key in effects.stop_ended(engine.machine()) {
-                engine.acknowledge(key)?;
+                queue.push_back(Event::Done(key));
+            }
+            for e3 in &may_fold {
+                if !engine.machine().might_fold(e3) {
+                    effects.jobs.cancel_dkg_prefold(*e3);
+                }
             }
             let still: BTreeSet<&E3Id> = engine.machine().working().collect();
             for e3 in working.iter().filter(|e3| !still.contains(e3)) {
-                if let Err(error) = effects.blobs.close(*e3) {
-                    warn!(%e3, %error, "deleting the blobs of ended work failed");
-                }
-                if let Err(error) = effects.jobs.close(*e3) {
-                    warn!(%e3, %error, "deleting the proving files of ended work failed");
-                }
+                let e3 = *e3;
+                let blobs = effects.blobs.clone();
+                let jobs = effects.jobs.clone();
+                cleanup.spawn(async move {
+                    let _ = tokio::task::spawn_blocking(move || {
+                        if let Err(error) = blobs.close(e3) {
+                            warn!(%e3, %error, "deleting the blobs of ended work failed");
+                        }
+                        if let Err(error) = jobs.close(e3) {
+                            warn!(%e3, %error, "deleting the proving files of ended work failed");
+                        }
+                    })
+                    .await;
+                });
             }
         }
     }
@@ -378,11 +440,38 @@ where
     essential.abort_all();
     effects.stop_all();
     effects.stopped(JOB_STOP_LIMIT).await;
+    while cleanup.join_next().await.is_some() {}
     effects.network.close().await;
     // A clean stop leaves the state in one snapshot beside the outbox, which is all a later release
     // has to read.
-    outcome?.checkpoint()?;
+    let mut engine = outcome?;
+    tokio::task::spawn_blocking(move || engine.checkpoint())
+        .await
+        .map_err(|e| NodeError::TaskPanicked("journal checkpoint", e.to_string()))??;
     Ok(())
+}
+
+fn push_batch_op(ops: &mut Vec<BatchOp<Input>>, now: UnixSecs, event: Event) {
+    match event {
+        Event::Input(input) => {
+            debug!(input = %brief(&input), "applying");
+            ops.push(BatchOp::Step {
+                now,
+                input,
+                answers: None,
+            });
+        }
+        Event::Result(key, input) => {
+            debug!(input = %brief(&input), "applying");
+            ops.push(BatchOp::Step {
+                now,
+                input,
+                answers: Some(key),
+            });
+        }
+        Event::Done(key) => ops.push(BatchOp::Ack(key)),
+        Event::CaughtUp(_) => unreachable!("CaughtUp is handled outside batch commit"),
+    }
 }
 
 /// The first E3 under a BFV profile this release does not run that has not ended, or that still

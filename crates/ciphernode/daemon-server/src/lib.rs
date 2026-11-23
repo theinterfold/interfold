@@ -17,6 +17,10 @@ use tracing::error;
 const TCP_ADDRESS: &str = "127.0.0.1"; // using localhost specifically so that it is not mounted
                                        // externally. We might change this if we need to control
                                        // externally and add authentication or TLS
+const MAX_BODY_BYTES: usize = 1024 * 1024;
+const MAX_HEADER_BYTES: usize = 16 * 1024;
+const MAX_HEADERS: usize = 128;
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub struct ServerInfo {
     pub port: u16,
@@ -96,23 +100,63 @@ where
     let (reader, mut writer) = stream.into_split();
     let mut buf_reader = BufReader::new(reader);
 
-    // Read headers until blank line
-    let mut content_length: usize = 0;
-    loop {
-        let mut line = String::new();
-        buf_reader.read_line(&mut line).await?;
-        if line.trim().is_empty() {
-            break;
+    // Read headers until blank line, bounded in size, count, and wall time.
+    let read_result = tokio::time::timeout(REQUEST_TIMEOUT, async {
+        let mut content_length: usize = 0;
+        let mut header_bytes: usize = 0;
+        let mut header_count: usize = 0;
+        loop {
+            let mut line = String::new();
+            let n = buf_reader.read_line(&mut line).await?;
+            if n == 0 || line.trim().is_empty() {
+                break;
+            }
+            header_bytes += n;
+            header_count += 1;
+            if header_bytes > MAX_HEADER_BYTES || header_count > MAX_HEADERS {
+                return Ok::<_, anyhow::Error>(Err((
+                    "431 Request Header Fields Too Large",
+                    "headers exceed limit",
+                )));
+            }
+            if let Some(val) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                content_length = val.trim().parse().unwrap_or(0);
+                if content_length > MAX_BODY_BYTES {
+                    return Ok(Err(("413 Payload Too Large", "request body exceeds 1 MiB")));
+                }
+            }
         }
-        if let Some(val) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-            content_length = val.trim().parse().unwrap_or(0);
-        }
-    }
 
-    // Read body
-    let mut body = vec![0u8; content_length];
-    tokio::io::AsyncReadExt::read_exact(&mut buf_reader, &mut body).await?;
-    let body = String::from_utf8(body)?;
+        let mut body = vec![0u8; content_length];
+        tokio::io::AsyncReadExt::read_exact(&mut buf_reader, &mut body).await?;
+        let body = String::from_utf8(body)?;
+        Ok(Ok(body))
+    })
+    .await;
+
+    let body = match read_result {
+        Ok(Ok(Ok(body))) => body,
+        Ok(Ok(Err((status, message)))) => {
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{message}",
+                message.len(),
+            );
+            writer.write_all(response.as_bytes()).await?;
+            writer.shutdown().await?;
+            return Ok(());
+        }
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            let message = "request timed out";
+            let response = format!(
+                "HTTP/1.1 408 Request Timeout\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{message}",
+                message.len(),
+            );
+            writer.write_all(response.as_bytes()).await?;
+            writer.shutdown().await?;
+            return Ok(());
+        }
+    };
 
     // Run the existing logic
     let (status, response_body) = match handler(body).await {

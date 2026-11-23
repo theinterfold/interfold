@@ -245,11 +245,8 @@ async fn proofs(config: &Config, deadline: Instant) -> anyhow::Result<(Proofs, u
             status => return Err(Refused::ProverNotReady(format!("{status:?}")).into()),
         }
     }
-    let circuits = Circuits::new(
-        ZkProver::new(&backend),
-        capacity.proofs,
-        capacity.bb_threads,
-    )?;
+    let circuits =
+        Circuits::with_thread_budget(ZkProver::new(&backend), capacity.proofs, capacity.threads)?;
     Ok((
         Proofs::Circuits(Box::new(circuits)),
         capacity.threads,

@@ -4,22 +4,22 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Carries out the machine's effects. Each effect stays in the outbox until it is done: a job, a
-//! signature or a fetch once its result is journaled, a gossip once it is published, a submission
-//! once the writer finished it, and any effect the machine no longer owes.
+//! Carries out the machine's effects. Each durable effect stays in the outbox until it is done: a
+//! job, a signature or a fetch once its result is journaled, a gossip once it is published, a
+//! submission once the writer finished it, and any effect the machine no longer owes.
 
 use crate::{
     notes::NoteFeed,
     runtime::{now, Event},
 };
-use alloy_primitives::keccak256;
+use alloy_primitives::{keccak256, Bytes, B256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use e3_blobs::BlobStore;
 use e3_chain::{Account, Rpc, Writer};
 use e3_data_availability::{DataAvailabilityReader, DataReference};
 use e3_engine::{EffectKey, Pending};
-use e3_jobs::{Attempt, Cancel, JobError, JobRunner};
+use e3_jobs::{Attempt, Cancel, JobError, JobExecutor, JobRunner};
 use e3_p2p::Network;
 use e3_protocol::{
     node::{
@@ -27,7 +27,7 @@ use e3_protocol::{
         JobDone, Node, PeerMessage, Scope, Signed, Signing, Submission,
     },
     wire::Envelope,
-    E3Id,
+    BlobRef, E3Id,
 };
 use e3_utils::limited::Limited;
 use std::{
@@ -40,6 +40,21 @@ use tokio::{
     task::{AbortHandle, JoinHandle},
 };
 use tracing::{debug, error, warn};
+
+/// Signing boundary for operator-owned hashes (protocol attestations, gossip envelopes).
+pub(crate) trait OperatorSigner: Send + Sync + 'static {
+    fn sign_hash(&self, hash: &B256) -> Bytes;
+}
+
+impl OperatorSigner for PrivateKeySigner {
+    fn sign_hash(&self, hash: &B256) -> Bytes {
+        self.sign_hash_sync(hash)
+            .expect("a local key signs any hash")
+            .as_bytes()
+            .to_vec()
+            .into()
+    }
+}
 
 /// A wait between attempts that doubles up to a limit.
 #[derive(Clone, Copy, Debug)]
@@ -117,11 +132,11 @@ impl Task {
     }
 }
 
-pub(crate) struct Effects<R, A, N, B> {
+pub(crate) struct Effects<R, A, N, B, J = JobRunner<B>, O = PrivateKeySigner> {
     pub(crate) rpc: Arc<R>,
-    pub(crate) operator: PrivateKeySigner,
+    pub(crate) operator: O,
     pub(crate) blobs: B,
-    pub(crate) jobs: Arc<JobRunner<B>>,
+    pub(crate) jobs: Arc<J>,
     pub(crate) writer: Arc<Writer<A, B>>,
     pub(crate) network: Arc<N>,
     pub(crate) availability: Arc<dyn DataAvailabilityReader>,
@@ -136,11 +151,11 @@ pub(crate) struct Effects<R, A, N, B> {
 }
 
 /// What `Effects` is made of.
-pub(crate) struct EffectParts<R, A, N, B> {
+pub(crate) struct EffectParts<R, A, N, B, J = JobRunner<B>, O = PrivateKeySigner> {
     pub(crate) rpc: Arc<R>,
-    pub(crate) operator: PrivateKeySigner,
+    pub(crate) operator: O,
     pub(crate) blobs: B,
-    pub(crate) jobs: Arc<JobRunner<B>>,
+    pub(crate) jobs: Arc<J>,
     pub(crate) writer: Arc<Writer<A, B>>,
     pub(crate) network: Arc<N>,
     pub(crate) availability: Arc<dyn DataAvailabilityReader>,
@@ -150,14 +165,16 @@ pub(crate) struct EffectParts<R, A, N, B> {
     pub(crate) proof_slots: usize,
 }
 
-impl<R, A, N, B> Effects<R, A, N, B>
+impl<R, A, N, B, J, O> Effects<R, A, N, B, J, O>
 where
     R: Rpc + Send + Sync + 'static,
     A: Account + Send + Sync + 'static,
     N: Network,
     B: BlobStore,
+    J: JobExecutor,
+    O: OperatorSigner,
 {
-    pub(crate) fn new(parts: EffectParts<R, A, N, B>) -> Self {
+    pub(crate) fn new(parts: EffectParts<R, A, N, B, J, O>) -> Self {
         Self {
             rpc: parts.rpc,
             operator: parts.operator,
@@ -187,9 +204,10 @@ where
                     now.push(Event::Result(key, self.sign(signing)));
                     continue;
                 }
+                // `Effect::Note` is non-durable (`Node::is_durable_effect == false`), so it is
+                // recorded directly to the note feed without a journal outbox round-trip.
                 Effect::Note(note) => {
                     self.notes.record(crate::runtime::now(), note);
-                    now.push(Event::Done(key));
                     continue;
                 }
                 Effect::Gossip(message) => self.gossip(key, message),
@@ -317,13 +335,7 @@ where
         let signatures = signing
             .hashes
             .iter()
-            .map(|hash| {
-                let signature = self
-                    .operator
-                    .sign_hash_sync(hash)
-                    .expect("a local key signs any hash");
-                signature.as_bytes().to_vec().into()
-            })
+            .map(|hash| self.operator.sign_hash(hash))
             .collect();
         Input::Signed(Signed {
             e3: signing.e3,
@@ -336,12 +348,11 @@ where
         let sent_at = now();
         let signature = self
             .operator
-            .sign_hash_sync(&Envelope::signing_hash(&message, sent_at))
-            .expect("a local key signs any hash");
+            .sign_hash(&Envelope::signing_hash(&message, sent_at));
         let envelope = Envelope {
             message,
             sent_at,
-            signature: signature.as_bytes().to_vec().into(),
+            signature,
         };
         let (network, events) = (self.network.clone(), self.events.clone());
         tokio::spawn(async move {
@@ -416,19 +427,39 @@ where
             let mut backoff = Backoff::CIPHERTEXT;
             loop {
                 match availability.retrieve(&reference).await {
-                    Ok(bytes) if keccak256(&bytes) == fetch.data.hash => {
-                        match blobs.put(fetch.e3, &bytes) {
-                            Ok(blob) => {
+                    Ok(bytes) => {
+                        let store = blobs.clone();
+                        let e3 = fetch.e3;
+                        let expected_hash = fetch.data.hash;
+                        let stored = tokio::task::spawn_blocking(move || {
+                            if keccak256(&bytes) != expected_hash {
+                                return Ok(None);
+                            }
+                            let blob = BlobRef {
+                                hash: expected_hash,
+                                len: bytes.len() as u64,
+                            };
+                            store.put_verified(e3, &blob, &bytes)?;
+                            Ok::<_, e3_blobs::BlobError>(Some(blob))
+                        })
+                        .await;
+                        match stored {
+                            Ok(Ok(Some(blob))) => {
                                 let fetched = Input::Fetched(Fetched { e3: fetch.e3, blob });
                                 let _ = events.send(Event::Result(key, fetched)).await;
                                 return;
                             }
-                            Err(failure) => {
+                            Ok(Ok(None)) => {
+                                warn!(e3 = %fetch.e3, "the availability layer sent other bytes")
+                            }
+                            Ok(Err(failure)) => {
                                 error!(e3 = %fetch.e3, %failure, "storing a ciphertext failed")
+                            }
+                            Err(panic) => {
+                                error!(e3 = %fetch.e3, %panic, "storing a ciphertext panicked")
                             }
                         }
                     }
-                    Ok(_) => warn!(e3 = %fetch.e3, "the availability layer sent other bytes"),
                     Err(failure) => {
                         warn!(e3 = %fetch.e3, %failure, "fetching the ciphertext failed")
                     }

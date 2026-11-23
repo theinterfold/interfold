@@ -13,7 +13,10 @@ use e3_protocol::{
     node::{ChainEvent, ChainFact, CommitteeRequest, CommitteeSeed},
     UnixSecs,
 };
-use futures::{stream::BoxStream, StreamExt};
+use futures::{
+    stream::{self, BoxStream},
+    StreamExt, TryStreamExt,
+};
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::time::Duration;
@@ -258,13 +261,35 @@ impl<R: Rpc> Reader<R> {
             self.contracts.randomness.extend(providers);
             self.contracts.slashing.extend(managers);
         };
-        let mut events = Vec::new();
-        for decoded in decoded {
-            match decoded {
-                Decoded::Fact(event) => events.push(event),
-                Decoded::Read(read) => events.extend(Self::read(&self.rpc, read, confirmed).await?),
+        let mut read_items = Vec::new();
+        let mut slots: Vec<Option<ChainEvent>> = Vec::with_capacity(decoded.len());
+        for (index, item) in decoded.into_iter().enumerate() {
+            match item {
+                Decoded::Fact(event) => slots.push(Some(event)),
+                Decoded::Read(read) => {
+                    slots.push(None);
+                    read_items.push((index, read));
+                }
             }
         }
+        if read_items.len() == 1 {
+            let (index, read) = read_items.pop().expect("len == 1");
+            slots[index] = Self::read(&self.rpc, read, confirmed).await?;
+        } else if !read_items.is_empty() {
+            const MAX_CONCURRENT_READS: usize = 8;
+            let rpc = &self.rpc;
+            let resolved: Vec<(usize, Option<ChainEvent>)> = stream::iter(read_items)
+                .map(|(index, read)| async move {
+                    Ok::<_, RpcError>((index, Self::read(rpc, read, confirmed).await?))
+                })
+                .buffer_unordered(MAX_CONCURRENT_READS)
+                .try_collect()
+                .await?;
+            for (index, event) in resolved {
+                slots[index] = event;
+            }
+        }
+        let events: Vec<ChainEvent> = slots.into_iter().flatten().collect();
         self.next = to + 1;
         Ok(events)
     }
@@ -388,12 +413,15 @@ impl<R: Rpc> Reader<R> {
                 attestation,
                 owner_cap,
             } => {
-                let sortition = answer(rpc.sortition(e3.number, block)).await?;
+                let (sortition, dkg_window) = tokio::try_join!(
+                    answer(rpc.sortition(e3.number, block)),
+                    answer(rpc.dkg_window(e3.number, block)),
+                )?;
                 let request = CommitteeRequest {
                     time,
                     ticket_price: sortition.ticket_price,
                     owner_cap,
-                    dkg_window: answer(rpc.dkg_window(e3.number, block)).await?,
+                    dkg_window,
                 };
                 let fact = ChainFact::E3Requested {
                     e3,
@@ -412,9 +440,13 @@ impl<R: Rpc> Reader<R> {
                 e3,
                 members,
             } => {
+                let (deadlines, window) = tokio::try_join!(
+                    answer(rpc.deadlines(e3.number, block)),
+                    answer(rpc.dkg_window(e3.number, block)),
+                )?;
                 let dkg = DkgTiming {
-                    deadline: answer(rpc.deadlines(e3.number, block)).await?.dkg,
-                    window: answer(rpc.dkg_window(e3.number, block)).await?,
+                    deadline: deadlines.dkg,
+                    window,
                     finalized_block: at.block,
                 };
                 (at, time, ChainFact::CommitteeFinalized { e3, members, dkg })

@@ -97,13 +97,19 @@ impl Unmined {
         Some((*nonce, *pending))
     }
 
+    #[cfg(test)]
     fn insert(&mut self, nonce: u64, pending: Pending) -> io::Result<()> {
         self.sends.insert(nonce, pending);
         self.save()
     }
 
+    async fn insert_async(&mut self, nonce: u64, pending: Pending) -> io::Result<()> {
+        self.sends.insert(nonce, pending);
+        self.save_async().await
+    }
+
     /// Forgets the send at `nonce` if it still carries `call`.
-    fn landed(&mut self, nonce: u64, call: &B256) -> io::Result<()> {
+    async fn landed_async(&mut self, nonce: u64, call: &B256) -> io::Result<()> {
         match self
             .sends
             .get(&nonce)
@@ -111,13 +117,14 @@ impl Unmined {
         {
             true => {
                 self.sends.remove(&nonce);
-                self.save()
+                self.save_async().await
             }
             false => Ok(()),
         }
     }
 
     /// Forgets the sends whose nonces the chain used, `mined` being the account's mined count.
+    #[cfg(test)]
     fn forget_mined(&mut self, mined: u64) -> io::Result<()> {
         let before = self.sends.len();
         self.sends.retain(|nonce, _| *nonce >= mined);
@@ -127,16 +134,39 @@ impl Unmined {
         }
     }
 
-    fn save(&self) -> io::Result<()> {
-        let partial = self.path.with_extension("partial");
-        let mut file = fs::File::create(&partial)?;
-        file.write_all(&serde_json::to_vec(&self.sends)?)?;
-        file.sync_all()?;
-        fs::rename(&partial, &self.path)?;
-        match self.path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
-            Some(dir) => fs::File::open(dir)?.sync_all(),
-            None => Ok(()),
+    async fn forget_mined_async(&mut self, mined: u64) -> io::Result<()> {
+        let before = self.sends.len();
+        self.sends.retain(|nonce, _| *nonce >= mined);
+        match self.sends.len() == before {
+            true => Ok(()),
+            false => self.save_async().await,
         }
+    }
+
+    #[cfg(test)]
+    fn save(&self) -> io::Result<()> {
+        let bytes = serde_json::to_vec(&self.sends)?;
+        write_atomic(&self.path, &bytes)
+    }
+
+    async fn save_async(&self) -> io::Result<()> {
+        let bytes = serde_json::to_vec(&self.sends)?;
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || write_atomic(&path, &bytes))
+            .await
+            .map_err(|e| io::Error::other(e.to_string()))?
+    }
+}
+
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
+    let partial = path.with_extension("partial");
+    let mut file = fs::File::create(&partial)?;
+    file.write_all(bytes)?;
+    file.sync_data()?;
+    fs::rename(&partial, path)?;
+    match path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        Some(dir) => fs::File::open(dir)?.sync_all(),
+        None => Ok(()),
     }
 }
 
@@ -300,7 +330,8 @@ impl<P: Provider + WalletProvider> Wallet<P> {
         // Kept before the broadcast, as for any send.
         nonces
             .unmined
-            .insert(nonce, pending)
+            .insert_async(nonce, pending)
+            .await
             .map_err(RpcError::new)?;
         match self
             .provider
@@ -334,13 +365,24 @@ fn revert_of(error: TransportFailure<TransportErrorKind>) -> Result<Bytes, RpcEr
 
 impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
     async fn estimate(&self, call: &Call) -> Result<Estimate, RpcError> {
+        let request = self.request(call);
+        if self.confirmations == 0 {
+            return match self
+                .provider
+                .estimate_gas(request)
+                .block(BlockId::latest())
+                .await
+            {
+                Ok(gas) => Ok(Estimate::Gas(gas)),
+                Err(error) => Ok(Estimate::Reverts(revert_of(error)?)),
+            };
+        }
         let head = self
             .provider
             .get_block_number()
             .await
             .map_err(RpcError::new)?;
         let confirmed = BlockId::number(head.saturating_sub(self.confirmations));
-        let request = self.request(call);
         if let Err(error) = self.provider.call(request.clone()).block(confirmed).await {
             return Ok(Estimate::Reverts(revert_of(error)?));
         }
@@ -388,6 +430,62 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
         })
     }
 
+    async fn key_chunks(
+        &self,
+        first: &KeyChunk,
+        count: u16,
+    ) -> Option<Result<HashMap<u16, OnChain>, RpcError>> {
+        let result = async {
+            let head = self
+                .provider
+                .get_block_number()
+                .await
+                .map_err(RpcError::new)?;
+            let filter = Filter::new()
+                .address(first.registry)
+                .event_signature(CommitteePublicKeyChunkPublished::SIGNATURE_HASH)
+                .topic1(B256::from(first.e3))
+                .topic2(self.provider.default_signer_address().into_word())
+                .topic3(first.candidate)
+                .from_block(first.since)
+                .to_block(head);
+            let logs = self
+                .provider
+                .get_logs(&filter)
+                .await
+                .map_err(RpcError::new)?;
+            let mut oldest: HashMap<u16, u64> = HashMap::new();
+            for log in &logs {
+                let Ok(event) = log.log_decode::<CommitteePublicKeyChunkPublished>() else {
+                    continue;
+                };
+                let index = event.inner.data.chunkIndex;
+                let Some(block) = log.block_number else {
+                    continue;
+                };
+                if index < count {
+                    oldest
+                        .entry(index)
+                        .and_modify(|prev| *prev = (*prev).min(block))
+                        .or_insert(block);
+                }
+            }
+            let confirmed_head = head.saturating_sub(self.confirmations);
+            let mut map = HashMap::with_capacity(usize::from(count));
+            for index in 0..count {
+                let state = match oldest.get(&index).copied() {
+                    None => OnChain::Absent,
+                    Some(block) if block <= confirmed_head => OnChain::Confirmed,
+                    Some(_) => OnChain::Unconfirmed,
+                };
+                map.insert(index, state);
+            }
+            Ok(map)
+        }
+        .await;
+        Some(result)
+    }
+
     /// Fees are estimated before the nonce is chosen, so the turn only signs and broadcasts. An
     /// RPC node's pending count can miss a transaction that another node behind the same endpoint
     /// accepted a moment ago, so a new nonce also skips the ones this process sent recently. The
@@ -409,7 +507,11 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
                 .latest()
                 .await
                 .map_err(RpcError::new)?;
-            nonces.unmined.forget_mined(mined).map_err(RpcError::new)?;
+            nonces
+                .unmined
+                .forget_mined_async(mined)
+                .await
+                .map_err(RpcError::new)?;
             let replaced = nonces.unmined.of(&key);
             let send = match replaced {
                 Some((nonce, earlier)) => replacement(
@@ -447,7 +549,8 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
             // this process can stop before the answer.
             nonces
                 .unmined
-                .insert(send.nonce, unmined)
+                .insert_async(send.nonce, unmined)
+                .await
                 .map_err(RpcError::new)?;
             let request = self
                 .request(call)
@@ -464,7 +567,8 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
                         nonces.sent.remove(&send.nonce);
                         nonces
                             .unmined
-                            .landed(send.nonce, &key)
+                            .landed_async(send.nonce, &key)
+                            .await
                             .map_err(RpcError::new)?;
                     }
                     return Err(RpcError::new(error));
@@ -478,7 +582,11 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
             .await
             .map_err(RpcError::new)?;
         let mut nonces = self.nonces.lock().await;
-        nonces.unmined.landed(nonce, &key).map_err(RpcError::new)?;
+        nonces
+            .unmined
+            .landed_async(nonce, &key)
+            .await
+            .map_err(RpcError::new)?;
         Ok(receipt.status())
     }
 
@@ -499,7 +607,11 @@ impl<P: Provider + WalletProvider + Send + Sync> Account for Wallet<P> {
             .latest()
             .await
             .map_err(RpcError::new)?;
-        nonces.unmined.forget_mined(mined).map_err(RpcError::new)?;
+        nonces
+            .unmined
+            .forget_mined_async(mined)
+            .await
+            .map_err(RpcError::new)?;
         let unsent: BTreeSet<u64> = nonces
             .unmined
             .sends

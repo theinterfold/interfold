@@ -9,6 +9,8 @@
 
 use crate::notes::{self, Entry};
 use alloy_primitives::Address;
+use e3_blobs::BlobCacheStats;
+use e3_p2p::NetworkStats;
 use e3_protocol::{node::Node, UnixSecs};
 use serde::Serialize;
 use std::{
@@ -32,6 +34,19 @@ const MAX_REQUEST_BYTES: usize = 8 * 1024;
 const ANSWER_LIMIT: Duration = Duration::from_secs(5);
 const RECENT_NOTES: usize = 50;
 
+#[derive(Default)]
+struct Metrics {
+    batches_committed: AtomicU64,
+    ops_applied: AtomicU64,
+    fsyncs_saved: AtomicU64,
+    blob_cache_hits: AtomicU64,
+    blob_cache_misses: AtomicU64,
+    p2p_direct_sent: AtomicU64,
+    p2p_gossip_sent: AtomicU64,
+    p2p_blob_batches_fetched: AtomicU64,
+    p2p_blob_batches_served: AtomicU64,
+}
+
 /// What the page shows, kept current by the node.
 #[derive(Clone)]
 pub(crate) struct Board {
@@ -41,6 +56,7 @@ pub(crate) struct Board {
     read_to: Arc<AtomicU64>,
     peers: Arc<AtomicUsize>,
     machine: Arc<Mutex<Machine>>,
+    metrics: Arc<Metrics>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -81,7 +97,91 @@ impl Board {
             read_to: Arc::default(),
             peers: Arc::default(),
             machine: Arc::default(),
+            metrics: Arc::default(),
         }
+    }
+
+    pub(crate) fn record_batch(&self, ops: usize) {
+        self.metrics
+            .batches_committed
+            .fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .ops_applied
+            .fetch_add(ops as u64, Ordering::Relaxed);
+        if ops > 1 {
+            self.metrics
+                .fsyncs_saved
+                .fetch_add((ops - 1) as u64, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn adapter_stats(&self, blobs: BlobCacheStats, network: NetworkStats) {
+        self.metrics
+            .blob_cache_hits
+            .store(blobs.hits, Ordering::Relaxed);
+        self.metrics
+            .blob_cache_misses
+            .store(blobs.misses, Ordering::Relaxed);
+        self.metrics
+            .p2p_direct_sent
+            .store(network.direct_sent, Ordering::Relaxed);
+        self.metrics
+            .p2p_gossip_sent
+            .store(network.gossip_sent, Ordering::Relaxed);
+        self.metrics
+            .p2p_blob_batches_fetched
+            .store(network.blob_batches_fetched, Ordering::Relaxed);
+        self.metrics
+            .p2p_blob_batches_served
+            .store(network.blob_batches_served, Ordering::Relaxed);
+    }
+
+    fn prometheus(&self) -> String {
+        let m = &self.metrics;
+        let machine = self.lock();
+        let held_e3s = machine.e3s.len();
+        drop(machine);
+        format!(
+            "# TYPE interfold_chain_head gauge\n\
+             interfold_chain_head {}\n\
+             # TYPE interfold_chain_read_to gauge\n\
+             interfold_chain_read_to {}\n\
+             # TYPE interfold_peers_connected gauge\n\
+             interfold_peers_connected {}\n\
+             # TYPE interfold_held_e3s gauge\n\
+             interfold_held_e3s {}\n\
+             # TYPE interfold_journal_batches_total counter\n\
+             interfold_journal_batches_total {}\n\
+             # TYPE interfold_journal_ops_total counter\n\
+             interfold_journal_ops_total {}\n\
+             # TYPE interfold_journal_fsyncs_saved_total counter\n\
+             interfold_journal_fsyncs_saved_total {}\n\
+             # TYPE interfold_blob_cache_hits_total counter\n\
+             interfold_blob_cache_hits_total {}\n\
+             # TYPE interfold_blob_cache_misses_total counter\n\
+             interfold_blob_cache_misses_total {}\n\
+             # TYPE interfold_p2p_direct_sent_total counter\n\
+             interfold_p2p_direct_sent_total {}\n\
+             # TYPE interfold_p2p_gossip_sent_total counter\n\
+             interfold_p2p_gossip_sent_total {}\n\
+             # TYPE interfold_p2p_blob_batches_fetched_total counter\n\
+             interfold_p2p_blob_batches_fetched_total {}\n\
+             # TYPE interfold_p2p_blob_batches_served_total counter\n\
+             interfold_p2p_blob_batches_served_total {}\n",
+            self.head.load(Ordering::Relaxed),
+            self.read_to.load(Ordering::Relaxed),
+            self.peers.load(Ordering::Relaxed),
+            held_e3s,
+            m.batches_committed.load(Ordering::Relaxed),
+            m.ops_applied.load(Ordering::Relaxed),
+            m.fsyncs_saved.load(Ordering::Relaxed),
+            m.blob_cache_hits.load(Ordering::Relaxed),
+            m.blob_cache_misses.load(Ordering::Relaxed),
+            m.p2p_direct_sent.load(Ordering::Relaxed),
+            m.p2p_gossip_sent.load(Ordering::Relaxed),
+            m.p2p_blob_batches_fetched.load(Ordering::Relaxed),
+            m.p2p_blob_batches_served.load(Ordering::Relaxed),
+        )
     }
 
     pub(crate) fn chain_read(&self, head: u64, read_to: u64) {
@@ -184,6 +284,13 @@ async fn answer(mut socket: TcpStream, board: Board, notes: PathBuf) -> std::io:
 }
 
 async fn respond(path: &[u8], board: &Board, notes: PathBuf) -> String {
+    if path == b"/metrics" {
+        return reply(
+            "200 OK",
+            "text/plain; version=0.0.4; charset=utf-8",
+            board.prometheus(),
+        );
+    }
     let recent = tokio::task::spawn_blocking(move || recent_notes(&notes))
         .await
         .unwrap_or_default();
@@ -339,6 +446,13 @@ mod tests {
         let status: serde_json::Value = serde_json::from_str(body).unwrap();
         assert_eq!(status["peers"], 4);
         assert_eq!(status["notes"][0]["sequence"], 1);
+        let metrics = get(port, "GET /metrics HTTP/1.1\r\n\r\n").await;
+        assert!(metrics.starts_with("HTTP/1.1 200 OK"), "{metrics}");
+        assert!(metrics.contains("interfold_peers_connected 4"), "{metrics}");
+        assert!(
+            metrics.contains("interfold_journal_batches_total 0"),
+            "{metrics}"
+        );
     }
 
     /// The page reads and changes nothing, whatever a client asks for.
