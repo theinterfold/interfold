@@ -522,3 +522,151 @@ fn c3_proofs_must_name_this_node_s_key_and_its_rows() {
     missing.pop();
     assert!(!checks(missing, rows_for(&c2b)));
 }
+
+#[test]
+fn single_flight_prove_kept_step_runs_once_and_reuses_kept_cache() {
+    use crate::proofs::{prove_kept_step, Priority};
+    use crate::Circuits;
+    use e3_utils::utility_types::ArcBytes;
+    use e3_zk_config::CircuitName;
+    use e3_zk_prover::{BBPath, Proof, ZkBackend, ZkProver};
+    use std::{
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Barrier,
+        },
+        thread,
+        time::Duration,
+    };
+
+    let backend = ZkBackend::new(
+        BBPath::Custom("bb".into()),
+        "circuits".into(),
+        "work".into(),
+    );
+    let circuits = Circuits::with_thread_budget(ZkProver::new(&backend), 2, 4).unwrap();
+    let blobs = MemoryBlobs::default().of(E3);
+    let key = B256::repeat_byte(0x42);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let started = Arc::new(Barrier::new(2));
+
+    let (first, second) = thread::scope(|scope| {
+        let a = scope.spawn(|| {
+            let attempt = Attempt::default();
+            let prover = circuits.for_attempt(&attempt);
+            prove_kept_step(&blobs, &prover, key, Priority::Background, |_| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                started.wait();
+                thread::sleep(Duration::from_millis(40));
+                Ok::<_, JobError>(Proof::new(
+                    CircuitName::C2abFold,
+                    ArcBytes::from_bytes(b"proof-bytes"),
+                    ArcBytes::from_bytes(&[7u8; 32]),
+                ))
+            })
+            .unwrap()
+        });
+        let b = scope.spawn(|| {
+            started.wait();
+            let attempt = Attempt::default();
+            let prover = circuits.for_attempt(&attempt);
+            prove_kept_step(&blobs, &prover, key, Priority::Foreground, |_| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, JobError>(Proof::new(
+                    CircuitName::C2abFold,
+                    ArcBytes::from_bytes(b"should-not-run"),
+                    ArcBytes::from_bytes(&[9u8; 32]),
+                ))
+            })
+            .unwrap()
+        });
+        (a.join().unwrap(), b.join().unwrap())
+    });
+
+    assert_eq!(first, second);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // A subsequent lookup hits `blobs.kept` directly without running `prove`.
+    let attempt = Attempt::default();
+    let prover = circuits.for_attempt(&attempt);
+    let third = prove_kept_step(
+        &blobs,
+        &prover,
+        key,
+        Priority::Foreground,
+        |_| -> Result<Proof, JobError> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            unreachable!("kept cache should satisfy repeat request")
+        },
+    )
+    .unwrap();
+    assert_eq!(third, first);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn checks_are_not_starved_while_proof_gate_is_saturated() {
+    use crate::Circuits;
+    use e3_zk_prover::{BBPath, ZkBackend, ZkProver};
+    use std::{
+        sync::{Arc, Barrier},
+        thread,
+        time::{Duration, Instant},
+    };
+
+    let backend = ZkBackend::new(
+        BBPath::Custom("bb".into()),
+        "circuits".into(),
+        "work".into(),
+    );
+    let circuits = Circuits::with_thread_budget(ZkProver::new(&backend), 1, 2).unwrap();
+    let blobs = MemoryBlobs::default();
+    let cipher = Cipher::from_password("node").await.unwrap();
+    let runner = runner(blobs.clone(), cipher, 7);
+    let DkgWorkResult::EncryptionKeyMade(own) = dkg(&runner, DkgWork::MakeEncryptionKey) else {
+        panic!("expected encryption key");
+    };
+
+    let saturated = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let c1 = circuits.clone();
+    let s1 = Arc::clone(&saturated);
+    let r1 = Arc::clone(&release);
+    let blocker = thread::spawn(move || {
+        let attempt = Attempt::default();
+        let prover = c1.for_attempt(&attempt);
+        prover
+            .proving(|_| {
+                s1.wait();
+                r1.wait();
+                Ok::<_, JobError>(())
+            })
+            .unwrap();
+    });
+
+    saturated.wait();
+    let started = Instant::now();
+    let checked = dkg(
+        &runner,
+        DkgWork::CheckEncryptionKey {
+            sender: Address::repeat_byte(1),
+            key: own.public,
+            proof: own.proof.clone(),
+        },
+    );
+    let elapsed = started.elapsed();
+    release.wait();
+    blocker.join().unwrap();
+
+    assert_eq!(
+        checked,
+        DkgWorkResult::EncryptionKeyChecked {
+            sender: Address::repeat_byte(1),
+            verdict: Verdict::Valid,
+        }
+    );
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "check took {elapsed:?} while prove gate was saturated"
+    );
+}

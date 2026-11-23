@@ -12,7 +12,7 @@ use e3_protocol::{
     node::CryptoParams,
 };
 
-impl<B: Blobs> Jobs<'_, B> {
+impl<B: Blobs, S: Sync> Jobs<'_, B, S> {
     pub(crate) fn run_accusation(
         &self,
         params: &CryptoParams,

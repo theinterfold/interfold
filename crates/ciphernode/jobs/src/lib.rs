@@ -38,7 +38,14 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::{OsRng, SeedableRng, TryRngCore};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
-use std::fmt::Display;
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex, PoisonError,
+    },
+};
 use zeroize::Zeroizing;
 
 #[derive(Debug, thiserror::Error)]
@@ -103,13 +110,146 @@ pub struct JobLimits {
     pub scope: B256,
 }
 
+/// Boundary for running protocol jobs, implemented by [`JobRunner`].
+pub trait JobExecutor: Send + Sync + 'static {
+    fn run(&self, job: &Job, attempt: &Attempt) -> Result<WorkResult, JobError>;
+    fn close(&self, e3: E3Id) -> std::io::Result<()>;
+    fn cancel_dkg_prefold(&self, _e3: E3Id) {}
+}
+
+pub(crate) type DoneSignal = Arc<(Mutex<bool>, Condvar)>;
+pub(crate) type PrefoldRegistration = (Cancel, Arc<AtomicBool>, DoneSignal);
+
+struct PrefoldSlot {
+    cancel: Cancel,
+    stop_launching: Arc<AtomicBool>,
+    done: DoneSignal,
+}
+
+#[derive(Default)]
+pub(crate) struct Prefolds {
+    entries: Mutex<HashMap<E3Id, PrefoldSlot>>,
+}
+
+impl Prefolds {
+    /// Registers a new background pre-fold for `e3`, cancelling any prior one without blocking.
+    pub(crate) fn register(&self, e3: E3Id) -> PrefoldRegistration {
+        let cancel = Cancel::default();
+        let stop_launching = Arc::new(AtomicBool::new(false));
+        let done = Arc::new((Mutex::new(false), Condvar::new()));
+        let slot = PrefoldSlot {
+            cancel: cancel.clone(),
+            stop_launching: Arc::clone(&stop_launching),
+            done: Arc::clone(&done),
+        };
+        if let Some(old) = self
+            .entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(e3, slot)
+        {
+            old.stop_launching.store(true, Ordering::Release);
+            old.cancel.cancel();
+        }
+        (cancel, stop_launching, done)
+    }
+
+    /// Signals a background pre-fold to let any in-flight `bb` step finish (so foreground
+    /// `FoldProofs` can join it via single-flight) but launch no further steps.
+    pub(crate) fn pause_new_steps(&self, e3: E3Id) {
+        if let Some(slot) = self
+            .entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&e3)
+        {
+            slot.stop_launching.store(true, Ordering::Release);
+        }
+    }
+
+    /// Immediately cancels any background pre-fold for `e3` without blocking the caller.
+    pub(crate) fn cancel(&self, e3: E3Id) {
+        if let Some(slot) = self
+            .entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&e3)
+        {
+            slot.stop_launching.store(true, Ordering::Release);
+            slot.cancel.cancel();
+        }
+    }
+
+    /// Cancels any background pre-fold for `e3` and waits for its thread to finish before disk
+    /// cleanup removes the E3 work directory.
+    pub(crate) fn cancel_and_wait(&self, e3: E3Id) {
+        let slot = self
+            .entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&e3);
+        if let Some(slot) = slot {
+            slot.stop_launching.store(true, Ordering::Release);
+            slot.cancel.cancel();
+            let (lock, ready) = &*slot.done;
+            let mut finished = lock.lock().unwrap_or_else(PoisonError::into_inner);
+            while !*finished {
+                finished = ready.wait(finished).unwrap_or_else(PoisonError::into_inner);
+            }
+        }
+    }
+
+    pub(crate) fn mark_finished(&self, e3: E3Id, done: &Arc<(Mutex<bool>, Condvar)>) {
+        let mut map = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(slot) = map.get(&e3) {
+            if Arc::ptr_eq(&slot.done, done) {
+                map.remove(&e3);
+            }
+        }
+        drop(map);
+        let (lock, ready) = &**done;
+        let mut finished = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        *finished = true;
+        ready.notify_all();
+    }
+
+    fn cancel_all_and_wait(&self) {
+        let slots: Vec<PrefoldSlot> = self
+            .entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain()
+            .map(|(_, slot)| slot)
+            .collect();
+        for slot in &slots {
+            slot.stop_launching.store(true, Ordering::Release);
+            slot.cancel.cancel();
+        }
+        for slot in slots {
+            let (lock, ready) = &*slot.done;
+            let mut finished = lock.lock().unwrap_or_else(PoisonError::into_inner);
+            while !*finished {
+                finished = ready.wait(finished).unwrap_or_else(PoisonError::into_inner);
+            }
+        }
+    }
+}
+
 pub struct JobRunner<S> {
     blobs: S,
     cipher: Cipher,
     proofs: Proofs,
-    /// Every job runs here, so checks and cryptography together use at most its threads.
-    pool: ThreadPool,
+    /// Pure-CPU pool for fast verification checks and BFV math. Proving jobs run on the caller's
+    /// blocking thread and never park this pool while waiting on `ProveGate` or running `bb`.
+    check_pool: Arc<ThreadPool>,
     scope: B256,
+    prefolds: Arc<Prefolds>,
+}
+
+impl<S> Drop for JobRunner<S> {
+    fn drop(&mut self) {
+        self.prefolds.cancel_all_and_wait();
+    }
 }
 
 impl<S: BlobStore> JobRunner<S> {
@@ -119,23 +259,30 @@ impl<S: BlobStore> JobRunner<S> {
         proofs: Proofs,
         limits: JobLimits,
     ) -> Result<Self, JobError> {
-        let pool = ThreadPoolBuilder::new()
+        let check_pool = ThreadPoolBuilder::new()
             .num_threads(limits.threads.max(1))
-            .thread_name(|index| format!("job-{index}"))
+            .thread_name(|index| format!("job-cpu-{index}"))
             .build()
             .map_err(JobError::crypto)?;
         Ok(Self {
             blobs,
             cipher,
             proofs,
-            pool,
+            check_pool: Arc::new(check_pool),
             scope: limits.scope,
+            prefolds: Arc::new(Prefolds::default()),
         })
     }
 
-    /// Deletes the proving files of an E3 whose work ended. A proof still under way removes its
-    /// own files when it ends.
+    /// Cancels any speculative DKG pre-fold running in the background for `e3`.
+    pub fn cancel_dkg_prefold(&self, e3: E3Id) {
+        self.prefolds.cancel(e3);
+    }
+
+    /// Deletes the proving files of an E3 whose work ended. Any background pre-fold for `e3` is
+    /// cancelled and joined first so it cannot write back into the removed directory.
     pub fn close(&self, e3: E3Id) -> std::io::Result<()> {
+        self.prefolds.cancel_and_wait(e3);
         match &self.proofs {
             Proofs::Circuits(circuits) => circuits.close(e3),
             #[cfg(any(test, feature = "testing"))]
@@ -144,7 +291,10 @@ impl<S: BlobStore> JobRunner<S> {
     }
 
     pub fn run(&self, job: &Job, attempt: &Attempt) -> Result<WorkResult, JobError> {
-        self.pool.install(|| {
+        if attempt.cancel.is_cancelled() {
+            return Err(JobError::Cancelled);
+        }
+        let execute = || {
             if attempt.cancel.is_cancelled() {
                 return Err(JobError::Cancelled);
             }
@@ -158,42 +308,75 @@ impl<S: BlobStore> JobRunner<S> {
                     .run_accusation(&job.params, work)
                     .map(WorkResult::Accusation),
             }
-        })
+        };
+        // Non-proving jobs (checks, accusations) run on `check_pool` so their parallel math and
+        // verification work is never starved by proving jobs waiting on `ProveGate`.
+        if job.work.proves() {
+            execute()
+        } else {
+            self.check_pool.install(execute)
+        }
     }
 
     fn jobs<'a>(
         &'a self,
         job: &Job,
         attempt: &'a Attempt,
-    ) -> Result<Jobs<'a, E3Blobs<S>>, JobError> {
+    ) -> Result<Jobs<'a, E3Blobs<S>, S>, JobError> {
         let encoded = bincode::serialize(job).map_err(JobError::crypto)?;
+        let (prover, circuits) = match &self.proofs {
+            Proofs::Circuits(circuits) => (
+                Some(circuits.for_attempt(attempt)),
+                Some((**circuits).clone()),
+            ),
+            #[cfg(any(test, feature = "testing"))]
+            Proofs::Placeholder => (None, None),
+        };
         Ok(Jobs {
             e3: job.e3,
             job: keccak256(encoded),
             scope: self.scope,
             blobs: self.blobs.of(job.e3),
+            blob_store: Some(&self.blobs),
             cipher: &self.cipher,
-            prover: match &self.proofs {
-                Proofs::Circuits(circuits) => Some(circuits.for_attempt(attempt)),
-                #[cfg(any(test, feature = "testing"))]
-                Proofs::Placeholder => None,
-            },
+            prover,
+            circuits,
+            check_pool: &self.check_pool,
+            prefolds: Some(&self.prefolds),
         })
     }
 }
 
+impl<S: BlobStore> JobExecutor for JobRunner<S> {
+    fn run(&self, job: &Job, attempt: &Attempt) -> Result<WorkResult, JobError> {
+        JobRunner::run(self, job, attempt)
+    }
+
+    fn close(&self, e3: E3Id) -> std::io::Result<()> {
+        JobRunner::close(self, e3)
+    }
+
+    fn cancel_dkg_prefold(&self, e3: E3Id) {
+        JobRunner::cancel_dkg_prefold(self, e3);
+    }
+}
+
 /// A job's view: the store of its E3, and the circuits as this attempt uses them.
-struct Jobs<'a, B> {
+struct Jobs<'a, B, S = MemoryBlobs> {
     e3: E3Id,
     /// The hash of the job, the same for every attempt and after a restart.
     job: B256,
     scope: B256,
     blobs: B,
+    blob_store: Option<&'a S>,
     cipher: &'a Cipher,
     prover: Option<Prover<'a>>,
+    circuits: Option<Circuits>,
+    check_pool: &'a ThreadPool,
+    prefolds: Option<&'a Arc<Prefolds>>,
 }
 
-impl<B: Blobs> Jobs<'_, B> {
+impl<B: Blobs, S> Jobs<'_, B, S> {
     fn seal(&self, secret: &[u8]) -> Result<SealedRef, JobError> {
         Ok(self.blobs.put_sealed(&self.sealed(secret)?)?)
     }

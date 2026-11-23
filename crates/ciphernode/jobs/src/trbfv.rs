@@ -19,8 +19,47 @@ use e3_trbfv::TrBFVConfig;
 use e3_utils::utility_types::ArcBytes;
 use fhe::{bfv::BfvParameters, mbfv::CommonRandomPoly};
 use fhe_traits::Serialize as _;
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, OnceLock, RwLock},
+};
+
+struct CachedProfile {
+    threshold_params: Arc<BfvParameters>,
+    dkg_params: Arc<BfvParameters>,
+    encoded_threshold_params: ArcBytes,
+    crp_poly: CommonRandomPoly,
+    crp_bytes: ArcBytes,
+}
+
+static PROFILE_CACHE: OnceLock<RwLock<HashMap<BfvProfile, Arc<CachedProfile>>>> = OnceLock::new();
+
+fn cached_profile(params: &CryptoParams) -> Result<Arc<CachedProfile>, JobError> {
+    let profile = profile(params)?;
+    let cache = PROFILE_CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+    if let Ok(guard) = cache.read() {
+        if let Some(entry) = guard.get(&profile) {
+            return Ok(Arc::clone(entry));
+        }
+    }
+    let threshold_params = BfvParamSet::from(profile.threshold_preset()).build_arc();
+    let dkg_params = profile.dkg_parameters().build_arc();
+    let encoded_threshold_params = ArcBytes::from_bytes(&encode_bfv_params(&threshold_params));
+    let crp_poly = create_deterministic_crp_from_default_seed(&threshold_params);
+    let crp_bytes = ArcBytes::from_bytes(&crp_poly.to_bytes());
+    let entry = Arc::new(CachedProfile {
+        threshold_params,
+        dkg_params,
+        encoded_threshold_params,
+        crp_poly,
+        crp_bytes,
+    });
+    if let Ok(mut guard) = cache.write() {
+        Ok(Arc::clone(guard.entry(profile).or_insert(entry)))
+    } else {
+        Ok(entry)
+    }
+}
 
 /// The crypto configurations this build admits, as the Interfold contract records them for a
 /// request: each admitted profile's ID for each committee size it supports, with its parameter set.
@@ -51,19 +90,18 @@ pub(crate) fn threshold_preset(params: &CryptoParams) -> Result<BfvPreset, JobEr
 }
 
 pub(crate) fn threshold_params(params: &CryptoParams) -> Result<Arc<BfvParameters>, JobError> {
-    Ok(BfvParamSet::from(profile(params)?.threshold_preset()).build_arc())
+    Ok(Arc::clone(&cached_profile(params)?.threshold_params))
 }
 
 pub(crate) fn dkg_params(params: &CryptoParams) -> Result<Arc<BfvParameters>, JobError> {
-    Ok(profile(params)?.dkg_parameters().build_arc())
+    Ok(Arc::clone(&cached_profile(params)?.dkg_params))
 }
 
 pub(crate) fn config(params: &CryptoParams) -> Result<TrBFVConfig, JobError> {
     let committee = params.committee_size.values();
-    let threshold = threshold_params(params)?;
-    let encoded = encode_bfv_params(&threshold);
+    let cached = cached_profile(params)?;
     Ok(TrBFVConfig::new(
-        ArcBytes::from_bytes(&encoded),
+        cached.encoded_threshold_params.clone(),
         committee.n as u64,
         committee.threshold as u64,
     ))
@@ -71,13 +109,11 @@ pub(crate) fn config(params: &CryptoParams) -> Result<TrBFVConfig, JobError> {
 
 /// Every party derives the same common random polynomial from a fixed seed, not the E3's.
 pub(crate) fn crp_poly(params: &CryptoParams) -> Result<CommonRandomPoly, JobError> {
-    Ok(create_deterministic_crp_from_default_seed(
-        &threshold_params(params)?,
-    ))
+    Ok(cached_profile(params)?.crp_poly.clone())
 }
 
 pub(crate) fn crp(params: &CryptoParams) -> Result<ArcBytes, JobError> {
-    Ok(ArcBytes::from_bytes(&crp_poly(params)?.to_bytes()))
+    Ok(cached_profile(params)?.crp_bytes.clone())
 }
 
 pub(crate) fn lambda(params: &CryptoParams) -> Result<LambdaConfig, JobError> {
