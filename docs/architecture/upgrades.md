@@ -288,12 +288,15 @@ reinterpret indices 0, 1 and 2. After the upgrade `getE3Quote` and `request` rev
 `UnsupportedCryptoConfig` for a registered one of them (an unregistered index, such as Sepolia's 1,
 fails earlier with `BFV param set not registered`), and nodes skip any request event that names
 them. Clients derive the index from the profile (`bfvConfiguration(profile, committeeSize).paramSet`
-from `@interfold/contracts/bfv`); a client that hard-codes 0 or 2, such as the CRISP server
-`E3_PARAM_SET`, must change with the release. Rollback cannot remove the registrations: after a
-rollback indices 3 and 4 stay registered but inert, because the earlier implementation does not
-route them. The indexer resolves indices 3 and 4 only through a current profile identity. It reads
-indices 0, 1 and 2 from the append-only registry bytes and accepts only the frozen threshold-only ID
-of those exact bytes: v5 at indices 0 and 2, v1 at indices 0 and 1.
+from `@interfold/contracts/bfv`); a client that hard-codes 0 or 2 must change with the release. The
+current CRISP server (separate repository) accepts only `E3_PARAM_SET` 0 or 2 at startup, so it
+cannot be migrated by changing that value: the old values fail at `getE3Quote` and the new ones at
+startup, for every committee size. Resuming CRISP therefore requires a CRISP server release that
+accepts 3 and 4, and a successful `getE3Quote` through it. Rollback cannot remove the registrations:
+after a rollback indices 3 and 4 stay registered but inert, because the earlier implementation does
+not route them. The indexer resolves indices 3 and 4 only through a current profile identity. It
+reads indices 0, 1 and 2 from the append-only registry bytes and accepts only the frozen
+threshold-only ID of those exact bytes: v5 at indices 0 and 2, v1 at indices 0 and 1.
 `crates/bfv/params/tests/fixtures/bfv_protocol.json` freezes these vectors.
 
 The DKG runtime slice changes local C1/C2/C4 and native-generation request/response encodings,
