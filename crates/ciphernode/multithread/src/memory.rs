@@ -65,7 +65,7 @@ fn memory_job_limit(limit_bytes: u64) -> usize {
 }
 
 /// Return the tighter of the host and cgroup memory limits.
-fn effective_memory_limit_bytes() -> Option<u64> {
+pub(crate) fn effective_memory_limit_bytes() -> Option<u64> {
     [host_memory_bytes(), cgroup_memory_bytes()]
         .into_iter()
         .flatten()

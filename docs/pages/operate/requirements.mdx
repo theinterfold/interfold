@@ -73,8 +73,8 @@ The node proves its share-encryption (C3) proofs, a large batch of small proofs,
 time, each with a quarter of the threads. Four of them take the place of every job the limit admits,
 so nothing else runs beside them. The aggregator's public-key aggregation proof for a secure-8192
 Large committee needs about 14–15 GiB, so it counts as two jobs. On a node that admits only one, it
-runs alone, so such a node needs about 20 GiB for it. It also runs with at least eight threads,
-because the prover fails with four or fewer. Every other job counts as one full job.
+runs alone; below a 20 GiB memory limit the node refuses it instead. It always runs with at least
+eight threads, because the prover fails with four or fewer. Every other job counts as one full job.
 
 The node never admits more jobs than the memory limit allows, also when you set a higher
 `multithread_concurrent_jobs`. You can set the value in the configuration file or with the
