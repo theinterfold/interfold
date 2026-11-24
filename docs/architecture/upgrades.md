@@ -308,9 +308,11 @@ The Large committee slice routes `insecure-64/large` and `secure-8192/large` on 
 chains only; Mainnet routes and configuration are unchanged. A secure-8192 public-key aggregation
 (C5) at Large peaks above one 13 GiB prover slot: 14.3 GiB at 16 threads on Linux (16 threads, 32
 GiB host, bb 6.0.0), and 15.3 GiB under the `--slow_low_memory` retry. The scheduler gives that job
-two slots, or the whole pool on a host with fewer, and the retry keeps them. bb 6.0.0 aborts on an
-allocator assertion with four threads or fewer on that circuit, so the job gets at least eight bb
-threads, time-sliced on a smaller host. Four concurrent secure-Large rounds hold about 299 MiB of
+two slots, or the whole pool on a host with fewer, and the retry keeps them. A node whose detected
+memory limit is below 20 GiB (the 4 GiB reserve plus 16 GiB) refuses the job instead of risking an
+OOM kill. bb 6.0.0 aborts on an allocator assertion with four threads or fewer on that circuit, so
+the job always sets at least eight bb threads, overriding an inherited `HARDWARE_CONCURRENCY`, and
+is time-sliced on a smaller host. Four concurrent secure-Large rounds hold about 299 MiB of
 publications, so the publication outbox and its recovery limit are 512 MiB. On Sepolia,
 `upgrade:v19` deploys both routes and adds `setCommitteeThresholds(3, [34, 45])` from the
 configuration. The call follows the upgrade in the batch, because the earlier implementation reverts
@@ -322,6 +324,13 @@ committee size; node checkpoints scale with it. A fresh deployment sets them fro
 `upgrade:v19:validate`, which `upgrade:v19:resume` runs first, compares `getTimeoutConfig()` with
 the configured windows and refuses while they differ. An owner that unpauses directly bypasses that
 check.
+
+Sepolia is normally redeployed for a release rather than upgraded in place; the in-place steps above
+apply only if it is upgraded instead. Either way, Large needs a CRISP program built against this
+release. A CRISP `validate()` compiled before Large decodes the full `E3`, whose committee enum then
+ends at 2, so a Large request reverts during creation even with 45 operators. Before Large is
+enabled on Sepolia, deploy CRISP (separate repository) against this release and complete a Large
+request through it; the registry tests use a mock program and do not cover this.
 
 The v19 batch upgrades two proxies: Interfold first, then `CiphernodeRegistryOwnable` through its
 own `ProxyAdmin`, before it sets the Large threshold. The registry's linked `DkgPublicationLib`
