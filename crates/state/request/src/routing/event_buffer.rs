@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 mod event_size;
 pub(crate) use event_size::event_bytes;
 
-// Item counts are sized for N=45, H=34 and four concurrent E3s; byte limits are unchanged. See the
+// Sized for four concurrent N=45, H=34 secure-8192 E3s, measured by `capacity_tests`. See the
 // capacity derivation in docs/architecture/persistence-and-replay.md (Deferred recipients and capacity).
 #[derive(Clone, Copy)]
 pub(crate) struct EventBufferLimits {
@@ -25,9 +25,9 @@ impl Default for EventBufferLimits {
     fn default() -> Self {
         Self {
             per_e3_items: 5_552,
-            per_e3_bytes: 1024 * 1024 * 1024,
+            per_e3_bytes: 2 * 1024 * 1024 * 1024,
             global_items: 22_208,
-            global_bytes: 3 * 1024 * 1024 * 1024,
+            global_bytes: 6 * 1024 * 1024 * 1024,
         }
     }
 }

@@ -174,8 +174,8 @@ creation event. Each recipient copy reserves its own item and byte budget:
 
 | Scope                         |  Items | Accounted bytes |
 | ----------------------------- | -----: | --------------: |
-| E3, across missing recipients |  5,552 |           1 GiB |
-| Router                        | 22,208 |           3 GiB |
+| E3, across missing recipients |  5,552 |           2 GiB |
+| Router                        | 22,208 |           6 GiB |
 
 `event_size` accounts fixed-integer bincode, inline storage, and 64 bytes per allocation candidate
 in one serde pass without allocating an encoded copy. It reserves twice event inline size for queue
@@ -188,18 +188,17 @@ limbs, one smudging polynomial). Accusation/checker recipients start at committe
 keyshare/PK at local selection; plaintext after ciphertext plus dependencies. Their histories do not
 all overlap. The late plaintext allowance reserves 2,992 records, including 264 C3 proofs (two
 inputs, three limbs, 44 recipients), C0/C1/C2/C4, four records per proof, 256 controls, and `32*N`
-key/share/document records; the 240 C0/C1/C2/C4 records do not scale with N. It budgets 160 MiB
-pending C1–C3 witnesses, 128 MiB separately routed failed compute payloads, 144 MiB peer/outbound
-documents, 64 MiB C4 requests/failures, and 64 MiB remaining work: 560 MiB rounded to 640 MiB.
+key/share/document records; the 240 C0/C1/C2/C4 records do not scale with N. The capacity fixture
+(`routing/capacity_tests.rs`) measures one such history at 1,087 MiB of accounted bytes after local
+selection, mostly the 264 pending C3 requests and their failure copies, and 185 MiB before it (467
+and 76 MiB at N=19). The late allowance is 1,280 MiB and the pre-selection allowance 256 MiB.
 
-Before selection allow 80 MiB/256 records per recipient; up to five formation prefixes (400 MiB)
-drain before local witnesses, rather than five copies of the largest history. E3 limits leave 384
-MiB and 2,560 items above the late allowance; four histories reserve 2.5 GiB/11,968 records, leaving
-512 MiB/10,240 items under the router cap. The item counts are sized for N=45; the byte limits keep
-their values, so they bound memory for the large committee. An 8 GiB process budget additionally
-reserves 1.5 GiB fragmentation/in-flight storage and 3.5 GiB baseline/live/system; prover memory is
-separate. These are operating allowances, not validation rules for arbitrary payloads or allocations
-already owned outside the router.
+Up to five formation prefixes drain before local witnesses, rather than five copies of the largest
+history. E3 limits leave 768 MiB and 2,560 items above the late allowance; four histories reserve 5
+GiB/11,968 records, leaving 1 GiB/10,240 items under the router cap. An 11 GiB process budget
+additionally reserves 1.5 GiB fragmentation/in-flight storage and 3.5 GiB baseline/live/system;
+prover memory is separate. These are operating allowances, not validation rules for arbitrary
+payloads or allocations already owned outside the router.
 
 Overflow clears only that missing recipient's E3 queue, logs ERROR, records delivery failure, and
 disables further deferral until teardown/restart. Live routing, checkpoints, other recipients, and
