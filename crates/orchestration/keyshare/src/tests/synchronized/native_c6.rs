@@ -238,26 +238,30 @@ async fn synchronized_native_worker_real_c6_and_signed_reuse() -> Result<()> {
             )?],
         };
         store.record_signed(&bundle).await?;
-        if owner == 0 {
-            assert!(worker
-                .run_definition(&store, &inputs.keys, ct_bytes, &sk)
-                .await
-                .is_err());
-        } else {
-            // Cached verification needs the VK; removing the temporary proving circuit rules
-            // out accidental regeneration of another proof on the successful path.
-            let circuit = CircuitName::ThresholdShareDecryption;
-            let dir = prover.circuits_dir(
+        // Both signed checkpoints must reach verification using only the VK, without re-proving.
+        let circuit = CircuitName::ThresholdShareDecryption;
+        let bytecode = prover
+            .circuits_dir(
                 e3_zk_config::CircuitVariant::Recursive,
                 &PROFILE.artifacts_dir_for_committee(COMMITTEE)?,
+            )
+            .join(circuit.dir_path())
+            .join(format!("{}.json", circuit.as_str()));
+        let hidden = bytecode.with_extension("disabled");
+        std::fs::rename(&bytecode, &hidden)?;
+        let cached = worker
+            .run_definition(&store, &inputs.keys, ct_bytes, &sk)
+            .await;
+        std::fs::rename(hidden, bytecode)?;
+        if owner == 0 {
+            let error = cached.err().context("tampered signed C6 proof accepted")?;
+            assert_eq!(
+                error.to_string(),
+                "local C6 proof failed verification",
+                "{error:#}"
             );
-            std::fs::remove_file(
-                dir.join(circuit.dir_path())
-                    .join(format!("{}.json", circuit.as_str())),
-            )?;
-            assert!(
-                matches!(worker.run_definition(&store, &inputs.keys, ct_bytes, &sk).await?, LocalContribution::Signed(saved) if saved == bundle)
-            );
+        } else {
+            assert!(matches!(cached?, LocalContribution::Signed(saved) if saved == bundle));
             inputs.keys.retire_synchronized_output(&bundle.e3_id);
             assert!(worker
                 .run_definition(&store, &inputs.keys, ct_bytes, &sk)
