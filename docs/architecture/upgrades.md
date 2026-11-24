@@ -309,12 +309,12 @@ chains only; Mainnet routes and configuration are unchanged. A secure-8192 publi
 (C5) at Large peaks above one 13 GiB prover slot: 14.3 GiB at 16 threads on Linux (16 threads, 32
 GiB host, bb 6.0.0), and 15.3 GiB under the `--slow_low_memory` retry. The scheduler gives that job
 two slots, or the whole pool on a host with fewer, and the retry keeps them. A node whose detected
-memory limit is below 20 GiB (the 4 GiB reserve plus 16 GiB) refuses the job instead of risking an
-OOM kill. bb 6.0.0 aborts on an allocator assertion with four threads or fewer on that circuit, so
-the job always sets at least eight bb threads, overriding an inherited `HARDWARE_CONCURRENCY`, and
-is time-sliced on a smaller host. Four concurrent secure-Large rounds hold about 299 MiB of
-publications, so the publication outbox and its recovery limit are 512 MiB. On Sepolia,
-`upgrade:v19` deploys both routes and adds `setCommitteeThresholds(3, [34, 45])` from the
+memory limit is below 28 GiB (the 4 GiB reserve, 8 GiB for a full router buffer, 16 GiB) refuses the
+job instead of risking an OOM kill. bb 6.0.0 aborts on an allocator assertion with four threads or
+fewer on that circuit, so the job always sets at least eight bb threads, overriding an inherited
+`HARDWARE_CONCURRENCY`, and is time-sliced on a smaller host. Four concurrent secure-Large rounds
+hold about 299 MiB of publications, so the publication outbox and its recovery limit are 512 MiB. On
+Sepolia, `upgrade:v19` deploys both routes and adds `setCommitteeThresholds(3, [34, 45])` from the
 configuration. The call follows the upgrade in the batch, because the earlier implementation reverts
 on size 3; `prepare` reads that revert as an unset threshold only for Large, the size this release
 adds. `upgrade:v19` does not change timeout windows. Live Sepolia holds `dkgWindow` 1800 s, and one

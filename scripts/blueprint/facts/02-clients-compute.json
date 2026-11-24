@@ -877,7 +877,7 @@
         },
         {
           "why": "the actor's request handler and its retry loop",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@743@async fn handle_compute_request_event("
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@747@async fn handle_compute_request_event("
         },
         {
           "why": "the pool: semaphore wait, Rayon spawn, and the oneshot result",
@@ -885,19 +885,19 @@
         },
         {
           "why": "the worker function that dispatches TrBFV and ZK requests",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@1151@fn handle_compute_request("
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@1155@fn handle_compute_request("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "actix-actor",
           "note": "Multithread implements Actor and sets its mailbox capacity from MAILBOX_LIMIT on start",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@682@impl Actor for Multithread {"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@686@impl Actor for Multithread {"
         },
         {
           "pattern": "actix-handler",
           "note": "the actor handles bus events by queuing compute requests to itself as typed messages",
-          "ref": "crates/ciphernode/multithread/src/multithread.rs@689@impl Handler<InterfoldEvent> for Multithread {"
+          "ref": "crates/ciphernode/multithread/src/multithread.rs@693@impl Handler<InterfoldEvent> for Multithread {"
         },
         {
           "pattern": "actix-recipient",

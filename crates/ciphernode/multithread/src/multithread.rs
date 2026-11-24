@@ -200,9 +200,10 @@ const SECURE_LARGE_C5_SLOTS: u32 = 2;
 /// `HARDWARE_CONCURRENCY` cannot lower it; on a smaller pool bb time-slices, slower but correct.
 const SECURE_LARGE_C5_MIN_THREADS: usize = 8;
 
-/// Memory a secure-Large C5 needs beside the node reserve. Its retry peaked at 15.3 GiB; a host
-/// that admits one job (17 GiB or more) can have less than that after the reserve.
+/// Memory a secure-Large C5 needs beside the node: its retry peaked at 15.3 GiB, and the router's
+/// deferred-event buffer can hold 6 GiB (7.7 GiB resident when full, measured on Linux).
 const SECURE_LARGE_C5_MEMORY_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const ROUTER_BUFFER_RESIDENT_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
 fn is_secure_large_c5(request: &ComputeRequestKind) -> bool {
     matches!(request, ComputeRequestKind::Zk(ZkRequest::PkAggregation(request))
@@ -211,13 +212,16 @@ fn is_secure_large_c5(request: &ComputeRequestKind) -> bool {
 }
 
 /// Why this host cannot prove `request`, when it is a secure-Large C5 and the detected memory limit
-/// (host or cgroup) leaves less than its peak after the node reserve. An undetected limit passes.
+/// (host or cgroup) is below the node reserve, a full router buffer and the C5 peak together. An
+/// undetected limit passes.
 fn c5_memory_shortfall(request: &ComputeRequestKind, limit: Option<u64>) -> Option<String> {
-    let needed = crate::NODE_MEMORY_RESERVE_BYTES + SECURE_LARGE_C5_MEMORY_BYTES;
+    let needed = crate::NODE_MEMORY_RESERVE_BYTES
+        + ROUTER_BUFFER_RESIDENT_BYTES
+        + SECURE_LARGE_C5_MEMORY_BYTES;
     let limit = limit.filter(|limit| is_secure_large_c5(request) && *limit < needed)?;
     Some(format!(
         "secure-8192 Large public-key aggregation needs {needed} bytes of memory with the node \
-         reserve; the detected limit is {limit}"
+         reserve and a full event buffer; the detected limit is {limit}"
     ))
 }
 
@@ -521,8 +525,8 @@ mod task_group_tests {
         assert_eq!(job_weight(&secure_large, &small_pool), (2 * slot, Some(8)));
         assert_eq!(job_weight(&secure_large, &large_pool), (2 * slot, Some(16)));
         let gib = 1024 * 1024 * 1024;
-        assert!(c5_memory_shortfall(&secure_large, Some(17 * gib)).is_some());
-        assert!(c5_memory_shortfall(&secure_large, Some(20 * gib)).is_none());
+        assert!(c5_memory_shortfall(&secure_large, Some(20 * gib)).is_some());
+        assert!(c5_memory_shortfall(&secure_large, Some(28 * gib)).is_none());
         assert!(c5_memory_shortfall(&secure_large, None).is_none());
         for other in [
             c5(BfvProfile::SsSecure8192, CiphernodesCommitteeSize::Small),
