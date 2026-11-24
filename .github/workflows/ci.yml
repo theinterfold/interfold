@@ -41,9 +41,12 @@ env:
 permissions:
   contents: read
 
-# The migrated jobs use RunsOn only for protected branch events.
-# Pull requests keep their previous runner targets, including enclave-ci where configured.
-# Each RunsOn label embeds run id, attempt, and job ID so jobs never share runners.
+# RunsOn runs trusted work only. The jobs that also run on ubuntu-latest use it for protected branch
+# events. The integration jobs need a 32-core runner, which GitHub bills per minute even for a public
+# repository, so they use RunsOn for every run except a pull request from a fork. A fork pull
+# request keeps the enclave-ci runner: its code must not run on the project's AWS account.
+# Each RunsOn label embeds run id, attempt, and job ID so jobs never share runners. The 32-core
+# label asks for the memory of the enclave-ci runner and a root volume that holds the Rust target.
 jobs:
   detect_changes:
     timeout-minutes: 5
@@ -485,8 +488,10 @@ jobs:
     if: needs.detect_changes.outputs.rust_integration_tests == 'true'
     timeout-minutes: 45
     runs-on:
-      group: enclave-ci
-      labels: [enclave-ci-runner]
+      ${{ github.repository == 'theinterfold/interfold' && (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository) &&
+      format('runs-on={0}-{1}-{2}-{3}/runner=32cpu-linux-x64/ram=128/volume=120gb', github.run_id, github.run_attempt,
+      'rust_integration_tests', matrix.leg) || 'enclave-ci-runner' }}
     # Each full-proof `trbfv_scenario_*` run takes about nine minutes, so the runs are parallel
     # legs: `offline-party` and `standby-node`. The restart scenarios are ignored and stay out of
     # CI. The `integration` leg runs the other integration targets in skip-aggregation mode; the
@@ -586,8 +591,10 @@ jobs:
     if: needs.detect_changes.outputs.zk_prover_integration == 'true'
     timeout-minutes: 60
     runs-on:
-      group: enclave-ci
-      labels: [enclave-ci-runner]
+      ${{ github.repository == 'theinterfold/interfold' && (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository) &&
+      format('runs-on={0}-{1}-{2}/runner=32cpu-linux-x64/ram=128/volume=120gb', github.run_id, github.run_attempt, 'zk_prover_integration')
+      || 'enclave-ci-runner' }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -823,8 +830,10 @@ jobs:
     if: needs.detect_changes.outputs.integration_prebuild == 'true'
     timeout-minutes: 45
     runs-on:
-      group: enclave-ci
-      labels: [enclave-ci-runner]
+      ${{ github.repository == 'theinterfold/interfold' && (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository) &&
+      format('runs-on={0}-{1}-{2}/runner=32cpu-linux-x64/ram=128/volume=120gb', github.run_id, github.run_attempt, 'integration_prebuild')
+      || 'enclave-ci-runner' }}
     steps:
       - name: 'Check out the repo'
         uses: 'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' # v6
@@ -909,8 +918,10 @@ jobs:
     if: needs.detect_changes.outputs.ciphernode_e2e == 'true'
     timeout-minutes: 45
     runs-on:
-      group: enclave-ci
-      labels: [enclave-ci-runner]
+      ${{ github.repository == 'theinterfold/interfold' && (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository) &&
+      format('runs-on={0}-{1}-{2}-{3}/runner=32cpu-linux-x64/ram=128/volume=120gb', github.run_id, github.run_attempt,
+      'ciphernode_integration_test', matrix.test-suite) || 'enclave-ci-runner' }}
     strategy:
       matrix:
         # persist runs base.sh and restarts the active aggregator after the committee publishes
@@ -985,8 +996,10 @@ jobs:
     if: needs.detect_changes.outputs.build_interfold_cli == 'true'
     timeout-minutes: 20
     runs-on:
-      group: enclave-ci
-      labels: [enclave-ci-runner]
+      ${{ github.repository == 'theinterfold/interfold' && (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository) &&
+      format('runs-on={0}-{1}-{2}/runner=32cpu-linux-x64/ram=128/volume=120gb', github.run_id, github.run_attempt, 'build_interfold_cli') ||
+      'enclave-ci-runner' }}
     permissions:
       contents: read
       actions: write
@@ -1568,8 +1581,10 @@ jobs:
     if: needs.detect_changes.outputs.templates == 'true'
     timeout-minutes: 30
     runs-on:
-      group: enclave-ci
-      labels: [enclave-ci-runner]
+      ${{ github.repository == 'theinterfold/interfold' && (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository) &&
+      format('runs-on={0}-{1}-{2}/runner=32cpu-linux-x64/ram=128/volume=120gb', github.run_id, github.run_attempt, 'template_integration')
+      || 'enclave-ci-runner' }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
