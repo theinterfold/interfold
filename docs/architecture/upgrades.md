@@ -327,10 +327,11 @@ check.
 
 Sepolia is normally redeployed for a release rather than upgraded in place; the in-place steps above
 apply only if it is upgraded instead. Either way, Large needs a CRISP program built against this
-release. A CRISP `validate()` compiled before Large decodes the full `E3`, whose committee enum then
-ends at 2, so a Large request reverts during creation even with 45 operators. Before Large is
-enabled on Sepolia, deploy CRISP (separate repository) against this release and complete a Large
-request through it; the registry tests use a mock program and do not cover this.
+release. Review of the recorded dev.3 CRISP deployment found that its `validate()` decodes the full
+`E3`, whose committee enum then ends at 2 (not checked from this repository), so a Large request
+would revert during creation even with 45 operators. Before Large is enabled on Sepolia, deploy
+CRISP (separate repository) against this release and complete a Large request through it; the
+registry tests use a mock program and do not cover this.
 
 The v19 batch upgrades two proxies: Interfold first, then `CiphernodeRegistryOwnable` through its
 own `ProxyAdmin`, before it sets the Large threshold. The registry's linked `DkgPublicationLib`
