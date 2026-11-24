@@ -484,8 +484,8 @@ async fn allocated_histories_fit_and_default_bytes_isolate_overflow() -> Result<
                 );
             }
             assert!(
-                memory_bytes("VmHWM:").saturating_sub(baseline) < 7680 * MIB,
-                "router memory must leave headroom in the node's 11 GiB process budget"
+                memory_bytes("VmHWM:").saturating_sub(baseline) < 9216 * MIB,
+                "router memory must leave headroom in the node's 12.5 GiB process budget"
             );
         }
         let failed = &ids[overflowed];
@@ -562,8 +562,8 @@ async fn allocated_histories_fit_and_default_bytes_isolate_overflow() -> Result<
         let peak = memory_bytes("VmHWM:").saturating_sub(baseline);
         println!("peak resident growth including overflow and draining: {peak} bytes");
         assert!(
-            peak < 7680 * MIB,
-            "router memory must leave headroom in the node's 11 GiB process budget"
+            peak < 9216 * MIB,
+            "router memory must leave headroom in the node's 12.5 GiB process budget"
         );
     }
     Ok(())

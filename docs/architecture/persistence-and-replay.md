@@ -195,10 +195,11 @@ and 76 MiB at N=19). The late allowance is 1,280 MiB and the pre-selection allow
 
 Up to five formation prefixes drain before local witnesses, rather than five copies of the largest
 history. E3 limits leave 768 MiB and 2,560 items above the late allowance; four histories reserve 5
-GiB/11,968 records, leaving 1 GiB/10,240 items under the router cap. An 11 GiB process budget
-additionally reserves 1.5 GiB fragmentation/in-flight storage and 3.5 GiB baseline/live/system;
-prover memory is separate. These are operating allowances, not validation rules for arbitrary
-payloads or allocations already owned outside the router.
+GiB/11,968 records, leaving 1 GiB/10,240 items under the router cap. Saturated at 6 GiB, the fixture
+measured 7.7 GiB resident on Linux, so a 12.5 GiB process budget additionally reserves 3 GiB
+fragmentation/in-flight storage (half the cap, as before) and 3.5 GiB baseline/live/system; prover
+memory is separate. These are operating allowances, not validation rules for arbitrary payloads or
+allocations already owned outside the router.
 
 Overflow clears only that missing recipient's E3 queue, logs ERROR, records delivery failure, and
 disables further deferral until teardown/restart. Live routing, checkpoints, other recipients, and

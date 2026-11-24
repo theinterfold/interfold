@@ -65,9 +65,9 @@ lower than the requested value, the node logs
 
 The 4 GiB reserve covers the node's typical memory, not its worst case. Its buffer limits are
 ceilings: up to 6 GiB of deferred protocol events, 2 GiB of DHT replicas and 512 MiB of pending
-publications, plus about 5 GiB of baseline and allocator overhead. A node at the minimum can run out
-of memory if those buffers fill while a prover job runs, for example with several concurrent `large`
-E3s. Leave headroom above the table's thresholds if you serve `large` committees.
+publications, plus about 6.5 GiB of baseline and allocator overhead. A node at the minimum can run
+out of memory if those buffers fill while a prover job runs, for example with several concurrent
+`large` E3s. Leave headroom above the table's thresholds if you serve `large` committees.
 
 When the memory limit is too small for one job, startup stops with this error:
 
