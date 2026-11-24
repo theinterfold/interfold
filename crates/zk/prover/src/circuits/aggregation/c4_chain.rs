@@ -85,10 +85,17 @@ pub fn final_share_decryption_inputs(
         let _ = prover.cleanup(&job_id);
         // Public: the limb's H commitments, then `h_in` and its output.
         let publics = bytes_to_field_strings(&proof.public_signals)?;
+        let expected = inputs.expected_commitments.len() + 2;
+        if publics.len() != expected {
+            return Err(ZkError::InvalidInput(format!(
+                "C4 limb {l} proof has {} public inputs, expected {expected} (H + 2)",
+                publics.len()
+            )));
+        }
         limb_vks.push(&key.verification_key);
         limb_key_hashes.push(&key.key_hash);
         limb_proofs.push(bytes_to_field_strings(&proof.data)?);
-        limb_links.push(publics[publics.len() - 2..].to_vec());
+        limb_links.push(publics[expected - 2..].to_vec());
     }
 
     // The final circuit reads only the commitments and the limb proofs; the decrypted shares stay in
