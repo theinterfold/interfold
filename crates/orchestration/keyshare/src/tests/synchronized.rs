@@ -37,6 +37,8 @@ use num_bigint::BigInt;
 use rand::SeedableRng;
 use std::collections::BTreeMap;
 
+#[path = "synchronized/contribution.rs"]
+mod contribution;
 #[path = "synchronized/publication.rs"]
 mod publication;
 #[path = "synchronized/recovery.rs"]

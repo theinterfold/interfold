@@ -147,7 +147,7 @@ pub(super) async fn consents(
         .collect())
 }
 
-fn result(
+pub(super) fn result(
     setup: &Setup,
     material: &SynchronizedDkgRecovery,
     owner: usize,
