@@ -117,7 +117,10 @@ sequence. A standby signals readiness only after all designated rows are durable
 and checkpoint reads, only the current active collector may record a new batch from those rows. Once
 the ordered sequence vector is flushed, demotion or restart can finish it. Native reconstruction
 sums the locally weighted shares and adds `c0` once. C7 opens those same polynomials; the outer
-proof binds their C6 statements and the plaintext.
+proof binds their C6 statements and the plaintext. The writer checks both profile-specific child VK
+pins and the confirmed request before submitting the local intent. The existing chain failure watch
+starts at `CiphertextReady`, independently of collector readiness. The decryption deadline is
+inclusive; a missing owner after expiry follows `DecryptionTimeout`.
 
 Synchronized request admission remains disabled. The fixed-set and one-use policies await protocol
 review. Collector failover and request-bound publication still need a joint runtime qualification.
@@ -148,6 +151,12 @@ range per E3, not payload queues. Read bounded pages only when that E3's authori
 unrelated E3s do not rescan it. Reject mismatches and allow corrected intents. Confirmed terminal
 stages retire pending work and reject later intents; local completion alone does not prove that the
 result landed.
+
+The writer retains the admitted protocol with the intent. An SS intent that already passed the
+domain check can still submit after local cleanup releases the key. A synchronized intent instead
+rechecks the current opening at submission. Missing authority or an ambiguous RPC outcome leaves it
+pending; a confirmed domain mismatch or a decoded proof-data rejection releases its slot for a
+subsequent corrected intent.
 
 After `EffectsEnabled`, the writer checks chain state, coalesces the first admitted local intent,
 and calls permissionless `publishPlaintextOutput`. The contract requires `CiphertextReady`,

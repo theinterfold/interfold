@@ -117,6 +117,7 @@ impl PreparedPartial {
             .profile
             .artifacts_dir_for_committee(self.config.committee)?;
         let role = CircuitName::ThresholdShareDecryption;
+        super::decryption::child_key(prover, &self.config, role)?;
         let proof = match cached {
             Some(proof) => proof,
             None => prove(

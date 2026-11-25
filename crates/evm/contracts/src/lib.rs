@@ -15,6 +15,7 @@
 
 use alloy_sol_types::sol;
 
+pub mod decryption_errors;
 pub mod enums;
 pub use enums::{CommitteeSize, E3Stage, FailureReason};
 pub mod token;

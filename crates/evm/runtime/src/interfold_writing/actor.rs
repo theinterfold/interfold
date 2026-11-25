@@ -12,7 +12,7 @@ use crate::domain::plaintext_publication::{
     failure_watch_delay, failure_watch_party_id, FailureRetryBackoff, FailureStageDiscoveryGate,
 };
 use crate::domain::plaintext_publication::{
-    plaintext_has_canonical_domain, validate_plaintext_output,
+    has_writer_authority, plaintext_has_canonical_domain, validate_plaintext_output,
 };
 use crate::domain::publication_replay::ReplaySubmissionGate;
 use crate::helpers::{encode_zk_proof, send_with_next_nonce, EthProvider};
@@ -31,6 +31,7 @@ use e3_events::{
     PlaintextAggregated, Proof, SeqAgg, Shutdown, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_evm_transactions::require_successful_receipt;
+use e3_fhe_params::BfvDecryptionProtocol;
 use e3_request::canonical_key::CanonicalPublicKeys;
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
 use std::collections::{HashMap, HashSet};
@@ -39,6 +40,7 @@ use tracing::info;
 
 #[path = "effects.rs"]
 mod effects;
+pub use effects::publish_synchronized_plaintext_definition;
 #[path = "handlers.rs"]
 mod handlers;
 
@@ -52,7 +54,7 @@ pub struct InterfoldSolWriter<P> {
     contract_address: Address,
     bus: BusHandle,
     effects_enabled: bool,
-    publication: ReplaySubmissionGate<E3id, PlaintextAggregated>,
+    publication: ReplaySubmissionGate<E3id, handlers::SubmitPlaintext>,
     canonical_keys: CanonicalPublicKeys,
     eventstore: Recipient<EventStoreQueryBy<SeqAgg>>,
     deferred_plaintexts: HashMap<E3id, std::ops::RangeInclusive<u64>>,

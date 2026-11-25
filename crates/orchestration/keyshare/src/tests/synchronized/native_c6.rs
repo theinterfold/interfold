@@ -178,6 +178,35 @@ async fn synchronized_native_worker_real_c6_and_signed_reuse() -> Result<()> {
         let data = reopen()?;
         let store = open(&data)?;
         worker.prover = prover.clone();
+        if owner == 0 {
+            let role = CircuitName::ThresholdShareDecryption;
+            let pin = prover
+                .circuits_dir(
+                    e3_zk_config::CircuitVariant::Recursive,
+                    &PROFILE.artifacts_dir_for_committee(COMMITTEE)?,
+                )
+                .join(role.dir_path())
+                .join(format!("{}.vk_hash", role.as_str()));
+            let installed = std::fs::read(&pin)?;
+            std::fs::write(&pin, [0x02; 32])?;
+            let error = worker
+                .run_definition(&store, &inputs.keys, ct_bytes, &sk)
+                .await
+                .err()
+                .context("proved with mismatched child VK")?;
+            assert!(
+                matches!(
+                    error.downcast_ref::<e3_zk_witness::WitnessError>(),
+                    Some(e3_zk_witness::WitnessError::VerificationKey(_))
+                ),
+                "{error:#}"
+            );
+            assert!(
+                error.to_string().contains("qualified request pin"),
+                "{error:#}"
+            );
+            std::fs::write(pin, installed)?;
+        }
         let LocalContribution::ReadyToSign { share, mut proof } = worker
             .run_definition(&store, &inputs.keys, ct_bytes, &sk)
             .await?

@@ -366,6 +366,16 @@ impl Fixture {
     }
 }
 
+pub(crate) fn synchronized_writer_fixture() -> Result<(E3id, Address, CanonicalPublicKeys)> {
+    let fixture = Fixture::new()?;
+    let (keys, mut projection) = fixture.projection();
+    for fact in fixture.facts() {
+        projection.observe(&event(fact, EventSource::Evm, Some(1)))?;
+    }
+    assert!(keys.get(&fixture.request.e3_id).is_some());
+    Ok((fixture.request.e3_id, fixture.interfold, keys))
+}
+
 #[test]
 fn synchronized_authority_waits_for_all_confirmed_prerequisites() -> Result<()> {
     let f = Fixture::new()?;
