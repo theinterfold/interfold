@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 //! Public contribution admission and reconstruction from exactly the admitted polynomial openings.
+use super::{
+    decryption::{prove_decryption, verify_decryption, ExpectedDecryption},
+    provenance::prove,
+};
 use crate::ZkProver;
 use alloy::primitives::Address;
-use anyhow::{ensure, Result};
-use e3_events::{DecryptionshareCreated, E3id, Proof, ProofType};
+use anyhow::{ensure, Context, Result};
+use e3_events::{DecryptionshareCreated, E3id, PlaintextAggregated, Proof, ProofType};
 use e3_polynomial::CrtPolynomial;
 use e3_polynomial_fhe::FromFhePolynomial;
 use e3_request::canonical_key::SynchronizedDecryptionPlan;
@@ -12,8 +16,14 @@ use e3_task_pool::TaskPool;
 use e3_utils::ArcBytes;
 use e3_zk_config::{
     synchronized::{public_signals::PublicSignals, Configs},
-    CircuitName,
+    CircuitName, CircuitVariant, MAX_MSG_NON_ZERO_COEFFS,
 };
+use e3_zk_witness::synchronized::plaintext_aggregation::{prepare, Contribution};
+use fhe::{
+    bfv::{Ciphertext, Encoding},
+    trbfv::{DecryptionShare, SynchronizedDecryptor},
+};
+use fhe_traits::{DeserializeParametrized, FheDecoder};
 use num_bigint::{BigInt, Sign};
 use std::{future::Future, pin::Pin, sync::Arc};
 
@@ -93,4 +103,177 @@ pub fn authenticate(
         "wrong C6 signer, request or phase"
     );
     validate_row(plan, owner, &signed.payload.proof, share)
+}
+
+/// A completed invalid verification frees the slot; backend errors leave the candidate retryable.
+pub fn verify_contribution(
+    prover: &ZkProver,
+    plan: &SynchronizedDecryptionPlan,
+    bundle: &DecryptionshareCreated,
+    job: &str,
+) -> Result<bool> {
+    if authenticate(plan, bundle).is_err() {
+        return Ok(false);
+    }
+    let namespace = plan
+        .profile()
+        .artifacts_dir_for_committee(plan.committee())?;
+    Ok(prover.verify_proof(
+        &bundle.signed_decryption_proofs[0].payload.proof,
+        job,
+        bundle.party_id,
+        &namespace,
+    )?)
+}
+
+pub fn verify_saved_result(
+    prover: &ZkProver,
+    plan: &SynchronizedDecryptionPlan,
+    bundles: &[DecryptionshareCreated],
+    saved: &PlaintextAggregated,
+    job: &str,
+) -> Result<bool> {
+    let ([proof], [bytes]) = (
+        saved.decryption_aggregator_proofs.as_slice(),
+        saved.decrypted_output.as_slice(),
+    ) else {
+        return Ok(false);
+    };
+    if saved.e3_id != *plan.e3_id()
+        || bytes.len() != 8 * MAX_MSG_NON_ZERO_COEFFS
+        || bundles.len() != plan.designated().len()
+    {
+        return Ok(false);
+    }
+    let mut offset = 64;
+    for (bundle, owner) in bundles.iter().zip(plan.designated()) {
+        let [signed] = bundle.signed_decryption_proofs.as_slice() else {
+            return Ok(false);
+        };
+        let row = &*signed.payload.proof.public_signals;
+        if bundle.party_id != u64::from(*owner)
+            || proof.public_signals.get(offset..offset + row.len()) != Some(row)
+        {
+            return Ok(false);
+        }
+        offset += row.len();
+    }
+    let message: Vec<_> = bytes
+        .chunks_exact(8)
+        .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+        .collect();
+    let a = plan.authority();
+    let expected = ExpectedDecryption {
+        setup: plan.setup_binding(),
+        domain: plan.domain(),
+        ciphertext_commitment: plan.ciphertext_commitment(),
+        roster: &a.party_ids,
+        sk_commitments: &a.sk_agg_commits,
+        key_bundles: &a.key_bundle_commits,
+        message: &message,
+    };
+    verify_decryption(
+        prover,
+        &Configs::for_profile(plan.profile(), plan.committee())?,
+        &expected,
+        proof,
+        job,
+    )
+}
+
+/// Called only with independently verified C6s. The outer circuit also verifies their bodies.
+pub fn reconstruct(
+    prover: &ZkProver,
+    plan: &SynchronizedDecryptionPlan,
+    bytes: &ArcBytes,
+    bundles: &[DecryptionshareCreated],
+    job: &str,
+) -> Result<PlaintextAggregated> {
+    ensure!(
+        bundles
+            .iter()
+            .map(|b| b.party_id)
+            .eq(plan.designated().iter().copied().map(u64::from)),
+        "incomplete or unordered designated set"
+    );
+    let cfg = Configs::for_profile(plan.profile(), plan.committee())?;
+    let ct = Ciphertext::from_bytes(bytes, &cfg.threshold)?;
+    let coords: Vec<_> = plan.designated().iter().map(|&i| i as usize + 1).collect();
+    let mut shares = Vec::new();
+    let mut proofs = Vec::new();
+    for (b, coordinate) in bundles.iter().zip(&coords) {
+        authenticate(plan, b)?;
+        let poly =
+            e3_trbfv::helpers::try_poly_pb_from_bytes(&b.decryption_share[0], &cfg.threshold)?;
+        shares.push(DecryptionShare::from_parts(
+            poly,
+            *coordinate,
+            coords.clone(),
+            &ct,
+        )?);
+        proofs.push(b.signed_decryption_proofs[0].payload.proof.clone());
+    }
+    let v = plan.committee().values();
+    let pt = SynchronizedDecryptor::new(v.n, v.threshold, cfg.threshold.clone())?
+        .decrypt_from_shares(&shares, &ct)?;
+    let decoded = Vec::<u64>::try_decode(&pt, Encoding::poly())?;
+    let message = decoded
+        .get(..MAX_MSG_NON_ZERO_COEFFS)
+        .context("short plaintext")?;
+    ensure!(
+        decoded[MAX_MSG_NON_ZERO_COEFFS..].iter().all(|&v| v == 0),
+        "plaintext exceeds C7 message width"
+    );
+    let parts: Vec<_> = shares.into_iter().map(|s| s.into_parts().0).collect();
+    let contributions: Vec<_> = proofs
+        .iter()
+        .zip(&parts)
+        .map(|(p, share)| Contribution {
+            public_signals: &p.public_signals,
+            share,
+        })
+        .collect();
+    let a = plan.authority();
+    let input = prepare(
+        &cfg,
+        plan.setup_binding(),
+        plan.domain(),
+        &a.party_ids,
+        &ct,
+        &contributions,
+        message,
+    )?;
+    let c7 = prove(
+        prover,
+        &cfg,
+        CircuitName::DecryptedSharesAggregation,
+        input,
+        job,
+        CircuitVariant::Recursive,
+        None,
+    )?;
+    let outer = prove_decryption(prover, &cfg, &proofs, &c7, job)?;
+    let expected = ExpectedDecryption {
+        setup: plan.setup_binding(),
+        domain: plan.domain(),
+        ciphertext_commitment: plan.ciphertext_commitment(),
+        roster: &a.party_ids,
+        sk_commitments: &a.sk_agg_commits,
+        key_bundles: &a.key_bundle_commits,
+        message,
+    };
+    ensure!(
+        verify_decryption(prover, &cfg, &expected, &outer, job)?,
+        "final proof failed local verification"
+    );
+    Ok(PlaintextAggregated {
+        e3_id: plan.e3_id().clone(),
+        decrypted_output: vec![ArcBytes::from_bytes(
+            &message
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>(),
+        )],
+        decryption_aggregator_proofs: vec![outer],
+    })
 }

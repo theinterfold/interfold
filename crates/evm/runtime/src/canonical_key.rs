@@ -2,7 +2,7 @@
 
 //! Rebuild key authority from confirmed registry observations before domain delivery.
 
-use actix::{Actor, Context, Handler, Recipient};
+use actix::{Actor, ActorFutureExt, AtomicResponse, Context, Handler, Recipient, WrapFuture};
 use alloy::{
     primitives::{Address, Bytes, B256, U256},
     sol_types::{SolEvent, SolValue},
@@ -21,7 +21,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{actors::data_availability::KeyAssembly, ICiphernodeRegistry};
 
+mod early_shares;
 mod synchronized;
+use early_shares::EarlyShares;
 use synchronized::SynchronizedPublicationObservation;
 
 type Candidate = (E3id, String, [u8; 32]);
@@ -36,6 +38,7 @@ pub struct CanonicalKeyProjection {
     candidates: HashMap<E3id, Vec<PublicKeyAggregated>>,
     closed: HashMap<E3id, bool>,
     hydrating_contexts: HashSet<E3id>,
+    early_shares: EarlyShares,
     synchronized_authorities:
         HashMap<E3id, crate::contracts::ISynchronizedDkgPublication::Authority>,
     synchronized_proofs: HashMap<E3id, SynchronizedPublicationObservation>,
@@ -53,6 +56,7 @@ impl CanonicalKeyProjection {
             candidates: HashMap::new(),
             closed: HashMap::new(),
             hydrating_contexts: HashSet::new(),
+            early_shares: EarlyShares::default(),
             synchronized_authorities: HashMap::new(),
             synchronized_proofs: HashMap::new(),
         }
@@ -94,7 +98,7 @@ impl CanonicalKeyProjection {
                         "key recovery event-store sequence gap"
                     );
                     cursor += 1;
-                    self.observe(&event)?;
+                    self.observe_ordered(&event).await?;
                 }
             }
         }
@@ -119,7 +123,33 @@ impl CanonicalKeyProjection {
             .collect()
     }
 
+    fn observe_ordered(
+        &mut self,
+        event: &InterfoldEvent,
+    ) -> impl std::future::Future<Output = Result<()>> + 'static {
+        let mut io = None;
+        let result = self.project(event, &mut io);
+        async move {
+            early_shares::finish(io).await?;
+            result
+        }
+    }
+
+    #[cfg(test)]
     fn observe(&mut self, event: &InterfoldEvent) -> Result<()> {
+        let mut io = None;
+        let result = self.project(event, &mut io);
+        if let Some(io) = io {
+            io()?;
+        }
+        result
+    }
+
+    fn project(
+        &mut self,
+        event: &InterfoldEvent,
+        io: &mut Option<early_shares::SpillIo>,
+    ) -> Result<()> {
         // Only the configured chain ingestion pipeline can establish authority. Its EVM events
         // have already passed the chain's confirmation policy and watched-contract filter.
         let chain_fact = event.source() == EventSource::Evm && event.block().is_some();
@@ -136,6 +166,7 @@ impl CanonicalKeyProjection {
             _ => None,
         };
         if let Some(id) = terminal {
+            *io = self.early_shares.take(&id, None);
             self.keys.retire_synchronized_output(&id);
             // An older context snapshot still needs its rosters to hydrate before terminal replay.
             if self.hydrating_contexts.contains(&id) {
@@ -162,6 +193,21 @@ impl CanonicalKeyProjection {
             return Ok(());
         }
         match event.get_data() {
+            InterfoldEventData::DecryptionshareCreated(share) => {
+                let id = &share.e3_id;
+                if event.aggregate_id() != AggregateId::from_chain_id(Some(id.chain_id())) {
+                    return Ok(());
+                }
+                if self.synchronized_request(id)
+                    || (!self.requests.contains_key(id) && self.hydrating_contexts.contains(id))
+                {
+                    self.keys.note_synchronized_candidate(id, event.seq());
+                } else if !self.requests.contains_key(id)
+                    && self.interfold_addresses.contains_key(&id.chain_id())
+                {
+                    *io = self.early_shares.note(id, event.seq());
+                }
+            }
             InterfoldEventData::CiphertextOutputReferencePublished(output)
                 if chain_fact && self.synchronized_request(&output.e3_id) =>
             {
@@ -231,6 +277,12 @@ impl CanonicalKeyProjection {
                                 "confirmed synchronized request changed"
                             );
                         }
+                    }
+                    if !self.requests.contains_key(&request.e3_id) {
+                        let target = (dormant_setup
+                            && !self.hydrating_contexts.contains(&request.e3_id))
+                        .then_some(&self.keys);
+                        *io = self.early_shares.take(&request.e3_id, target);
                     }
                     self.requests
                         .entry(request.e3_id.clone())
@@ -502,16 +554,22 @@ impl Actor for CanonicalKeyProjection {
     type Context = Context<Self>;
 }
 impl Handler<InterfoldEvent> for CanonicalKeyProjection {
-    type Result = ();
-    fn handle(&mut self, event: InterfoldEvent, _: &mut Self::Context) {
-        if let Err(error) = self.observe(&event) {
-            if error.is::<synchronized::UnsupportedVersion>() {
-                if let Some(bus) = &self.bus {
-                    bus.fail_event_pipeline(format!("canonical key projection: {error:#}"));
+    type Result = AtomicResponse<Self, ()>;
+    fn handle(&mut self, event: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
+        AtomicResponse::new(Box::pin(self.observe_ordered(&event).into_actor(self).map(
+            |result, actor, _| {
+                if let Err(error) = result {
+                    if error.is::<synchronized::UnsupportedVersion>()
+                        || error.is::<early_shares::SpillFailure>()
+                    {
+                        if let Some(bus) = &actor.bus {
+                            bus.fail_event_pipeline(format!("canonical key projection: {error:#}"));
+                        }
+                    }
+                    tracing::warn!(%error, "Rejected canonical key observation");
                 }
-            }
-            tracing::warn!(%error, "Rejected inconsistent chain key observation");
-        }
+            },
+        )))
     }
 }
 

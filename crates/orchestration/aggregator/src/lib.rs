@@ -16,6 +16,8 @@ mod domain;
 pub mod ext;
 mod history;
 mod repo;
+#[path = "plaintext_aggregation/synchronized.rs"]
+pub mod synchronized_plaintext;
 #[cfg(test)]
 mod test_support;
 mod workflow;

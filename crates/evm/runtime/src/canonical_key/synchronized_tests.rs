@@ -20,6 +20,91 @@ struct Fixture {
     bytes: ArcBytes,
 }
 
+#[actix::test]
+async fn early_peer_candidate_bounds_survive_request_discovery_without_admitting_a_peer_e3(
+) -> Result<()> {
+    use e3_event_system::EventSystem;
+    use std::time::Duration;
+    let f = Fixture::new()?;
+    let aggregate = AggregateId::new(1);
+    let system =
+        EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(e3_events::AggregateConfig::new(HashMap::from([(
+                aggregate,
+                Duration::ZERO,
+            )])));
+    let bus = system.handle()?.enable("early-share-history");
+    let (keys, mut projection) = f.projection();
+    let id = |n: u64| E3id::new(n.to_string(), 1);
+    let candidate = |n, ts: u64| {
+        bus.publish_from_remote(
+            e3_events::DecryptionshareCreated {
+                e3_id: id(n),
+                party_id: 2,
+                node: format!("peer-{ts}"),
+                decryption_share: vec![],
+                signed_decryption_proofs: vec![],
+            },
+            ts.into(),
+            None,
+            EventSource::Net,
+        )
+    };
+    let confirm = |n, ts: u64| {
+        bus.publish_from_remote(
+            E3Requested {
+                e3_id: id(n),
+                ..f.request.clone()
+            },
+            ts.into(),
+            Some(1),
+            EventSource::Evm,
+        )
+    };
+    // Overflow before restart. Neither an early share nor an index entry admits a request.
+    for n in 1..=512 {
+        candidate(2000 + 2 * n, n)?;
+        if n % 64 == 0 {
+            bus.flush_event_pipeline().await?;
+        }
+    }
+    candidate(1, 513)?;
+    candidate(1025, 514)?;
+    bus.flush_event_pipeline().await?;
+    projection
+        .recover(
+            &system.eventstore_reader()?.seq(),
+            &[aggregate],
+            HashSet::new(),
+        )
+        .await?;
+    let bounds = |n| keys.synchronized_candidates(&id(n));
+    assert_eq!(bounds(1), None);
+    assert_eq!(bounds(1025), None);
+    projection.attach(&bus).await?;
+
+    confirm(2002, 515)?; // free a memory slot before an already-spilled ID arrives again
+    for (ts, missing) in (516..).zip([257, 513, 769]) {
+        confirm(missing, ts)?;
+    }
+    candidate(1025, 519)?;
+    confirm(1025, 520)?;
+    confirm(1, 521)?;
+    bus.flush_event_pipeline().await?;
+    assert_eq!(bounds(2002), Some((1, 1)));
+    assert_eq!(bounds(1025), Some((514, 519)));
+    assert_eq!(bounds(1), Some((513, 513)));
+    for missing in [257, 513, 769] {
+        assert_eq!(bounds(missing), None);
+    }
+    candidate(257, 522)?;
+    bus.flush_event_pipeline().await?;
+    assert_eq!(bounds(257), Some((522, 522)));
+    assert!(keys.get(&id(257)).is_none());
+    Ok(())
+}
+
 #[test]
 fn synchronized_contribution_requires_confirmed_phase_and_both_ciphertext_bindings() -> Result<()> {
     let f = Fixture::new()?;

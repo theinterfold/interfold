@@ -119,7 +119,7 @@ impl CiphernodeBuilder {
                 signer.clone(),
                 canonical_keys.clone(),
             )
-            .with_decryption_runtime(runtime),
+            .with_decryption_runtime(runtime.clone()),
         );
 
         info!("Setting up ZK actors");
@@ -159,7 +159,8 @@ impl CiphernodeBuilder {
                 self.proof_aggregation_enabled,
                 canonical_keys.clone(),
                 storage.seq_eventstore.clone(),
-            ),
+            )
+            .with_decryption_runtime(runtime),
         );
 
         // ── Accusation manager ──

@@ -29,9 +29,14 @@ Each checkpoint is immutable and locally authenticated/encrypted. It binds the C
 owner, and sealed predecessor. A visible insert whose flush failed must be flushed successfully
 before releasing its value. A conflict, corrupt record, missing predecessor or lost store is not
 authorization to resample. Never restore an older private store into an active E3: complete loss of
-local history cannot be detected from an empty database alone. Live dispatch, deadline enforcement
-and terminal cleanup must be wired before activation. See
-[threshold decryption](threshold-decryption.md).
+local history cannot be detected from an empty database alone. Terminal keyshare cleanup retires the
+private slots. Standbys pin the verified party sequences in `synchronized-v1` under plaintext
+recovery; the started ordered batch and final intent are write-once and survive node shutdown.
+Terminal cleanup removes this public scope. Before request discovery, early shares supply exact
+journal bounds keyed by chain and request, not verdicts. Overflow uses a temporary disk index;
+startup rebuilds it from the retained journal. An index error fails recovery or the live pipeline
+instead of treating unavailable history as empty. Restart rechecks signed inputs, the current plan,
+and the saved proof before release. See [threshold decryption](threshold-decryption.md).
 
 ## Contracts and actual boundaries
 
@@ -142,9 +147,11 @@ unchecked.
 For retained slashable failures, seed Failed into router recipients before replay or at effects for
 a newly admitted context; later recipients get it first. Stop keyshare, PK/plaintext aggregation
 (also while waiting for authority), C0 verification, ordinary compute, and DA recovery, while
-retaining accusation re-verification. Give cleanup the E3's aggregate/cursor so writes are not
-stale. Completed contexts receive `E3RequestComplete`, not another effects signal. Document
-publication recovery does not itself read lifecycle; canonical backfill closes it later.
+retaining accusation re-verification. The fixed-set plaintext collector treats the router's local
+`E3StageChanged(Failed)` seed as reconciliation and clears its checkpoints. A local `E3Failed`
+proposal stops the collector but preserves its checkpoints. Give cleanup the E3's aggregate/cursor
+so writes are not stale. Completed contexts receive `E3RequestComplete`, not another effects signal.
+Document publication recovery does not itself read lifecycle; canonical backfill closes it later.
 
 **Two open reconciliation gaps:** lifecycle stores stage but not failure reason, so a **locally
 Failed** context completes on restart even when accusation work remains. Also, a canonical Failed
