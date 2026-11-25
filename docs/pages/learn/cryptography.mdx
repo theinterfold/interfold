@@ -63,6 +63,7 @@ In threshold BFV, no party holds $s$. Three numbers define each committee:
 | `Minimum` |   3 |   2 |   1 |     2 |                                       1 |                                              0 |
 | `Micro`   |   9 |   5 |   4 |     5 |                                       4 |                                              0 |
 | `Small`   |  19 |  14 |   9 |    10 |                                       5 |                                              4 |
+| `Large`   |  45 |  34 |  22 |    23 |                                      11 |                                             11 |
 
 The values come from `crates/committee/src/lib.rs` and
 `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`.
@@ -261,8 +262,8 @@ set for the individual keys. The values come from `crates/bfv/params/src/constan
 
 | Preset        | `paramSet` | Threshold degree | Threshold CRT moduli | Plaintext modulus $t$ | DKG degree | DKG CRT moduli |
 | ------------- | ---------: | ---------------: | -------------------: | --------------------: | ---------: | -------------: |
-| `insecure-64` |          0 |               64 |                    3 |            17,000,000 |         64 |              2 |
-| `secure-8192` |          2 |             8192 |                    3 |            17,000,000 |       8192 |              2 |
+| `insecure-64` |          4 |               64 |                    3 |            17,000,000 |         64 |              2 |
+| `secure-8192` |          3 |             8192 |                    3 |            17,000,000 |       8192 |              2 |
 
 `insecure-64` is for development and tests only. The code marks it as not for production. The
 deployment script refuses to deploy it on a chain that is not a known test or local chain.

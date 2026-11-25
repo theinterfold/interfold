@@ -170,6 +170,7 @@ impl BfvProfile {
                 CiphernodesCommitteeSize::Minimum
                     | CiphernodesCommitteeSize::Micro
                     | CiphernodesCommitteeSize::Small
+                    | CiphernodesCommitteeSize::Large
             ) | (
                 Self::SyncDecInsecure64 | Self::SyncDecSecure8192,
                 CiphernodesCommitteeSize::Minimum
@@ -306,5 +307,29 @@ impl FromStr for BfvProfile {
 impl fmt::Display for BfvProfile {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.name())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The decryption-correctness bound holds only for committees no larger than the party count
+    /// that the threshold parameter search assumed.
+    #[test]
+    fn supported_committees_fit_the_parameter_search_party_count() {
+        for profile in BfvProfile::ALL {
+            let preset = profile.threshold_preset();
+            let search_n = preset.search_defaults().unwrap().n;
+            for committee in CiphernodesCommitteeSize::ALL {
+                if profile.supports_committee(committee) {
+                    assert!(
+                        committee.values().n as u128 <= search_n,
+                        "{profile}/{committee} has n = {}, above the {preset:?} search n = {search_n}",
+                        committee.values().n
+                    );
+                }
+            }
+        }
     }
 }

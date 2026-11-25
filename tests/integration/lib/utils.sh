@@ -17,7 +17,7 @@ check_committee_sizes() {
   local package="$1" zk="$2" rpc_url="${3:-http://localhost:8545}"
   local interfold size total configured="" expected="0 1 2"
   interfold=$(jq -r '.localhost.Interfold.address' "$package/deployed_contracts.json")
-  for size in 0 1 2; do
+  for size in 0 1 2 3; do
     total=$(cast call "$interfold" "committeeThresholds(uint8,uint256)(uint32)" "$size" 1 \
       --rpc-url "$rpc_url") || return 1
     if [[ "$total" != "0" ]]; then

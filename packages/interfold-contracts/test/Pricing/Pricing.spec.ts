@@ -341,10 +341,11 @@ describe("E3 Pricing", function () {
     it("accepts every circuit-backed committee configuration", async function () {
       const { interfold } = await loadFixture(setup);
 
-      expect(await interfold.MAX_COMMITTEE_SIZE()).to.equal(19);
+      expect(await interfold.MAX_COMMITTEE_SIZE()).to.equal(45);
       await (await interfold.setCommitteeThresholds(0, [2, 3])).wait();
       await (await interfold.setCommitteeThresholds(1, [5, 9])).wait();
       await (await interfold.setCommitteeThresholds(2, [14, 19])).wait();
+      await (await interfold.setCommitteeThresholds(3, [34, 45])).wait();
       await expect(
         interfold.setCommitteeThresholds(0, [1, 3]),
       ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
@@ -354,7 +355,10 @@ describe("E3 Pricing", function () {
       await expect(
         interfold.setCommitteeThresholds(2, [9, 19]),
       ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
-      await expect(interfold.setCommitteeThresholds(3, [14, 19])).to.be.revert(
+      await expect(
+        interfold.setCommitteeThresholds(3, [22, 45]),
+      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+      await expect(interfold.setCommitteeThresholds(4, [34, 45])).to.be.revert(
         ethers,
       );
     });
@@ -467,7 +471,7 @@ describe("E3 Pricing", function () {
           number,
         ],
         e3Program: await e3Program.getAddress(),
-        paramSet: 0,
+        paramSet: 4,
         computeProviderParams: abiCoder.encode(
           ["address"],
           [await decryptionVerifier.getAddress()],
@@ -571,7 +575,7 @@ describe("E3 Pricing", function () {
           number,
         ],
         e3Program: await e3Program.getAddress(),
-        paramSet: 0,
+        paramSet: 4,
         computeProviderParams: abiCoder.encode(
           ["address"],
           [await decryptionVerifier.getAddress()],

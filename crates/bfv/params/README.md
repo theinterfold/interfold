@@ -310,7 +310,7 @@ cargo run --bin search_params --package e3-fhe-params -- \
 
 The defaults are the search inputs of `SecureThreshold8192` (`constants::search_defaults`).
 
-- `--n <N>`: Number of parties (ciphernodes). Default: `20`
+- `--n <N>`: Number of parties (ciphernodes). Default: `45`
 - `--z <Z>`: Number of fresh ciphertext additions (number of votes). The search uses `max(k, z)` as
   the plaintext modulus. Default: `100000`
 - `--k <K>`: Plaintext modulus (plaintext space). Default: `17000000`
@@ -346,7 +346,7 @@ The insecure presets `InsecureThreshold64` and `InsecureDkg64` come from the ins
 
 ```bash
 cargo run --bin search_params --package e3-fhe-params -- \
-    --n 19 --lambda 2 --d 64 --insecure true --min-prime-bits 12
+    --n 45 --lambda 2 --d 64 --insecure true --min-prime-bits 12
 ```
 
 Search reports feasible candidates and noise metrics, with a second parameter set if found. Use the

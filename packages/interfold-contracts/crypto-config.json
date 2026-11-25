@@ -7,7 +7,7 @@
     "presets": [
       {
         "preset": "insecure-64",
-        "paramSet": 0,
+        "paramSet": 4,
         "threshold": {
           "name": "INSECURE_THRESHOLD_64",
           "degree": "64",
@@ -17,7 +17,7 @@
             "134215681",
             "134215553"
           ],
-          "error1Variance": "12617929386"
+          "error1Variance": "70779033600"
         },
         "dkg": {
           "name": "INSECURE_DKG_64",
@@ -29,9 +29,9 @@
           ],
           "error1Variance": "10"
         },
-        "parameterHash": "0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e",
+        "parameterHash": "0x2898f8a9fbc317e2812695161febb2c738bf0548327f4805d0329c6f6bb3a844",
         "search": {
-          "n": "19",
+          "n": "45",
           "z": "100000",
           "k": "17000000",
           "lambda": 2,
@@ -46,7 +46,7 @@
       },
       {
         "preset": "secure-8192",
-        "paramSet": 2,
+        "paramSet": 3,
         "threshold": {
           "name": "SECURE_THRESHOLD_8192",
           "degree": "8192",
@@ -56,7 +56,7 @@
             "576460752317399041",
             "576460752316776449"
           ],
-          "error1Variance": "17723039943798878305460955570711717478400"
+          "error1Variance": "89722889715481821421179914794614285926400"
         },
         "dkg": {
           "name": "SECURE_DKG_8192",
@@ -68,9 +68,9 @@
           ],
           "error1Variance": "10"
         },
-        "parameterHash": "0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317",
+        "parameterHash": "0x4f4025982214c2149028270dccc0ad45c24c2441a3496cdf1a29f5d1e1b908c3",
         "search": {
-          "n": "20",
+          "n": "45",
           "z": "100000",
           "k": "17000000",
           "lambda": 45,
@@ -90,7 +90,7 @@
         "profile": "ss-insecure-64",
         "protocol": "secret-shared",
         "statementVersion": "interfold-bfv-v5",
-        "paramSet": 0,
+        "paramSet": 4,
         "threshold": {
           "name": "INSECURE_THRESHOLD_64",
           "degree": "64",
@@ -100,7 +100,7 @@
             "134215681",
             "134215553"
           ],
-          "error1Variance": "12617929386"
+          "error1Variance": "70779033600"
         },
         "dkg": {
           "name": "INSECURE_DKG_64",
@@ -112,25 +112,31 @@
           ],
           "error1Variance": "10"
         },
-        "thresholdParameterHash": "0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e",
+        "thresholdParameterHash": "0x2898f8a9fbc317e2812695161febb2c738bf0548327f4805d0329c6f6bb3a844",
         "dkgParameterHash": "0xcddc8c4eb7777d248cc3420777296e6cfb674701baeb6a52a82a6a1cfe766111",
         "configurations": [
           {
             "committee": "minimum",
-            "cryptoConfigId": "0x5fec4d6a3c71793e00e8a04a6762d260587ea165b332309d92a6bfd72fcf3e92",
+            "cryptoConfigId": "0xd76c4f521394e6cbe1df28036cc5dd5590c6630a403525b5c2b052f9b91507f4",
             "artifactsDir": "insecure-64/minimum",
             "admissionEnabled": true
           },
           {
             "committee": "micro",
-            "cryptoConfigId": "0x447075ed6fac1de9c55bbd9a361bba8c870effc1d1af6924f96802d37e905343",
+            "cryptoConfigId": "0x893989231b402942b005fecdbf9eae21b227d861085433293d0873547ea2816a",
             "artifactsDir": "insecure-64/micro",
             "admissionEnabled": true
           },
           {
             "committee": "small",
-            "cryptoConfigId": "0xe05dc026e537ba9f61d06760554e54841a7c1516ab643cad440bdbcc0d8789c1",
+            "cryptoConfigId": "0x7fa922a08c5501592d02394205bb600219da3e168e0432f076465569116ccfe3",
             "artifactsDir": "insecure-64/small",
+            "admissionEnabled": true
+          },
+          {
+            "committee": "large",
+            "cryptoConfigId": "0xf7cd0828ce1f727085f5553ae162547513928ca5dc58d3799a49fa1e4591ce77",
+            "artifactsDir": "insecure-64/large",
             "admissionEnabled": true
           }
         ]
@@ -139,7 +145,7 @@
         "profile": "ss-secure-8192",
         "protocol": "secret-shared",
         "statementVersion": "interfold-bfv-v5",
-        "paramSet": 2,
+        "paramSet": 3,
         "threshold": {
           "name": "SECURE_THRESHOLD_8192",
           "degree": "8192",
@@ -149,7 +155,7 @@
             "576460752317399041",
             "576460752316776449"
           ],
-          "error1Variance": "17723039943798878305460955570711717478400"
+          "error1Variance": "89722889715481821421179914794614285926400"
         },
         "dkg": {
           "name": "SECURE_DKG_8192",
@@ -161,25 +167,31 @@
           ],
           "error1Variance": "10"
         },
-        "thresholdParameterHash": "0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317",
+        "thresholdParameterHash": "0x4f4025982214c2149028270dccc0ad45c24c2441a3496cdf1a29f5d1e1b908c3",
         "dkgParameterHash": "0x48b8fc7b65df7a249450af84d5b0645e35d21898cc8e0d5e1bc860c9299a087c",
         "configurations": [
           {
             "committee": "minimum",
-            "cryptoConfigId": "0x86c32bb95b830c20bec1e9eb4773bb1be0b139cf3117c46a7d708a36e7d399ce",
+            "cryptoConfigId": "0x0acc89be9b1f39b0c1ee06493af3bad6f5685bf60e0f1cec7a733e95caaab87a",
             "artifactsDir": "secure-8192/minimum",
             "admissionEnabled": true
           },
           {
             "committee": "micro",
-            "cryptoConfigId": "0x02f42e1af8a22b1776eda846dce9ae90577cd6b1bdd3b4bb33c5ef4d9730fa59",
+            "cryptoConfigId": "0xebe75e3c1ada2079e5a06e5853d710b67ac296959c6b67f7d82b44312574dd0b",
             "artifactsDir": "secure-8192/micro",
             "admissionEnabled": true
           },
           {
             "committee": "small",
-            "cryptoConfigId": "0xdf63ace029f44b127e6295f4652ed95ceb10ac543c49507b2e85b3cabc806980",
+            "cryptoConfigId": "0x41d2f2a41bfb17dfb292332d8283b3a9238f9fa8fdc4eecf87de4d777f95c891",
             "artifactsDir": "secure-8192/small",
+            "admissionEnabled": true
+          },
+          {
+            "committee": "large",
+            "cryptoConfigId": "0xf8ddf924e1ef60bf63d14a2bb39c7c259b4b054e75f6e2baf07bb268462d13ed",
+            "artifactsDir": "secure-8192/large",
             "admissionEnabled": true
           }
         ]
@@ -188,7 +200,7 @@
         "profile": "sync-insecure-64",
         "protocol": "synchronized",
         "statementVersion": "interfold-bfv-v5",
-        "paramSet": 0,
+        "paramSet": 4,
         "threshold": {
           "name": "INSECURE_THRESHOLD_64",
           "degree": "64",
@@ -198,7 +210,7 @@
             "134215681",
             "134215553"
           ],
-          "error1Variance": "12617929386"
+          "error1Variance": "70779033600"
         },
         "dkg": {
           "name": "INSECURE_SYNCHRONIZED_DKG_64",
@@ -210,12 +222,12 @@
           ],
           "error1Variance": "10"
         },
-        "thresholdParameterHash": "0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e",
+        "thresholdParameterHash": "0x2898f8a9fbc317e2812695161febb2c738bf0548327f4805d0329c6f6bb3a844",
         "dkgParameterHash": "0x01d5e5e1a61ff5d31cc17874e4ea6753b3870f7a4e6e2cb4dc6c4304b933e45c",
         "configurations": [
           {
             "committee": "minimum",
-            "cryptoConfigId": "0xb1cb9d22ade2378a77048667354ecb1846121df390f57e6bc79b3dd7bcd3ab05",
+            "cryptoConfigId": "0xfe0e258735d79bc000f057bbc65136f31e6006884bd8d56f58a43bb236079fd7",
             "artifactsDir": "sync-insecure-64/minimum",
             "admissionEnabled": false
           }
@@ -225,7 +237,7 @@
         "profile": "sync-secure-8192",
         "protocol": "synchronized",
         "statementVersion": "interfold-bfv-v5",
-        "paramSet": 2,
+        "paramSet": 3,
         "threshold": {
           "name": "SECURE_THRESHOLD_8192",
           "degree": "8192",
@@ -235,7 +247,7 @@
             "576460752317399041",
             "576460752316776449"
           ],
-          "error1Variance": "17723039943798878305460955570711717478400"
+          "error1Variance": "89722889715481821421179914794614285926400"
         },
         "dkg": {
           "name": "SECURE_SYNCHRONIZED_DKG_8192",
@@ -247,12 +259,12 @@
           ],
           "error1Variance": "10"
         },
-        "thresholdParameterHash": "0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317",
+        "thresholdParameterHash": "0x4f4025982214c2149028270dccc0ad45c24c2441a3496cdf1a29f5d1e1b908c3",
         "dkgParameterHash": "0x6c4c3d67ad6b7d2d731011c21687156d64304bd9b139b3bea0269dbcabb68b46",
         "configurations": [
           {
             "committee": "minimum",
-            "cryptoConfigId": "0x2c2655dc733425748efd5e5d4b02376088d6173aa34da9a9ccc22f36e90ce31a",
+            "cryptoConfigId": "0xe3996b372327803ad96baca6ffd6f0b506ee6015d2d7241818bfb20117cc09f7",
             "artifactsDir": "sync-secure-8192/minimum",
             "admissionEnabled": false
           }
@@ -328,6 +340,13 @@
       "n": 19,
       "t": 9,
       "h": 14
+    },
+    {
+      "name": "large",
+      "committeeSize": 3,
+      "n": 45,
+      "t": 22,
+      "h": 34
     }
   ],
   "buildPairs": [
@@ -344,6 +363,10 @@
       "small"
     ],
     [
+      "insecure-64",
+      "large"
+    ],
+    [
       "secure-8192",
       "minimum"
     ],
@@ -354,6 +377,10 @@
     [
       "secure-8192",
       "small"
+    ],
+    [
+      "secure-8192",
+      "large"
     ]
   ]
 }

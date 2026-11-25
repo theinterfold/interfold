@@ -46,7 +46,7 @@ contract Interfold is
     uint256 public constant MAX_TIMEOUT_WINDOW = 30 days;
 
     /// @notice Upper bound on configured committee size.
-    uint32 public constant MAX_COMMITTEE_SIZE = ActiveCryptoConfig.N;
+    uint32 public constant MAX_COMMITTEE_SIZE = ActiveCryptoConfig.LARGE_N;
 
     /// @notice Cap on {PricingConfig.protocolShareBps}. Protocol share
     ///         is hard-capped at 50% so a compromised owner cannot route an
@@ -688,7 +688,7 @@ contract Interfold is
     }
 
     /// @notice Registers the parameter set compiled into the active circuits.
-    /// @param paramSet The parameter-set index (0 = Insecure64, 2 = Secure8192).
+    /// @param paramSet The parameter-set index (4 = Insecure64, 3 = Secure8192).
     /// @param encodedParams ABI-encoded BFV parameters (degree, plaintext_modulus, moduli[]).
     function setParamSet(
         uint8 paramSet,

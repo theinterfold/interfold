@@ -8,9 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 COMMITTEE="${CIRCUIT_COMMITTEE:-minimum}"
 case "${COMMITTEE}" in
-  minimum|micro|small) ;;
+  minimum|micro|small|large) ;;
     *)
-    echo "Error: CIRCUIT_COMMITTEE must be minimum|micro|small (got: ${COMMITTEE})" >&2
+    echo "Error: CIRCUIT_COMMITTEE must be minimum|micro|small|large (got: ${COMMITTEE})" >&2
     exit 1
     ;;
 esac

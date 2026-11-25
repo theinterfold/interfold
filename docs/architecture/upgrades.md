@@ -78,16 +78,15 @@ decryption features compiled but synchronized profile admission disabled. Node, 
 IDs, circuit archives, and OpenVM guest/receipt identity must match; v1–v4 requests cannot be
 treated as v5. Runtime/SDK tooling reject old configuration IDs for new requests.
 
-**Mainnet parameter-set index 1 remains the previous secure tuple.** Register the new secure tuple
-at index **2** in the paused/drained governance batch; never overwrite/reinterpret old E3 records.
-Validate its exact bytes before resume. Current nodes/request clients reject index 1. Indexer
-current index-0/index-2 keys use local v5 parameters; historical index-0/index-1 v1 keys use
-append-only registry bytes checked against frozen crypto ID. Other unsupported IDs are skipped
-without storing keys so catch-up can reach supported rounds.
+**Mainnet parameter-set index 1 remains the previous secure tuple.** v0.19 registered its secure
+tuple at index **2** in the paused/drained governance batch; never overwrite/reinterpret old E3
+records. Validate the exact bytes before resume. The [n = 45 re-index](#bfv-profile-cutover) makes
+indices 0, 1 and 2 historical and sets the current indices. Unsupported IDs are skipped without
+storing keys so catch-up can reach supported rounds.
 
 `upgrade:v19` / `scripts/upgrade/v19Cutover.ts prepare` deploys linked Interfold implementation and
-BFV routes, then prepares one batch: upgrade Interfold; register missing index 2/thresholds; install
-PK/decryption routers/OpenVM ciphertext verifier; register/bind new CRISP and retire earlier
+BFV routes, then prepares one batch: upgrade Interfold; register missing param sets/thresholds;
+install PK/decryption routers/OpenVM ciphertext verifier; register/bind new CRISP and retire earlier
 programs; require protocol 8/generation 2; keep paused. Mainnet requires `--openvm-identity`.
 Preparation verifies drain/pause, records against live implementation, CRISP owner/binding, common
 image/receipt identity, guest commitments, Halo2 runtime hash, Avail bridge/windows, and signer.
@@ -263,6 +262,43 @@ together; the public request ABI and contract storage layout are unchanged. The 
 metadata format is version 2 and no longer presents a threshold-only ID as a current preset
 identity. Release artifact qualification still applies; source changes are not permission to restamp
 published archives or reuse unqualified deployment bindings.
+
+The n = 45 parameter-search slice, unlike the profile slice above, changes SS threshold parameter
+bytes: the `error1_variance` of both threshold tuples, so their hashes, every profile configuration
+ID, and every verification key and verifier. DKG tuples are unchanged. **The tuples move to new
+registry indices: secure-8192 to index 3 and insecure-64 to index 4.** `setParamSet` is append-only,
+and live registries hold earlier tuples at indices 0–2: Mainnet index 0 (`0x18c6d865…7b4f`,
+degree-512 v1), index 1 (`0xd7068fdc…43ec`, v1 secure) and index 2 (`0x1b2620f6…2317`, v0.19
+secure); Sepolia index 0 (`0xaff065a7…ab1e`, the degree-64 v5 tuple of the later Sepolia
+redeployment; the v0.19.x tags shipped the degree-512 tuple there) and index 2 (`0x1b2620f6…2317`).
+Indices 3 and 4 are empty on both. Reusing an index is not possible and would not be safe:
+`setParamSet` reverts `ParamSetAlreadyRegistered`, and `requestE3` does not compare the registered
+bytes with the `BfvProtocol` hash, so it would hand the old bytes to the E3 program and bind their
+hash for the ciphertext verifier while nodes prove with the new tuple.
+
+Cutover procedure, in the paused/drained governance batch that upgrades Interfold and its linked
+`ActiveCryptoConfig`: call `setParamSet(3, …)` with the secure tuple on Mainnet and Sepolia, and
+`setParamSet(4, …)` with the insecure tuple on Sepolia. A fresh deployment registers the chain's
+sets through `registerActiveBfvParamSet`: index 3 on Mainnet, indices 3 and 4 on Sepolia and local
+chains. `upgrade:v19` prepares each index that the chain lacks, and its `validate` checks them.
+Before resume, check that `keccak256(paramSetRegistry(3))` is `BfvProtocol.SECURE_PARAM_SET_HASH`
+(`0x4f402598…08c3`), that `keccak256(paramSetRegistry(4))` is `INSECURE_PARAM_SET_HASH`
+(`0x2898f8a9…a844`), and that indices 0, 1 and 2 still hold the bytes above. Never overwrite or
+reinterpret indices 0, 1 and 2. After the upgrade `getE3Quote` and `request` revert
+`UnsupportedCryptoConfig` for a registered one of them (an unregistered index, such as Sepolia's 1,
+fails earlier with `BFV param set not registered`), and nodes skip any request event that names
+them. Clients derive the index from the profile (`bfvConfiguration(profile, committeeSize).paramSet`
+from `@interfold/contracts/bfv`); a client that hard-codes 0 or 2 must change with the release.
+Review of the current CRISP server (separate repository, not checked from this repository) found
+that it accepts only `E3_PARAM_SET` 0 or 2 at startup, so it cannot be migrated by changing that
+value: the old values fail at `getE3Quote` and the new ones at startup, for every committee size.
+Resuming CRISP therefore requires a CRISP server release that accepts 3 and 4, and a successful
+`getE3Quote` through it. Rollback cannot remove the registrations: after a rollback indices 3 and 4
+stay registered but inert, because the earlier implementation does not route them. The indexer
+resolves indices 3 and 4 only through a current profile identity. It reads indices 0, 1 and 2 from
+the append-only registry bytes and accepts only the frozen threshold-only ID of those exact bytes:
+v5 at indices 0 and 2, v1 at indices 0 and 1. `crates/bfv/params/tests/fixtures/bfv_protocol.json`
+freezes these vectors.
 
 The DKG runtime slice changes local C1/C2/C4 and native-generation request/response encodings,
 `ThresholdSharePending` (optional SS lane plus encrypted own rows), and keyshare recovery (optional
@@ -465,12 +501,12 @@ and older lack keyshare guards.
 ### Insecure testnet preset reset
 
 `InsecureThreshold64` and `InsecureDkg64` occupy persisted `BfvPreset` discriminants 0 and 1.
-On-chain parameter-set index 0 carries the degree-64 tuple. Degree-512 stores used the same
-discriminants under schema 8, so the schema marker cannot reject them. Before starting against a
-fresh testnet stack, testnet nodes must run `interfold node reset-data` under the guards below.
-Redeploy a testnet that holds degree-512 index-0 E3s; do not upgrade it in place or reinterpret
-those E3s with degree-64 parameters. This requirement does not replace mainnet's secure index-2
-cutover procedure.
+On-chain parameter-set index 4 carries the current degree-64 tuple; index 0 keeps the earlier
+insecure tuples. Degree-512 stores used the same discriminants under schema 8, so the schema marker
+cannot reject them. Before starting against a fresh testnet stack, testnet nodes must run
+`interfold node reset-data` under the guards below. Redeploy a testnet that holds degree-512 index-0
+E3s; do not upgrade it in place or reinterpret those E3s with degree-64 parameters. This requirement
+does not replace the [parameter-set re-index](#bfv-profile-cutover) cutover procedure.
 
 ### Identity and active-state guards
 

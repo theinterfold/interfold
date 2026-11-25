@@ -179,12 +179,14 @@ impl Configs {
                  pub global L: u32 = {};\npub global QIS: [Field; L] = [{}];\n\
                  pub global PROFILE_ID: [Field; 2] = [{}, {}];\npub global KEY_BITS: u32 = {};\n\
                  pub global SHARE_BIT: u32 = {};\npub global AGGREGATE_BIT: u32 = {};\npub global C6_NOISE_BOUND: Field = {};\n\
+                 pub global C6_NOISE_BIT: u32 = {};\npub global C6_SHIFTED_NOISE_BIT: u32 = {};\n\
                  pub global C6_PUBLIC_FIELDS: u32 = {};\npub global C7_PLAINTEXT_MODULUS: Field = {};\n\
                  pub global C7_BIT_K: u32 = {};\npub global C7_BIT_T: u32 = {};\npub global C7_BIT_Q_TOTAL: u32 = {};\n",
                 self.threshold.degree(), committee.n, committee.h, committee.threshold,
                 self.threshold.moduli().len(), join_display(self.threshold.moduli(), ", "),
                 self.profile_id[0], self.profile_id[1], self.key_bits, self.share_bit, self.aggregate_bit,
-                generation.bounds.e_sm_bound, self.c6_public_fields(), decode.plaintext_modulus,
+                generation.bounds.e_sm_bound, generation.bounds.e_sm_bound.bits(),
+                (&generation.bounds.e_sm_bound << 1u32).bits(), self.c6_public_fields(), decode.plaintext_modulus,
                 decode.bits.k_bit, decode.bits.t_bit, decode.bits.q_total_bit
             ));
         }
@@ -291,5 +293,18 @@ mod tests {
         )
         .is_err());
         assert!(dkg::share_decryption::Configs::new(&threshold, &transport).is_err());
+    }
+
+    #[test]
+    fn secure_c6_noise_bound_fits_the_statement_width() {
+        // The secure C6 statically asserts at most 145 bits; a wider bound would only fail at
+        // circuit compile time, which CI does not run for this leaf.
+        let config = Configs::for_profile(
+            BfvProfile::SyncDecSecure8192,
+            CiphernodesCommitteeSize::Minimum,
+        )
+        .unwrap();
+        let bits = config.pk_generation.bounds.e_sm_bound.bits();
+        assert!(bits <= 145, "secure C6 noise bound has {bits} bits");
     }
 }

@@ -77,13 +77,14 @@ generate it in the client. CRISP requires such a proof for each ballot.
 ### Committee
 
 The committee is a set of N ciphernodes that sortition selects for this E3. The requester selects
-the committee size. Three sizes exist:
+the committee size. Four sizes exist:
 
 | Size      | Committee size N | DKG contributions H | Threshold T | Shares to decrypt (T + 1) |
 | --------- | ---------------: | ------------------: | ----------: | ------------------------: |
 | `Minimum` |                3 |                   2 |           1 |                         2 |
 | `Micro`   |                9 |                   5 |           4 |                         5 |
 | `Small`   |               19 |                  14 |           9 |                        10 |
+| `Large`   |               45 |                  34 |          22 |                        23 |
 
 The committee runs DKG. The public key comes from H accepted contributions, and decryption needs T +
 1 shares. The [Cryptography](/learn/cryptography) page explains N, H, and T. The
@@ -129,7 +130,7 @@ returns it.
 | Field                  | Content                                                                      |
 | ---------------------- | ---------------------------------------------------------------------------- |
 | `seed`                 | A random seed for the computation. Committee selection uses a separate seed. |
-| `committeeSize`        | `Minimum`, `Micro`, or `Small`                                               |
+| `committeeSize`        | `Minimum`, `Micro`, `Small`, or `Large`                                      |
 | `requestBlock`         | The request time as a timestamp. The name stays for ABI compatibility.       |
 | `inputWindow`          | The start and end times for inputs                                           |
 | `encryptionSchemeId`   | The scheme that `validate` returned, for example `keccak256("fhe.rs:BFV")`   |

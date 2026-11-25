@@ -16,6 +16,7 @@ import {
   interfoldAbi,
   publicClient,
 } from './chain'
+import { COMMITTEES } from '@interfold/contracts/bfv'
 
 // Helper: pull a single named event ABI item out of the typechain bundle.
 function eventAbi(abi: readonly any[], name: string): any {
@@ -59,15 +60,9 @@ const CRISP_INPUT_PUBLISHED = {
 // Public RPCs cap getLogs range. 9_500 keeps us safely under common 10k limits.
 const LOG_CHUNK = 9_500n
 
-const COMMITTEE_DECRYPTION_THRESHOLDS: Readonly<Record<string, number>> = {
-  '2:3': 1,
-  '5:9': 4,
-  '14:19': 9,
-}
-
 /** Resolve the Shamir threshold T from the registry's canonical [H, N] pair. */
 function committeeDecryptionThreshold([h, n]: [number, number]): number | undefined {
-  return COMMITTEE_DECRYPTION_THRESHOLDS[`${h}:${n}`]
+  return Object.values(COMMITTEES).find((committee) => committee.h === h && committee.n === n)?.t
 }
 
 // An E3 is a CRISP poll only if its program contract is a CRISP program of this network.

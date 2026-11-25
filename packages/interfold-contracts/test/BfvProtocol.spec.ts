@@ -77,10 +77,9 @@ describe("BFV protocol bindings", function () {
       harness,
       "UnsupportedCryptoConfig",
     );
-    await expect(harness.identity(0, 255)).to.be.revertedWithCustomError(
-      harness,
-      "UnsupportedCryptoConfig",
-    );
+    await expect(
+      harness.identity(BFV_PROFILES["ss-insecure-64"].paramSet, 255),
+    ).to.be.revertedWithCustomError(harness, "UnsupportedCryptoConfig");
   });
 
   it("shares committee ordering and circuit dimensions without changing policy errors", async function () {

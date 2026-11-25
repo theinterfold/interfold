@@ -172,8 +172,8 @@ of the E3 request, which also sets the `paramSet` of the E3.
 
 | Preset name             | Request `profile` | `paramSet` | Ring degree | CRT moduli (L) | Use                             |
 | ----------------------- | ----------------- | ---------- | ----------- | -------------- | ------------------------------- |
-| `INSECURE_THRESHOLD_64` | `ss-insecure-64`  | 0          | 64          | 3              | Local development and tests     |
-| `SECURE_THRESHOLD_8192` | `ss-secure-8192`  | 2          | 8192        | 3              | Production and secure test runs |
+| `INSECURE_THRESHOLD_64` | `ss-insecure-64`  | 4          | 64          | 3              | Local development and tests     |
+| `SECURE_THRESHOLD_8192` | `ss-secure-8192`  | 3          | 8192        | 3              | Production and secure test runs |
 
 The insecure preset has no production security. Use it only for tests.
 `ThresholdBfvParamsPresetNames` lists both names, and `DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME` is
@@ -239,7 +239,7 @@ required `paramSet` field (`number`) in its place, for example `paramSet: 0` for
 - `paramSet` and `expectedCryptoConfigId` come from `profile` and `committeeSize`. Only
   `'ss-insecure-64'` and `'ss-secure-8192'` are accepted. Other profiles fail, including
   `'sync-insecure-64'`, which this release disables.
-- `committeeSize` must be 0, 1, or 2.
+- `committeeSize` must be 0, 1, 2, or 3.
 
 `requestE3` simulates the call first, then sends it, and returns the transaction hash. To get the E3
 ID, watch `InterfoldEventType.E3_REQUESTED` and read `event.data.e3Id`. For the contract rules
@@ -435,7 +435,7 @@ response was on time and usable. Callers that share one provider watcher must us
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `E3Stage`       | `None` (0), `Requested` (1), `CommitteeFinalized` (2), `KeyPublished` (3), `CiphertextReady` (4), `Complete` (5), `Failed` (6)                                                                                                                                                                                                                    |
 | `FailureReason` | `None` (0), `CommitteeFormationTimeout` (1), `InsufficientCommitteeMembers` (2), `DKGTimeout` (3), `DKGInvalidShares` (4), `NoInputsReceived` (5), `ComputeTimeout` (6), `ComputeProviderExpired` (7), `ComputeProviderFailed` (8), `RequesterCancelled` (9), `DecryptionTimeout` (10), `DecryptionInvalidShares` (11), `VerificationFailed` (12) |
-| `CommitteeSize` | `Minimum` (0), `Micro` (1), `Small` (2)                                                                                                                                                                                                                                                                                                           |
+| `CommitteeSize` | `Minimum` (0), `Micro` (1), `Small` (2), `Large` (3)                                                                                                                                                                                                                                                                                              |
 
 `validateCommitteeSize(value)` returns the value or throws `INVALID_COMMITTEE_SIZE`. Read the stage
 with `sdk.getE3Stage(e3Id)` and the reason with `sdk.getFailureReason(e3Id)`.

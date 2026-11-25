@@ -127,7 +127,7 @@ async fn hydration_rejects_inconsistent_request_configuration_before_starting_re
     another_committee.crypto_config_id = BfvProfile::SsInsecure64
         .crypto_config_id(CiphernodesCommitteeSize::Micro)?
         .into();
-    // sync-insecure-64 shares registry slot 0 and the minimum committee, so its ID resolves.
+    // sync-insecure-64 shares the insecure slot and the minimum committee, so its ID resolves.
     let mut same_slot_profile = valid.clone();
     same_slot_profile.crypto_config_id = BfvProfile::SyncDecInsecure64
         .crypto_config_id(CiphernodesCommitteeSize::Minimum)?

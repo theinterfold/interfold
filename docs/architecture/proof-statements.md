@@ -484,11 +484,11 @@ nested keys. DKG aggregation requires one node-tree hash across every selected r
 (`lib::math::nodes_fold`); a row must be all zero before it is written. An empty place in a step
 carries slot `H`: it must still verify a `node_fold` proof but writes nothing, and the prover pads
 with `total_slots`, which equals the circuit's `H`. Each node statement carries every party's rows,
-so a fourth node takes a step past 2^22 gates (4.28M at 39 parties), while three stay within it. The
-aggregator streams the steps: each `NodesFoldStepRequest` takes the next slots in canonical order
-once all their proofs are buffered, and `nodes_fold_step_len` fixes that count so the dispatcher and
-its response handler agree without extra state. A chain of at most three nodes splits one and the
-rest, so it never ends on the kernel.
+so a fourth node takes a step past 2^22 (4.28M gates at n = 39; three nodes are 3.71M at n = 45).
+The aggregator streams the steps: each `NodesFoldStepRequest` takes the next slots in canonical
+order once all their proofs are buffered, and `nodes_fold_step_len` fixes that count so the
+dispatcher and its response handler agree without extra state. A chain of at most three nodes splits
+one and the rest, so it never ends on the kernel.
 
 C3 chains run over Chonk (`lib::math::chonk`). A stack is `c3_chonk_app`, which verifies
 `C3_CHONK_LEAVES` (24) C3 proofs, then the init, tail and hiding kernels; `c3_chonk_tube` verifies

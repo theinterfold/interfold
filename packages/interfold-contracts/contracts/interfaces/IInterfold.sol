@@ -40,7 +40,8 @@ interface IInterfold {
     enum CommitteeSize {
         Minimum,
         Micro,
-        Small
+        Small,
+        Large
     }
 
     /// @notice BFV encryption parameter sets.
