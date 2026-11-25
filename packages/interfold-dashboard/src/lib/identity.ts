@@ -10,7 +10,7 @@
 // storage reads need no log history, so any RPC serves them. The verifier's fixed settings (domain, scope,
 // ZKPassport version, identifier type) are read from the verifier itself, so the page follows the
 // deployment. Before a deployment, the panel is hidden; with `?identity-preview` the page makes a
-// proof with the planned settings (PREVIEW_SERVICE) and offers it as a download.
+// proof with the planned settings (PLANNED_IDENTITY) and offers it as a download.
 
 import {
   BaseError,
@@ -26,6 +26,7 @@ import {
   type Hex,
 } from 'viem'
 import type { RequestSuccess, SolidityVerifierParameters } from '@zkpassport/sdk'
+import { ICAO_CHIP, PROOF_BUNDLE_KIND, readPublicInputs, type ProofBundle as ReplayBundle } from '@interfold/contracts/zkpassport'
 import {
   CONTRACTS,
   bondingRegistryAbi,
@@ -38,22 +39,6 @@ import {
 export type ProofResult = RequestSuccess['proofs'][number]
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
-
-/** `BondOwnerCapacityLib.IDENTITY_CAPACITY_WINDOW`. Windows start at multiples of it from Unix time zero. */
-export const CAPACITY_WINDOW = 30n * 86_400n
-
-/**
- * The verifier settings for a proof before governance deploys a verifier. The domain and scope are part
- * of every identifier, so the deployment must use the same values.
- */
-export const PREVIEW_SERVICE = {
-  domain: 'dashboard.theinterfold.com',
-  scope: 'interfold-bond-owner',
-  proofValidity: 7n * 86_400n,
-  // Ten years (3,653 days) covers a passport's whole validity, so a credential lasts until the
-  // document expires and the owner renews only then.
-  maxValidity: 3_653n * 86_400n,
-} as const
 
 const PROOF_VERIFICATION_PARAMS = getAbiItem({ abi: zkPassportRootVerifierAbi, name: 'verify' }).inputs[0]
 
@@ -214,11 +199,6 @@ export function registrationDeadline(proofDate: bigint, proofValidity: bigint, c
   return proofExpires < credentialEnds ? proofExpires : credentialEnds
 }
 
-/** The last second of the capacity window that contains `timestamp` (`BondOwnerCapacityLib._windowEnd`). */
-export function capacityWindowEnd(timestamp: bigint): bigint {
-  return (timestamp / CAPACITY_WINDOW + 1n) * CAPACITY_WINDOW - 1n
-}
-
 /** The ZKPassport chain name that binds a proof to `chainId`, or null where ZKPassport has no verifier. */
 export function boundChainName(chainId: number): 'ethereum' | 'ethereum_sepolia' | null {
   if (chainId === 1) return 'ethereum'
@@ -253,45 +233,6 @@ export function expiryLowerBound(proofs: readonly ProofResult[]): bigint | null 
     if (committed?.minDateTimestamp !== undefined) return BigInt(committed.minDateTimestamp)
   }
   return null
-}
-
-/** ZKPassport's verification method for a proof that reads the document's chip. */
-export const ICAO_CHIP = 100
-
-/**
- * Whether a ZKPassport version's public inputs end with the verification method, as from 0.23.0.
- * A version is three big-endian uint16 values (major, minor, patch) at the start of a bytes32.
- */
-export function hasVerificationMethod(version: Hex): boolean {
-  const word = BigInt(version)
-  return word >> 240n > 0n || ((word >> 224n) & 0xffffn) >= 23n
-}
-
-/** The values that the verifier reads from the proof's public inputs. */
-export function proofFacts(params: SolidityVerifierParameters): {
-  proofDate: bigint
-  nullifierType: number
-  scopedNullifier: Hex
-  oprfKeyHash: Hex
-  /** Null before ZKPassport 0.23.0, whose proofs always read the chip. */
-  verificationMethod: number | null
-} {
-  const inputs = params.proofVerificationData.publicInputs
-  const withMethod = hasVerificationMethod(params.version as Hex)
-  const end = inputs.length - (withMethod ? 1 : 0)
-  return {
-    proofDate: BigInt(inputs[2]),
-    nullifierType: Number(BigInt(inputs[end - 3])),
-    scopedNullifier: inputs[end - 2] as Hex,
-    oprfKeyHash: inputs[end - 1] as Hex,
-    verificationMethod: withMethod ? Number(BigInt(inputs[inputs.length - 1])) : null,
-  }
-}
-
-/** The credential end that the verifier sets: `validUntil`, or `maxValidity` after the proof date if earlier. */
-export function credentialEnd(validUntil: bigint, proofDate: bigint, maxValidity: bigint): bigint {
-  const capped = proofDate + maxValidity
-  return validUntil < capped ? validUntil : capped
 }
 
 /** `abi.encode(ProofVerificationParams, validUntil)`, the evidence of ZKPassportIdentityVerifier. */
@@ -372,11 +313,6 @@ export function fmtDay(ts: bigint): string {
   return new Date(Number(ts) * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
 }
 
-/** A Unix timestamp as the value of a date field: YYYY-MM-DD in UTC. */
-export function dateInput(ts: bigint): string {
-  return new Date(Number(ts) * 1000).toISOString().slice(0, 10)
-}
-
 /** A YYYY-MM-DD date field as the Unix timestamp of its UTC midnight, or null. */
 export function parseDateInput(value: string): bigint | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim())
@@ -389,22 +325,10 @@ export function parseDateInput(value: string): bigint | null {
   return BigInt(day.getTime() / 1000)
 }
 
-/** Everything that a registration or a test needs to replay one proof, as the page downloads it. */
-export type ProofBundle = {
-  kind: 'interfold.identity.zkpassport-proof'
-  chainId: number
+/** The proof download: what the proof replay reads, and the SDK's proofs and result. */
+export type ProofBundle = ReplayBundle & {
   owner: Address
-  domain: string
-  scope: string
-  faceMatch: boolean
-  /** Unix seconds. */
-  validUntil: string
-  proofDate: string
-  nullifierType: number
-  oprfKeyHash: Hex
-  version: Hex
   params: SolidityVerifierParameters
-  evidence: Hex
   proofs: ProofResult[]
   result: RequestSuccess['result']
 }
@@ -424,21 +348,21 @@ export function buildProofBundle({
 }): ProofBundle {
   const validUntil = expiryLowerBound(success.proofs)
   if (validUntil === null) throw new Error('The proof has no expiry-date check.')
-  const facts = proofFacts(params)
-  if (facts.verificationMethod !== null && facts.verificationMethod !== ICAO_CHIP) {
+  const inputs = readPublicInputs(params.version, params.proofVerificationData.publicInputs)
+  if (inputs.verificationMethod !== ICAO_CHIP) {
     throw new Error("This proof did not read the document's chip. Scan the chip of a passport or ID card in the ZKPassport app.")
   }
   return {
-    kind: 'interfold.identity.zkpassport-proof',
+    kind: PROOF_BUNDLE_KIND,
     chainId,
     owner,
     domain: params.serviceConfig.domain,
     scope: params.serviceConfig.scope,
     faceMatch,
     validUntil: validUntil.toString(),
-    proofDate: facts.proofDate.toString(),
-    nullifierType: facts.nullifierType,
-    oprfKeyHash: facts.oprfKeyHash,
+    proofDate: inputs.proofDate.toString(),
+    nullifierType: inputs.nullifierType,
+    oprfKeyHash: inputs.oprfKeyHash,
     version: params.version as Hex,
     params,
     evidence: encodeEvidence(params, validUntil),

@@ -110,8 +110,9 @@ The page warns when the proof's ZKPassport version differs from the verifier's, 
 too old, when a renewal would shorten the credential, and when the credential ends inside the
 current 30-day capacity window. Before a deployment (no policy yet), the panel is hidden, because a
 proof made then cannot register. With `?identity-preview` in the URL, it makes a proof with the
-planned settings (`PREVIEW_SERVICE`) and offers only the download. The download holds the proofs,
-the verifier parameters, and the evidence, so a fork test can replay it.
+planned settings (`PLANNED_IDENTITY` in `@interfold/contracts/zkpassport`, read from the example
+protocol config) and offers only the download. The download holds the proofs, the verifier
+parameters, and the evidence, so a fork test can replay it.
 
 The policy has no view, so the panel reads it from the bonding registry's ERC-7201 storage
 (`IDENTITY_STORAGE_SLOT` in `src/lib/identity.ts`). These storage reads need no log history, so any

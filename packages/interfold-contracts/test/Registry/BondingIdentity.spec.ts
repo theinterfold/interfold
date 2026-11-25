@@ -8,14 +8,11 @@ import type { Signer } from "ethers";
 
 import { deployOwnerIdentityRegistry } from "../../scripts/protocol/identityRegistry";
 import type { OwnerIdentityRegistry } from "../../types";
+import { CAPACITY_WINDOW, capacityWindowEnd } from "../../zkpassport";
 import { deployInterfoldSystem, ethers, networkHelpers } from "../fixtures";
 
 const { loadFixture, time } = networkHelpers;
-// Owner capacity covers fixed 30-day windows under a required identity policy.
-const WINDOW = 30 * 24 * 60 * 60;
-// The last second of the capacity window that contains `timepoint`.
-const windowEnd = (timepoint: number) =>
-  (Math.floor(timepoint / WINDOW) + 1) * WINDOW - 1;
+const WINDOW = Number(CAPACITY_WINDOW);
 
 async function setup() {
   const ctx = await deployInterfoldSystem({ submissionWindow: 600 });
@@ -63,8 +60,8 @@ async function refresh(ctx: Context) {
 
 // Starts a fresh capacity window and returns its last second.
 async function startWindow() {
-  await time.increaseTo(windowEnd(await time.latest()) + 1);
-  return windowEnd(await time.latest());
+  await time.increaseTo(capacityWindowEnd(BigInt(await time.latest())) + 1n);
+  return Number(capacityWindowEnd(BigInt(await time.latest())));
 }
 
 async function capacity(ctx: Context, at?: number) {

@@ -22,9 +22,8 @@ import {
 ///      The domain, scope, identifier type and OPRF key are fixed per deployment. A change to any
 ///      of them changes every identifier, so it needs a new registry or a migration. A new
 ///      ZKPassport version needs a new deployment, because the public-input layout belongs to the
-///      version. This contract knows the layouts of versions 0.20 to 0.23 and refuses any other.
-///      From 0.23, ZKPassport also verifies proofs that do not read the document's chip, so this
-///      contract accepts only chip proofs.
+///      version. From 0.23, ZKPassport also verifies proofs that do not read the document's chip,
+///      so this contract accepts only chip proofs.
 contract ZKPassportIdentityVerifier is IIdentityVerifier {
     /// @dev Index of the proof date (seconds) in ZKPassport's public inputs.
     uint256 internal constant PROOF_DATE_INDEX = 2;
@@ -60,8 +59,7 @@ contract ZKPassportIdentityVerifier is IIdentityVerifier {
     IZKPassportVerifier public immutable ROOT_VERIFIER;
     /// @notice The only ZKPassport verifier version that this deployment accepts.
     bytes32 public immutable VERSION;
-    /// @notice Whether the pinned version's public inputs end with the verification method.
-    bool public immutable HAS_VERIFICATION_METHOD;
+    bool internal immutable HAS_VERIFICATION_METHOD;
     /// @notice The accepted identifier type: 0 non-salted, 1 salted.
     uint8 public immutable NULLIFIER_TYPE;
     /// @notice The OPRF key hash that a proof must carry: ZKPassport's key for salted proofs, zero

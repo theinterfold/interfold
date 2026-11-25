@@ -31,6 +31,7 @@ import {
   BondingRegistry__factory as BondingRegistryFactory,
   OwnerIdentityRegistry__factory as OwnerIdentityRegistryFactory,
 } from "../../types";
+import { IDENTITY_TAG, capacityWindowEnd } from "../../zkpassport";
 import { assertAragonGovernancePreconditions } from "../protocol/actions";
 import { arg, connect, hasFlag, networkName } from "../protocol/cli";
 import { proxyAdminInterface } from "../protocol/constants";
@@ -88,16 +89,8 @@ export const REFRESH_BATCH = 20;
 export const MAX_BATCH_OPERATORS = 120;
 /** The stages whose batch refreshes every operator and records the refresh list. */
 const REFRESH_STAGES = ["prepare", "enforce", "relax", "revoke"];
-/** `BondOwnerCapacityLib.IDENTITY_CAPACITY_WINDOW`. Windows start at multiples of it. */
-export const CAPACITY_WINDOW = 30n * 86_400n;
 /** Time to execute an enforce batch when `--execute-by` is not given: the Safe signs it meanwhile. */
 export const EXECUTION_MARGIN = 7n * 86_400n;
-const IDENTITY_TAG = "interfold.identity.zkpassport.v1";
-
-/** The last second of the capacity window that contains `timestamp` (`_windowEnd`). */
-export function capacityWindowEnd(timestamp: bigint): bigint {
-  return (timestamp / CAPACITY_WINDOW + 1n) * CAPACITY_WINDOW - 1n;
-}
 
 /**
  * The end of the capacity window that contains the latest execution of an enforce batch. An owner

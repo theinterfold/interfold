@@ -15,19 +15,20 @@ import { claimPlan, summarizeRewards, type CommitteeSeat, type SeatStatus } from
 import {
   boundChainName,
   buildProofBundle,
-  dateInput,
   identityStatusText,
   parseDateInput,
   type OwnerAccount,
   type VerifierConfig,
 } from './lib/identity'
 import { pad, toHex, type Hex } from 'viem'
+import { zkPassportVersion } from '@interfold/contracts/zkpassport'
 
 const OPERATOR = '0x1111111111111111111111111111111111111111' as Address
 const OWNER = '0x2222222222222222222222222222222222222222' as Address
 const PROPOSED = '0x3333333333333333333333333333333333333333' as Address
 const OTHER = '0x4444444444444444444444444444444444444444' as Address
 const UNIT = 10n ** 18n
+const dateInput = (ts: bigint) => new Date(Number(ts) * 1000).toISOString().slice(0, 10)
 
 const config: BondingConfig = {
   ciphernodeBondToken: OTHER,
@@ -184,8 +185,7 @@ test('the claim covers the claimable seats of the connected recipient, and the s
 const DAY = 86_400n
 const NOW = 1_790_000_000n
 const word = (value: bigint): Hex => pad(toHex(value), { size: 32 })
-// ZKPassport 0.20.0: three big-endian uint16 values (major, minor, patch) at the start.
-const VERSION = word(0x14n << 224n)
+const VERSION = zkPassportVersion(0, 20, 0)
 
 const service: IdentityService = {
   domain: 'dashboard.theinterfold.com',
@@ -354,7 +354,7 @@ test('a proof registers from the owner, or as a Safe transaction', () => {
   assert.match(safeBatch, /The batch also refreshes the operator/)
 
   // The verifier accepts one ZKPassport version.
-  const otherVersion = { phase: 'ready', bundle: bundle(word(0x15n << 224n)) } as const
+  const otherVersion = { phase: 'ready', bundle: bundle(zkPassportVersion(0, 21, 0)) } as const
   const mismatch = renderToStaticMarkup(<IdentityView {...identityProps} request={otherVersion} />)
   assert.match(mismatch, /another ZKPassport version/)
   assert.match(mismatch, /<button class="btn btn--primary" disabled="">Register the identity/)

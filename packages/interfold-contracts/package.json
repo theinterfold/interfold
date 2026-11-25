@@ -24,6 +24,16 @@
         "default": "./dist/bfv.cjs"
       }
     },
+    "./zkpassport": {
+      "import": {
+        "types": "./dist/zkpassport.d.ts",
+        "default": "./dist/zkpassport.js"
+      },
+      "require": {
+        "types": "./dist/zkpassport.d.cts",
+        "default": "./dist/zkpassport.cjs"
+      }
+    },
     "./tasks/ciphernode": {
       "import": {
         "types": "./dist/tasks/ciphernode.d.ts",
@@ -169,8 +179,9 @@
     "build": "pnpm compile",
     "compile": "pnpm compile:contracts && pnpm compile:ts",
     "compile:contracts": "cross-env TS_NODE_TRANSPILE_ONLY=true hardhat compile",
-    "compile:ts": "tsc && pnpm build:bfv && tsx scripts/writeNodeRelease.ts",
+    "compile:ts": "tsc && pnpm build:bfv && pnpm build:zkpassport && tsx scripts/writeNodeRelease.ts",
     "build:bfv": "tsup bfv.ts --format esm,cjs --dts --platform browser --target es2022 --out-dir dist",
+    "build:zkpassport": "tsup zkpassport.ts --format esm,cjs --dts --platform browser --target es2022 --out-dir dist",
     "coverage": "pnpm test --coverage",
     "deploy": "hardhat run scripts/run.ts",
     "deploy:mocks": "export DEPLOY_MOCKS=true && pnpm clean:deployments && hardhat run scripts/run.ts --network localhost",

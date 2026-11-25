@@ -16,83 +16,52 @@
 // The `mainnet` network reads RPC_URL and PRIVATE_KEY, so it reaches the fork; the script refuses
 // any chain that is not an Anvil mainnet fork.
 //
-// Options: --proof-validity <seconds> (default 7 days), --max-validity <seconds> (default 3,653 days,
-// so a credential lasts until the document expires).
+// Options: --proof-validity <seconds> and --max-validity <seconds>, by default the example protocol
+// config's.
 import { ethers as ethersLib } from "ethers";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { OwnerIdentityRegistry } from "../../types";
+import {
+  PLANNED_IDENTITY,
+  PROOF_BUNDLE_KIND,
+  type ProofBundle,
+  credentialEnd,
+  readPublicInputs,
+} from "../../zkpassport";
 import { arg, connect } from "../protocol/cli";
 import { resolvePath } from "../protocol/files";
 import { deployOwnerIdentityRegistry } from "../protocol/identityRegistry";
 import { deployedAddress } from "../protocol/values";
 
-const ZKPASSPORT_ROOT_VERIFIER = "0x1D000001000EFD9a6371f4d90bB8920D5431c0D8";
-const IDENTITY_TAG = "interfold.identity.zkpassport.v1";
-
-/** The fields of the dashboard's proof download that the replay reads. */
-export interface ProofBundle {
-  kind: string;
-  chainId: number;
-  owner: string;
-  domain: string;
-  scope: string;
-  faceMatch: boolean;
-  validUntil: string;
-  proofDate: string;
-  nullifierType: number;
-  oprfKeyHash: string;
-  version: string;
-  evidence: string;
-  params: { proofVerificationData: { publicInputs: string[] } };
-}
-
 export function readProofBundle(file: string): ProofBundle {
   const bundle = JSON.parse(fs.readFileSync(file, "utf8")) as ProofBundle;
-  if (bundle.kind !== "interfold.identity.zkpassport-proof") {
+  if (bundle.kind !== PROOF_BUNDLE_KIND) {
     throw new Error(`${file} is not a proof download of the identity panel`);
   }
   return bundle;
 }
 
 /**
- * Whether a ZKPassport version's public inputs end with the verification method, as from 0.23.0.
- * A version is three big-endian uint16 values (major, minor, patch) at the start of a bytes32.
+ * The identifier that a verifier with this identifier namespace derives for the proof, if
+ * ZKPassport's unique identifier is the proof's scoped nullifier.
  */
-export function hasVerificationMethod(version: string): boolean {
-  const word = BigInt(version);
-  return word >> 240n > 0n || ((word >> 224n) & 0xffffn) >= 23n;
-}
-
-/** The identifier that ZKPassportIdentityVerifier derives for the proof's scoped nullifier. */
-export function expectedIdentityId(bundle: ProofBundle): string {
-  const coder = ethersLib.AbiCoder.defaultAbiCoder();
-  const inputs = bundle.params.proofVerificationData.publicInputs;
-  // The scoped nullifier comes before the OPRF key hash, and from 0.23.0 also before the
-  // verification method.
-  const scopedNullifier =
-    inputs[inputs.length - (hasVerificationMethod(bundle.version) ? 3 : 2)];
-  const namespace = ethersLib.keccak256(
-    coder.encode(
-      ["string", "string", "string"],
-      [IDENTITY_TAG, bundle.domain, bundle.scope],
-    ),
+export function expectedIdentityId(
+  namespace: string,
+  bundle: ProofBundle,
+): string {
+  const { scopedNullifier } = readPublicInputs(
+    bundle.version,
+    bundle.params.proofVerificationData.publicInputs,
   );
   return ethersLib.keccak256(
-    coder.encode(["bytes32", "bytes32"], [namespace, scopedNullifier]),
+    ethersLib.AbiCoder.defaultAbiCoder().encode(
+      ["bytes32", "bytes32"],
+      [namespace, scopedNullifier],
+    ),
   );
-}
-
-/** The credential end: `validUntil`, or `maxValidity` after the proof date if that is earlier. */
-export function expectedExpiresAt(
-  bundle: ProofBundle,
-  maxValidity: bigint,
-): bigint {
-  const validUntil = BigInt(bundle.validUntil);
-  const cap = BigInt(bundle.proofDate) + maxValidity;
-  return validUntil < cap ? validUntil : cap;
 }
 
 async function requireAnvilMainnetFork(ethers: any): Promise<void> {
@@ -124,8 +93,12 @@ export async function replayProof(): Promise<void> {
   if (bundle.chainId !== 1) {
     throw new Error(`The proof binds chain ${bundle.chainId}, not mainnet`);
   }
-  const proofValidity = BigInt(arg("proof-validity") ?? 7 * 86_400);
-  const maxValidity = BigInt(arg("max-validity") ?? 3_653 * 86_400);
+  const proofValidity = BigInt(
+    arg("proof-validity") ?? PLANNED_IDENTITY.proofValidity,
+  );
+  const maxValidity = BigInt(
+    arg("max-validity") ?? PLANNED_IDENTITY.maxValidity,
+  );
   const [deployer] = await ethers.getSigners();
   // Impersonated accounts sign through a plain provider, as in the service-migration simulation.
   const forkProvider = new ethersLib.JsonRpcProvider(
@@ -158,7 +131,7 @@ async function register(
   const verifier = await (
     await ethers.getContractFactory("ZKPassportIdentityVerifier")
   ).deploy(
-    ZKPASSPORT_ROOT_VERIFIER,
+    PLANNED_IDENTITY.rootVerifier,
     bundle.version,
     bundle.domain,
     bundle.scope,
@@ -196,10 +169,18 @@ async function register(
   const receipt = await tx.wait();
   if (receipt?.status !== 1) throw new Error("Registration reverted");
   const [identityId, expiresAt] = await registry.identityOf(bundle.owner);
-  const expectedExpiry = expectedExpiresAt(bundle, maxValidity);
-  if (identityId !== expectedIdentityId(bundle)) {
+  const expectedId = expectedIdentityId(
+    await verifier.IDENTITY_NAMESPACE(),
+    bundle,
+  );
+  const expectedExpiry = credentialEnd(
+    BigInt(bundle.validUntil),
+    BigInt(bundle.proofDate),
+    maxValidity,
+  );
+  if (identityId !== expectedId) {
     throw new Error(
-      `Identifier ${identityId} differs from the scoped nullifier's ${expectedIdentityId(bundle)}`,
+      `Identifier ${identityId} differs from the scoped nullifier's ${expectedId}`,
     );
   }
   if (BigInt(expiresAt) !== expectedExpiry) {

@@ -13,13 +13,11 @@ import { proxyAdminInterface } from "../../scripts/protocol/constants";
 import { deployOwnerIdentityRegistry } from "../../scripts/protocol/identityRegistry";
 import type { ProtocolConfigFile } from "../../scripts/protocol/types";
 import {
-  CAPACITY_WINDOW,
   EXECUTION_MARGIN,
   MAX_BATCH_OPERATORS,
   REFRESH_BATCH,
   buildIdentityGateTransactions,
   buildRevokeTransactions,
-  capacityWindowEnd,
   changedIdentifierSettings,
   enforceDeadline,
   identityGateSettings,
@@ -29,16 +27,17 @@ import {
   sameVerifierSettings,
   unrefreshedOperators,
 } from "../../scripts/upgrade/identityGate";
-import {
-  type ProofBundle,
-  expectedExpiresAt,
-  expectedIdentityId,
-  readProofBundle,
-} from "../../scripts/upgrade/identityProofFork";
+import { readProofBundle } from "../../scripts/upgrade/identityProofFork";
 import {
   BondingRegistry__factory as BondingRegistryFactory,
   OwnerIdentityRegistry__factory as OwnerIdentityRegistryFactory,
 } from "../../types";
+import {
+  CAPACITY_WINDOW,
+  PROOF_BUNDLE_KIND,
+  capacityWindowEnd,
+  zkPassportVersion,
+} from "../../zkpassport";
 import { deployInterfoldSystem, ethers, networkHelpers } from "../fixtures";
 
 const bondingInterface = BondingRegistryFactory.createInterface();
@@ -69,8 +68,7 @@ function config(identity: Record<string, unknown>): ProtocolConfigFile {
     name: "test-protocol",
     identity: {
       zkPassportRootVerifier: "0x1D000001000EFD9a6371f4d90bB8920D5431c0D8",
-      // ZKPassport 0.20.0: three big-endian uint16 values at the start of a bytes32.
-      zkPassportVersion: ethersLib.zeroPadBytes("0x000000140000", 32),
+      zkPassportVersion: zkPassportVersion(0, 20, 0),
       domain: "dashboard.theinterfold.com",
       scope: "interfold-bond-owner",
       nullifierType: 0,
@@ -162,7 +160,7 @@ describe("identity gate rollout", function () {
     const current = identityGateSettings(config({}));
     const nextVersion = {
       ...current,
-      zkPassportVersion: ethersLib.zeroPadBytes("0x000000150000", 32),
+      zkPassportVersion: zkPassportVersion(0, 21, 0),
     };
     expect(changedIdentifierSettings(current, nextVersion)).to.deep.equal([]);
     expect(sameVerifierSettings(current, nextVersion)).to.equal(false);
@@ -228,63 +226,19 @@ describe("identity gate rollout", function () {
     ).to.throw(/uint48/);
   });
 
-  it("derives the identifier of a downloaded proof as the verifier does", function () {
-    const domain = "dashboard.theinterfold.com";
-    const scope = "interfold-bond-owner";
-    const nullifier = ethersLib.id("document scoped nullifier");
-    const coder = ethersLib.AbiCoder.defaultAbiCoder();
-    const namespace = ethersLib.keccak256(
-      coder.encode(
-        ["string", "string", "string"],
-        ["interfold.identity.zkpassport.v1", domain, scope],
-      ),
-    );
-    const expected = ethersLib.keccak256(
-      coder.encode(["bytes32", "bytes32"], [namespace, nullifier]),
-    );
-    const bundle = {
-      kind: "interfold.identity.zkpassport-proof",
-      domain,
-      scope,
-      // ZKPassport 0.20.0: three big-endian uint16 values at the start of a bytes32.
-      version: ethersLib.zeroPadBytes("0x000000140000", 32),
-      params: {
-        proofVerificationData: {
-          // Up to 0.22 the inputs end with [nullifier type, scoped nullifier, OPRF key hash].
-          publicInputs: [
-            ethersLib.ZeroHash,
-            ethersLib.ZeroHash,
-            nullifier,
-            ethersLib.ZeroHash,
-          ],
-        },
-      },
-    } as unknown as ProofBundle;
-    expect(expectedIdentityId(bundle)).to.equal(expected);
-    // From 0.23.0 the verification method follows the OPRF key hash.
-    const bundle023 = {
-      ...bundle,
-      version: ethersLib.zeroPadBytes("0x000000170000", 32),
-      params: {
-        proofVerificationData: {
-          publicInputs: [
-            ethersLib.ZeroHash,
-            ethersLib.ZeroHash,
-            nullifier,
-            ethersLib.ZeroHash,
-            ethersLib.toBeHex(100, 32),
-          ],
-        },
-      },
-    } as unknown as ProofBundle;
-    expect(expectedIdentityId(bundle023)).to.equal(expected);
-
+  it("reads only the identity panel's proof download", function () {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "identity-proof-"));
     const good = path.join(dir, "proof.json");
     const bad = path.join(dir, "other.json");
-    fs.writeFileSync(good, JSON.stringify(bundle));
+    fs.writeFileSync(
+      good,
+      JSON.stringify({
+        kind: PROOF_BUNDLE_KIND,
+        scope: "interfold-bond-owner",
+      }),
+    );
     fs.writeFileSync(bad, JSON.stringify({ kind: "other" }));
-    expect(readProofBundle(good).scope).to.equal(scope);
+    expect(readProofBundle(good).scope).to.equal("interfold-bond-owner");
     expect(() => readProofBundle(bad)).to.throw(/not a proof download/);
   });
 
@@ -302,32 +256,26 @@ describe("identity gate rollout", function () {
     ).to.throw(/refresh in stages/);
   });
 
-  it("matches the contract's capacity window and identifier namespace", function () {
-    const solidity = fs.readFileSync(
-      new URL("../../contracts/lib/BondOwnerCapacityLib.sol", import.meta.url),
-      "utf8",
+  it("derives the identifier namespace as the verifier does", async function () {
+    const helper = await ethers.deployContract("MockZKPassportHelper");
+    const rootVerifier = await ethers.deployContract(
+      "MockZKPassportRootVerifier",
+      [await helper.getAddress(), ethersLib.ZeroHash],
     );
-    const window = /IDENTITY_CAPACITY_WINDOW\s*=\s*(\d+)\s*days/.exec(solidity);
-    expect(window, "IDENTITY_CAPACITY_WINDOW declaration").to.not.equal(null);
-    expect(BigInt(window![1]) * 86_400n).to.equal(CAPACITY_WINDOW);
-    const start = CAPACITY_WINDOW * 680n;
-    expect(capacityWindowEnd(start)).to.equal(start + CAPACITY_WINDOW - 1n);
-    expect(capacityWindowEnd(start + CAPACITY_WINDOW)).to.equal(
-      start + 2n * CAPACITY_WINDOW - 1n,
-    );
-    const coder = ethersLib.AbiCoder.defaultAbiCoder();
-    const domain = "dashboard.theinterfold.com";
-    expect(identityNamespace(domain, "interfold-bond-owner")).to.equal(
-      ethersLib.keccak256(
-        coder.encode(
-          ["string", "string", "string"],
-          ["interfold.identity.zkpassport.v1", domain, "interfold-bond-owner"],
-        ),
-      ),
-    );
-    // A scope that differs only in case is another namespace.
-    expect(identityNamespace(domain, "Interfold-bond-owner")).to.not.equal(
-      identityNamespace(domain, "interfold-bond-owner"),
+    const settings = identityGateSettings(config({}));
+    const verifier = await ethers.deployContract("ZKPassportIdentityVerifier", [
+      await rootVerifier.getAddress(),
+      settings.zkPassportVersion,
+      settings.domain,
+      settings.scope,
+      settings.nullifierType,
+      settings.oprfKeyHash,
+      settings.faceMatchRequired,
+      settings.proofValidity,
+      settings.maxValidity,
+    ]);
+    expect(await verifier.IDENTITY_NAMESPACE()).to.equal(
+      identityNamespace(settings.domain, settings.scope),
     );
   });
 
@@ -441,14 +389,5 @@ describe("identity gate rollout", function () {
       ),
     ).to.deep.equal([addr(0xabc2), addr(0xabc5)]);
     expect(filters).to.deep.equal([{ address: addr(9), topics: [topic] }]);
-  });
-
-  it("ends a credential at validUntil or at the validity cap", function () {
-    const bundle = {
-      validUntil: "2000",
-      proofDate: "1000",
-    } as unknown as ProofBundle;
-    expect(expectedExpiresAt(bundle, 5_000n)).to.equal(2_000n);
-    expect(expectedExpiresAt(bundle, 500n)).to.equal(1_500n);
   });
 });

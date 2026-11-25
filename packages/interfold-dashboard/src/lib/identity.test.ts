@@ -18,19 +18,15 @@ import {
   type Hex,
 } from 'viem'
 import type { RequestSuccess, SolidityVerifierParameters } from '@zkpassport/sdk'
+import { zkPassportVersion } from '@interfold/contracts/zkpassport'
 import { bondingRegistryAbi, identityRegisterAbi, ownerIdentityRegistryAbi, zkPassportRootVerifierAbi } from './chain'
 import {
-  CAPACITY_WINDOW,
   boundChainName,
   buildProofBundle,
-  capacityWindowEnd,
-  credentialEnd,
   encodeEvidence,
   expiryLowerBound,
-  hasVerificationMethod,
   isContractCode,
   outerEvmProof,
-  proofFacts,
   registrationDeadline,
   safeRegistrationBatch,
   type ProofResult,
@@ -47,8 +43,7 @@ const VALID_UNTIL = 1_830_000_000n
 
 function verifierParams(): SolidityVerifierParameters {
   return {
-    // ZKPassport 0.20.0: three big-endian uint16 values (major, minor, patch) at the start.
-    version: word(0x14n << 224n),
+    version: zkPassportVersion(0, 20, 0),
     proofVerificationData: {
       vkeyHash: word(7n),
       proof: '0x1234',
@@ -74,13 +69,6 @@ function proofs(): ProofResult[] {
   ]
 }
 
-test('capacity windows end at the same second as BondOwnerCapacityLib', () => {
-  const start = CAPACITY_WINDOW * 680n
-  assert.equal(capacityWindowEnd(start), start + CAPACITY_WINDOW - 1n)
-  assert.equal(capacityWindowEnd(start + CAPACITY_WINDOW - 1n), start + CAPACITY_WINDOW - 1n)
-  assert.equal(capacityWindowEnd(start + CAPACITY_WINDOW), start + 2n * CAPACITY_WINDOW - 1n)
-})
-
 test('a proof binds to the ZKPassport name of the dashboard chain', () => {
   assert.equal(boundChainName(1), 'ethereum')
   assert.equal(boundChainName(11_155_111), 'ethereum_sepolia')
@@ -92,22 +80,11 @@ test('the evidence carries the outer proof and the committed expiry bound', () =
   assert.equal(outerEvmProof(proofs().slice(0, 2)), null)
   assert.equal(expiryLowerBound(proofs()), VALID_UNTIL)
   assert.equal(expiryLowerBound([{ name: 'outer_evm' }]), null)
-
-  const facts = proofFacts(verifierParams())
-  assert.deepEqual(facts, {
-    proofDate: PROOF_DATE,
-    nullifierType: 0,
-    scopedNullifier: word(0xabcdefn),
-    oprfKeyHash: word(0n),
-    verificationMethod: null,
-  })
-  assert.equal(credentialEnd(VALID_UNTIL, PROOF_DATE, 365n * 86_400n), PROOF_DATE + 365n * 86_400n)
-  assert.equal(credentialEnd(PROOF_DATE + 10n, PROOF_DATE, 365n * 86_400n), PROOF_DATE + 10n)
 })
 
-test('from ZKPassport 0.23.0 the verification method ends the public inputs, and only chip proofs pass', () => {
+test('from ZKPassport 0.23.0 only chip proofs pass, and a version the verifier does not know fails', () => {
   const params = verifierParams()
-  const version023 = word(0x17n << 224n)
+  const version023 = zkPassportVersion(0, 23, 0)
   const chip = {
     ...params,
     version: version023,
@@ -116,16 +93,6 @@ test('from ZKPassport 0.23.0 the verification method ends the public inputs, and
       publicInputs: [...params.proofVerificationData.publicInputs, word(100n)],
     },
   }
-  assert.equal(hasVerificationMethod(params.version as Hex), false)
-  assert.equal(hasVerificationMethod(version023), true)
-  assert.deepEqual(proofFacts(chip), {
-    proofDate: PROOF_DATE,
-    nullifierType: 0,
-    scopedNullifier: word(0xabcdefn),
-    oprfKeyHash: word(0n),
-    verificationMethod: 100,
-  })
-
   const success = { proofs: proofs(), result: {} } as RequestSuccess
   assert.equal(buildProofBundle({ success, params: chip, owner: OWNER, chainId: 1, faceMatch: true }).version, version023)
   for (const method of [101n, 200n, 201n]) {
@@ -141,6 +108,11 @@ test('from ZKPassport 0.23.0 the verification method ends the public inputs, and
       /did not read the document's chip/,
     )
   }
+  assert.throws(
+    () =>
+      buildProofBundle({ success, params: { ...chip, version: zkPassportVersion(0, 24, 0) }, owner: OWNER, chainId: 1, faceMatch: true }),
+    /does not read ZKPassport version/,
+  )
 })
 
 test('the evidence decodes as the verifier decodes it', () => {

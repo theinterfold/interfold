@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, isAddress, parseUnits, type Address, type Hash } from 'viem'
+import { PLANNED_IDENTITY, capacityWindowEnd, credentialEnd } from '@interfold/contracts/zkpassport'
 import Loader from './Loader'
 import {
   CHAIN,
@@ -30,11 +31,8 @@ import {
   publicClient,
 } from './lib/chain'
 import {
-  PREVIEW_SERVICE,
   boundChainName,
   buildProofBundle,
-  capacityWindowEnd,
-  credentialEnd,
   fetchIdentityPolicy,
   fetchOwnerAccount,
   fetchVerifierConfig,
@@ -1400,12 +1398,12 @@ function identityService(verifier: VerifierConfig | null, previewFaceMatch: bool
         maxValidity: verifier.maxValidity,
       }
     : {
-        domain: PREVIEW_SERVICE.domain,
-        scope: PREVIEW_SERVICE.scope,
+        domain: PLANNED_IDENTITY.domain,
+        scope: PLANNED_IDENTITY.scope,
         faceMatch: previewFaceMatch,
         nullifierType: null,
-        proofValidity: PREVIEW_SERVICE.proofValidity,
-        maxValidity: PREVIEW_SERVICE.maxValidity,
+        proofValidity: PLANNED_IDENTITY.proofValidity,
+        maxValidity: PLANNED_IDENTITY.maxValidity,
       }
 }
 
@@ -1442,9 +1440,9 @@ function IdentityPanel({
   const [account, setAccount] = useState<{ owner: Address; registry: Address | null; value: OwnerAccount } | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
   const [request, setRequest] = useState<IdentityRequest>({ phase: 'idle' })
-  // null until the owner types a date.
-  const [validUntilInput, setValidUntilInput] = useState<string | null>(null)
-  const [previewFaceMatch, setPreviewFaceMatch] = useState(true)
+  // No default: a proof can only show an expiry date that the document reaches.
+  const [validUntilInput, setValidUntilInput] = useState('')
+  const [previewFaceMatch, setPreviewFaceMatch] = useState<boolean>(PLANNED_IDENTITY.faceMatchRequired)
   const cancelRequest = useRef<(() => void) | null>(null)
   // Each request gets a token. A callback of an older request changes nothing.
   const requestToken = useRef(0)
@@ -1518,13 +1516,10 @@ function IdentityPanel({
   // A published registry without a verifier, or with a verifier that is not ZKPassport's, keeps its
   // credentials, but this page cannot register with it.
   const registrationClosed = Boolean(policy) && verifier === null
-  // The owner enters the document's expiry date: the proof can only show a date that the document
-  // reaches, and the credential then lasts until the document expires.
-  const validUntilValue = validUntilInput ?? ''
 
   const create = async () => {
     const chain = boundChainName(CHAIN.id)
-    const validUntil = parseDateInput(validUntilValue)
+    const validUntil = parseDateInput(validUntilInput)
     if (!chain || validUntil === null) return
     cancelRequest.current?.()
     const token = ++requestToken.current
@@ -1589,7 +1584,7 @@ function IdentityPanel({
       account={current}
       loadFailed={loadFailed}
       service={service}
-      validUntilInput={validUntilValue}
+      validUntilInput={validUntilInput}
       onValidUntil={setValidUntilInput}
       previewFaceMatch={previewFaceMatch}
       onPreviewFaceMatch={setPreviewFaceMatch}

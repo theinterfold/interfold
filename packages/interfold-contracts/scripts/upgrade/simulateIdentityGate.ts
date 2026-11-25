@@ -37,6 +37,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { credentialEnd, zkPassportVersion } from "../../zkpassport";
 import type { ProtocolConfigFile } from "../protocol/types";
 import {
   executeIdentityBatch,
@@ -44,19 +45,14 @@ import {
   sendAs,
   startFork,
 } from "./identityFork";
-import {
-  expectedExpiresAt,
-  expectedIdentityId,
-  readProofBundle,
-} from "./identityProofFork";
+import { expectedIdentityId, readProofBundle } from "./identityProofFork";
 
 const PORT = Number(process.env.ANVIL_PORT ?? 18545);
 const RPC = `http://127.0.0.1:${PORT}`;
 // anvil's first test account; funded on every fork.
 const TEST_KEY =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-// ZKPassport 0.21.1: two bytes each for major, minor, and patch.
-const DEFAULT_VERSION = ethers.zeroPadBytes("0x000000150001", 32);
+const DEFAULT_VERSION = zkPassportVersion(0, 21, 1);
 const GATE = "scripts/upgrade/identityGate.ts";
 const CHECK = "scripts/upgrade/identityBatchCheck.ts";
 
@@ -300,13 +296,20 @@ async function main() {
         plan.identityRegistry,
         bundle.owner,
       );
-      if (registered !== expectedIdentityId(bundle)) {
+      const namespace: string = await new ethers.Contract(
+        plan.identityVerifier,
+        ["function IDENTITY_NAMESPACE() view returns (bytes32)"],
+        provider,
+      ).IDENTITY_NAMESPACE();
+      const expectedId = expectedIdentityId(namespace, bundle);
+      if (registered !== expectedId) {
         throw new Error(
-          `Registered identifier ${registered} differs from the proof's ${expectedIdentityId(bundle)}`,
+          `Registered identifier ${registered} differs from the proof's ${expectedId}`,
         );
       }
-      const expectedExpiry = expectedExpiresAt(
-        bundle,
+      const expectedExpiry = credentialEnd(
+        BigInt(bundle.validUntil),
+        BigInt(bundle.proofDate),
         BigInt(identity.maxValidity),
       );
       if (expiresAt !== expectedExpiry) {
