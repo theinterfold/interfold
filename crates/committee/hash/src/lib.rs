@@ -281,3 +281,5 @@ mod tests {
         );
     }
 }
+
+// Throwaway probe for #2559; never merged.
