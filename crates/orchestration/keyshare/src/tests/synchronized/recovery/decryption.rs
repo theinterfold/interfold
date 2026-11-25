@@ -4,17 +4,17 @@
 //! standby promotion, the durable local plaintext intent and real request-bound EVM verification.
 use super::*;
 use crate::synchronized::SynchronizedSetupIntent;
-use alloy::{providers::ext::AnvilApi, sol_types::SolEvent};
+use alloy::providers::ext::AnvilApi;
 use e3_aggregator::synchronized_plaintext::FixedSetPlaintext;
 use e3_events::{DecryptionshareCreated, PlaintextAggregated};
-use e3_evm_contracts::IInterfold;
+use e3_evm_contracts::{decryption_errors::DecryptionHonk::ProofLengthWrongWithLogN, IInterfold};
 use e3_zk_prover::synchronized::fixed_set::DecryptionRuntime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 sol! {
     #[sol(rpc)]
     interface Checkpoint {
-        function seedCiphertext(uint256 id, bytes ct, bytes32 commitment, address verifier) external;
+        function seedCiphertext(uint256 id, bytes32 contentHash, bytes32 commitment, address verifier) external;
         function failureCondition(uint256 id) external view returns (bool expired, uint8 reason, uint256 deadline);
     }
 }
@@ -52,21 +52,25 @@ impl Handler<DriveDefinition> for ThresholdKeyshare {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn local(
+struct Contributor {
+    actor: actix::Addr<ThresholdKeyshare>,
+    output: UnboundedReceiver<InterfoldEvent>,
+    db: DataStore,
+    owner: u64,
+}
+
+async fn contributor(
     owner: usize,
-    first: bool,
-    opening: &InterfoldEvent,
-    bus: &BusHandle,
-    keys: &CanonicalPublicKeys,
+    keys: CanonicalPublicKeys,
     rt: &DecryptionRuntime,
     root: &Recovered,
     setup: &SynchronizedSetupIntent,
     signer: &PrivateKeySigner,
     directory: &Path,
-) -> Result<DecryptionshareCreated> {
+) -> Result<Contributor> {
+    let bus = test_bus_with_deduplication(false).0;
     let db = DataStore::from_sled_store(&SledStore::new(
-        bus,
+        &bus,
         &directory.join(format!("consent-{owner}")),
     )?);
     let repos = db.repositories();
@@ -104,31 +108,35 @@ async fn local(
         effects_enabled: false,
         dkg_timing_reader: Arc::new(|_| Box::pin(async { anyhow::bail!("unexpected DKG timing") })),
     })
-    .with_canonical_keys(keys.clone())
+    .with_canonical_keys(keys)
     .with_decryption_runtime(Some(rt.clone()));
     node.synchronized_setup = Some(restored);
-    let node = node.start();
-    let mut output = listen(bus, EventType::DecryptionshareCreated);
-    let enabled = keyshare_event(EffectsEnabled::new(), 1, EventSource::Local);
-    if first {
-        node.send(enabled).await?;
-        node.send(opening.clone()).await?;
-    } else {
-        node.send(opening.clone()).await?;
-        node.send(enabled).await?;
-    }
-    node.send(DriveDefinition).await??;
-    let InterfoldEventData::DecryptionshareCreated(bundle) =
-        received(&mut output).await?.into_data()
-    else {
-        unreachable!()
-    };
-    ensure!(bundle.party_id == owner as u64);
-    node.send(Die).await?;
-    db.shutdown().await?;
-    SledDb::close_all_connections();
-    Ok(bundle)
+    Ok(Contributor {
+        actor: node.start(),
+        output: listen(&bus, EventType::DecryptionshareCreated),
+        db,
+        owner: owner as u64,
+    })
 }
+
+impl Contributor {
+    async fn signed(mut self) -> Result<DecryptionshareCreated> {
+        self.actor.send(DriveDefinition).await??;
+        let InterfoldEventData::DecryptionshareCreated(bundle) =
+            received(&mut self.output).await?.into_data()
+        else {
+            unreachable!()
+        };
+        ensure!(bundle.party_id == self.owner);
+        self.actor.send(Die).await?;
+        self.db.shutdown().await?;
+        SledDb::close_all_connections();
+        Ok(bundle)
+    }
+}
+
+#[path = "ciphertext_delivery.rs"]
+mod ciphertext_delivery;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn qualify(
@@ -184,17 +192,14 @@ pub(super) async fn qualify(
     let commitment = e3_bfv_client::compute_ct_commitment_with_params(&ct, p)?;
     let checkpoint = Checkpoint::new(controller, &chain.provider);
     let receipt = checkpoint
-        .seedCiphertext(numeric, ct.clone().into(), commitment.into(), wrapper)
+        .seedCiphertext(numeric, keccak256(&ct), commitment.into(), wrapper)
         .send()
         .await?
         .get_receipt()
         .await?;
     ensure!(receipt.status());
-    let config = AggregateConfig::new(HashMap::from([(AggregateId::new(31337), Duration::ZERO)]));
-    let system = EventSystem::new()
-        .with_event_bus(EventBus::new(EventBusConfig { deduplicate: false }).start())
-        .with_aggregate_config(config);
-    let bus = system.handle()?.enable("standby");
+    let node = DiskJournal::open(dir, "plaintext").await?;
+    let bus = &node.bus;
     for event in history {
         bus.publish_from_remote(
             event.get_data().clone(),
@@ -205,59 +210,12 @@ pub(super) async fn qualify(
     }
     bus.flush_event_pipeline().await?;
     let keys = CanonicalPublicKeys::default();
-    let journal = system.eventstore_reader()?.seq();
     let mut projection =
         CanonicalKeyProjection::new(keys.clone(), HashMap::from([(31337, controller)]));
     projection
-        .recover(&journal, &[AggregateId::new(31337)], HashSet::new())
+        .recover(&node.reader, &[AggregateId::new(31337)], HashSet::new())
         .await?;
-    projection.attach(&bus).await?;
-    let mut openings = listen(&bus, EventType::CiphertextOutputPublished);
-    for log in receipt.logs() {
-        ensure!(log.address() == controller);
-        let data: InterfoldEventData = match log.topic0() {
-            Some(topic) if *topic == IInterfold::CiphertextOutputPublished::SIGNATURE_HASH => {
-                let fact = log
-                    .log_decode::<IInterfold::CiphertextOutputPublished>()?
-                    .inner
-                    .data;
-                ensure!(fact.e3Id == numeric);
-                CiphertextOutputPublished {
-                    e3_id: id.clone(),
-                    ciphertext_output: vec![ArcBytes::from_bytes(&fact.ciphertextOutput)],
-                    ciphertext_commitment: fact.ciphertextCommitment.0,
-                }
-                .into()
-            }
-            _ => {
-                let stage = log.log_decode::<IInterfold::E3StageChanged>()?.inner.data;
-                ensure!(stage.e3Id == numeric && stage.newStage == 4);
-                E3StageChanged {
-                    e3_id: id.clone(),
-                    previous_stage: E3Stage::KeyPublished,
-                    new_stage: E3Stage::CiphertextReady,
-                }
-                .into()
-            }
-        };
-        bus.publish_from_remote(
-            data,
-            100 + u128::from(log.log_index.unwrap()),
-            receipt.block_number,
-            EventSource::Evm,
-        )?;
-    }
-    bus.flush_event_pipeline().await?;
-    let opening = received(&mut openings).await?;
-    ensure!(keys.first_live_opening(id).as_ref() == Some(opening.get_ctx()));
-    let restarted = CanonicalPublicKeys::default();
-    CanonicalKeyProjection::new(restarted.clone(), HashMap::from([(31337, controller)]))
-        .recover(&journal, &[AggregateId::new(31337)], HashSet::new())
-        .await?;
-    ensure!(
-        restarted.first_live_opening(id).is_none()
-            && restarted.synchronized_opening(id) == keys.synchronized_opening(id)
-    );
+    projection.attach(bus).await?;
     let provider = e3_evm::EthProvider::new(chain.provider.clone()).await?;
     let reader = provider.clone();
     let rt = DecryptionRuntime {
@@ -270,55 +228,57 @@ pub(super) async fn qualify(
         }),
     };
     let deadline = rt.open_deadline(id, None).await?;
-    let mut ready = listen(&bus, EventType::AggregationInputsReady);
-    let mut results = listen(&bus, EventType::PlaintextAggregated);
-    let mut candidates = listen(&bus, EventType::DecryptionshareCreated);
-    let disk = dir.join("plaintext-checkpoints");
-    let open =
-        || -> Result<DataStore> { Ok(DataStore::from_sled_store(&SledStore::new(&bus, &disk)?)) };
-    let db = open()?;
-    let collector = |db: &DataStore,
-                     output_bus: &BusHandle,
-                     projection: &CanonicalPublicKeys,
-                     active,
-                     effects| {
+    let owner =
+        |i: usize, keys| contributor(i, keys, &rt, &recovered[i], &setups[i], &signers[i], dir);
+    let first_owner = owner(0, keys.clone()).await?;
+    let last_owner = owner(2, keys.clone()).await?;
+    for local in [&first_owner, &last_owner] {
+        bus.subscribe_all(
+            &[
+                EventType::EffectsEnabled,
+                EventType::CiphertextOutputPublished,
+            ],
+            local.actor.clone().recipient(),
+        );
+    }
+    let opening = ciphertext_delivery::retrieve(chain, &receipt, &ct, &node, id, &keys).await?;
+    let restarted = CanonicalPublicKeys::default();
+    CanonicalKeyProjection::new(restarted.clone(), HashMap::from([(31337, controller)]))
+        .recover(&node.reader, &[AggregateId::new(31337)], HashSet::new())
+        .await?;
+    ensure!(
+        restarted.first_live_opening(id).is_none()
+            && restarted.synchronized_opening(id) == keys.synchronized_opening(id)
+    );
+    let mut ready = listen(bus, EventType::AggregationInputsReady);
+    let mut candidates = listen(bus, EventType::DecryptionshareCreated);
+    let collector = |node: &DiskJournal, projection: &CanonicalPublicKeys, effects| {
         FixedSetPlaintext::new(
-            output_bus.clone(),
+            node.bus.clone(),
             id.clone(),
             projection.clone(),
             rt.clone(),
-            journal.clone(),
-            db.scope("review-standby"),
-            active,
+            node.reader.clone(),
+            node.db.scope("review-standby"),
+            false,
             effects,
         )
         .start()
     };
-    let standby = collector(&db, &bus, &keys, false, true);
+    let standby = collector(&node, &keys, true);
     bus.subscribe(
         EventType::DecryptionshareCreated,
         standby.clone().recipient(),
     );
-    let produce = |owner: usize, first: bool| {
-        let opening = &opening;
-        let local_bus = test_bus_with_deduplication(false).0;
-        let (rt, keys, root, saved, signer) = (
-            &rt,
-            if first { &keys } else { &restarted },
-            &recovered[owner],
-            &setups[owner],
-            &signers[owner],
-        );
-        async move {
-            local(
-                owner, first, opening, &local_bus, keys, rt, root, saved, signer, dir,
-            )
-            .await
-        }
-    };
-    let a = produce(0, true).await?;
+    let a = first_owner.signed().await?;
+    let replacement = owner(0, restarted.clone()).await?;
+    replacement.actor.send(opening).await?;
+    replacement
+        .actor
+        .send(keyshare_event(EffectsEnabled::new(), 1, EventSource::Local))
+        .await?;
     ensure!(
-        produce(0, false).await? == a,
+        replacement.signed().await? == a,
         "restart emitted another signed contribution"
     );
     let send =
@@ -350,9 +310,8 @@ pub(super) async fn qualify(
             ensure!(FailureReason::try_from(outcome.reason)? == FailureReason::DecryptionTimeout);
         }
     }
-    ensure!(ready.try_recv().is_err() && results.try_recv().is_err());
     ensure!(chain.provider.anvil_revert(snapshot).await?);
-    let b = produce(2, true).await?;
+    let b = last_owner.signed().await?;
     let plan = keys
         .synchronized_decryption_definition(id, PROFILE, &[ArcBytes::from_bytes(&ct)])?
         .unwrap();
@@ -376,8 +335,19 @@ pub(super) async fn qualify(
     let _mixed = received(&mut candidates).await?;
     let _bad = received(&mut candidates).await?;
     let second = received(&mut candidates).await?;
-    received(&mut ready).await?;
-    ensure!(results.try_recv().is_err());
+    ensure!(
+        received(&mut ready).await?.seq() > second.seq(),
+        "readiness preceded the second designated row"
+    );
+    let saved = node.db.scope("review-standby");
+    ensure!(
+        saved
+            .scope("started")
+            .read_checked::<Vec<u64>>()
+            .await?
+            .is_none(),
+        "standby started before promotion"
+    );
     // Take the proving artifact offline: the former standby can commit to the batch,
     // but cannot possibly have checkpointed a final proof before it loses its role.
     let c7 = CircuitName::DecryptedSharesAggregation;
@@ -398,7 +368,6 @@ pub(super) async fn qualify(
     standby
         .send(keyshare_event(role(true), 199, EventSource::Local))
         .await?;
-    let saved = db.scope("review-standby");
     let started = actix::clock::timeout(Duration::from_secs(20), async {
         loop {
             if let Some(batch) = saved.scope("started").read_checked::<Vec<u64>>().await? {
@@ -415,11 +384,21 @@ pub(super) async fn qualify(
     standby
         .send(keyshare_event(e3_events::Shutdown, 201, EventSource::Local))
         .await?;
-    db.shutdown().await?;
-    SledDb::close_all_connections();
-    let db = open()?;
-    ensure!(db
-        .scope("review-standby")
+    node.close().await?;
+    let node = DiskJournal::open(dir, "plaintext").await?;
+    let saved = node.db.scope("review-standby");
+    ensure!(saved.scope("started").read_checked::<Vec<u64>>().await? == Some(started));
+    for (owner, seq) in [(0, first.seq()), (2, second.seq())] {
+        ensure!(
+            saved
+                .scope(format!("verified-{owner}"))
+                .read_checked::<u64>()
+                .await?
+                == Some(seq),
+            "reopen lost the pinned sequence for owner {owner}"
+        );
+    }
+    ensure!(saved
         .scope("result")
         .read_checked::<PlaintextAggregated>()
         .await?
@@ -428,14 +407,15 @@ pub(super) async fn qualify(
     let recovered_keys = CanonicalPublicKeys::default();
     CanonicalKeyProjection::new(recovered_keys.clone(), HashMap::from([(31337, controller)]))
         .recover(
-            &journal,
+            &node.reader,
             &[AggregateId::new(31337)],
             HashSet::from([id.clone()]),
         )
         .await?;
     ensure!(recovered_keys.synchronized_candidates(id) == Some((outsider.seq(), second.seq())));
-    let resumed = collector(&db, &bus, &recovered_keys, false, false);
-    ensure!(results.try_recv().is_err());
+    ensure!(recovered_keys.first_live_opening(id).is_none());
+    let mut results = listen(&node.bus, EventType::PlaintextAggregated);
+    let resumed = collector(&node, &recovered_keys, false);
     resumed
         .send(keyshare_event(
             EffectsEnabled::new(),
@@ -454,13 +434,22 @@ pub(super) async fn qualify(
     resumed
         .send(keyshare_event(e3_events::Shutdown, 203, EventSource::Local))
         .await?;
-    db.shutdown().await?;
-    SledDb::close_all_connections();
+    node.close().await?;
     fs::rename(&circuit, &offline)?;
-    let db = open()?;
-    let replay_bus = test_bus_with_deduplication(false).0;
-    let mut replayed = listen(&replay_bus, EventType::PlaintextAggregated);
-    let cached = collector(&db, &replay_bus, &recovered_keys, false, true);
+    let node = DiskJournal::open(dir, "plaintext").await?;
+    let keys = CanonicalPublicKeys::default();
+    let mut projection =
+        CanonicalKeyProjection::new(keys.clone(), HashMap::from([(31337, controller)]));
+    projection
+        .recover(
+            &node.reader,
+            &[AggregateId::new(31337)],
+            HashSet::from([id.clone()]),
+        )
+        .await?;
+    projection.attach(&node.bus).await?;
+    let mut replayed = listen(&node.bus, EventType::PlaintextAggregated);
+    let cached = collector(&node, &keys, true);
     ensure!(
         received(&mut replayed).await?.into_data()
             == InterfoldEventData::PlaintextAggregated(intent.clone()),
@@ -502,6 +491,26 @@ pub(super) async fn qualify(
     )
     .await
     .is_err());
+    // A valid public statement with a truncated proof passes Rust admission. The real Honk
+    // verifier rejects it; this specific input can be replaced, unlike an ambiguous RPC error.
+    let mut truncated = intent.clone();
+    let proof = &mut truncated.decryption_aggregator_proofs[0];
+    proof.data = ArcBytes::from_bytes(&proof.data[..32]);
+    let rejection = e3_evm::publish_synchronized_plaintext_definition(
+        writer.clone(),
+        &keys,
+        controller,
+        &truncated,
+    )
+    .await
+    .unwrap_err();
+    ensure!(
+        rejection.chain().any(|cause| cause
+            .downcast_ref::<alloy::contract::Error>()
+            .and_then(|error| error.as_decoded_error::<ProofLengthWrongWithLogN>())
+            .is_some_and(|error| error.actualLength == U256::from(32))),
+        "expected the Honk verifier to reject the truncated proof: {rejection:#}"
+    );
     let snapshot = chain.provider.anvil_snapshot().await?;
     chain
         .provider
@@ -553,22 +562,22 @@ pub(super) async fn qualify(
             .await?
             .is_none()
     );
+    let db = &node.db;
     let scope = db.scope("review-standby");
     let prefix = scope.scope("").scope_bytes().to_vec();
     ensure!(db.keys_with_prefix(prefix.clone()).await?.len() == 4);
     let sibling = db.scope("review-standby-other").scope("result");
     sibling.write_sync(37u64).await?;
-    cached
-        .send(keyshare_event(
-            E3StageChanged {
-                e3_id: id.clone(),
-                previous_stage: E3Stage::CiphertextReady,
-                new_stage: E3Stage::Complete,
-            },
-            204,
-            EventSource::Evm,
-        ))
-        .await?;
+    node.bus
+        .subscribe(EventType::E3StageChanged, cached.clone().recipient());
+    for event in chain.decode(&mined, controller).await? {
+        node.bus.naked_dispatch(event)?;
+    }
+    node.bus.flush_event_pipeline().await?;
+    ensure!(
+        keys.get(id).is_none(),
+        "mined completion did not retire canonical authority"
+    );
     ensure!(cached
         .send(keyshare_event(e3_events::Shutdown, 205, EventSource::Local))
         .await
@@ -577,6 +586,6 @@ pub(super) async fn qualify(
         db.keys_with_prefix(prefix).await?.is_empty()
             && sibling.read_checked::<u64>().await? == Some(37)
     );
-    db.shutdown().await?;
+    node.close().await?;
     Ok(())
 }

@@ -18,17 +18,23 @@ contract SynchronizedDecryptionControllerHarness is
 
     function seedCiphertext(
         uint256 id,
-        bytes calldata ct,
+        bytes32 contentHash,
         bytes32 commitment,
         address verifier
     ) external {
         E3 storage e3 = _requests[id];
         require(getE3Stage(id) == IInterfold.E3Stage.KeyPublished);
-        e3.ciphertextOutput = keccak256(ct);
+        e3.ciphertextOutput = contentHash;
         e3.ciphertextCommitment = commitment;
         e3.decryptionVerifier = IDecryptionVerifier(verifier);
         deadlines[id].decryptionDeadline = block.timestamp + 3600;
-        emit IInterfold.CiphertextOutputPublished(id, ct, commitment);
+        emit IInterfold.CiphertextOutputReferencePublished(
+            id,
+            contentHash,
+            commitment,
+            1,
+            0
+        );
         emit IInterfold.E3StageChanged(
             id,
             IInterfold.E3Stage.KeyPublished,

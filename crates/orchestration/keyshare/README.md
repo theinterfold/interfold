@@ -102,10 +102,11 @@ the DKG proofs: C0–C4 across three independent actors/stores, then dealer/reci
 publication from their reopened signed artifacts, sealed keys and native PK-share bytes. It reopens
 exclusive local setup intents and consumes actor-produced H consents for a locally deployed
 registry, checks authority and PK-chunk readback, and rebuilds the shared authority from a reopened
-journal for all N handoffs. It continues with the reopened SKs and one confirmed ciphertext: the two
-designated actors sign C6, a standby collects both rows, and the started batch survives a demoted
-restart. It checks the reconstructed plaintext, C7 and final proof through the writer's
-request-bound transaction and the inclusive on-chain deadline. It requires Anvil,
+journal for all N handoffs. It continues with the reopened SKs and a mined ciphertext reference. The
+production DA coordinator reads a local HTTP object and delivers the opening to both designated
+actors. A demoted collector reopens its journal and plaintext checkpoints, verifies both C6 rows and
+finishes the same started batch. It checks the reconstructed plaintext, C7 and final proof through
+the writer's request-bound transaction and the inclusive on-chain deadline. It requires Anvil,
 `pnpm install --frozen-lockfile`, `pnpm evm:build` and solc 0.8.28 on PATH; generated Honk/Solidity
 acceptance and substitution rejection are mandatory, not skipped when unavailable. It tests orderly
 stop/flush/cache eviction/reopen, exact saved work, non-prefix H `[0,2]`, self/outside-H recipients

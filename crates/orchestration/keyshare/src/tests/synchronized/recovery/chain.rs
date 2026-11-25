@@ -134,13 +134,6 @@ impl Handler<StopForReopen> for Decoded {
         Ok(())
     }
 }
-impl Handler<StopForReopen> for CiphernodeRegistrySolReader<DynProvider> {
-    type Result = Result<()>;
-    fn handle(&mut self, _: StopForReopen, ctx: &mut Self::Context) -> Self::Result {
-        ctx.stop();
-        Ok(())
-    }
-}
 
 impl Chain {
     pub async fn start() -> Result<Self> {
@@ -170,22 +163,28 @@ impl Chain {
     async fn decode(
         &self,
         receipt: &TransactionReceipt,
-        registry: Address,
+        contract: Address,
     ) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
         ensure!(receipt.status(), "qualification transaction reverted");
         let (tx, mut rx) = mpsc::unbounded_channel();
         let collector = Decoded(tx).start();
-        let reader = CiphernodeRegistrySolReader::setup_with_factory(
-            &collector.clone().recipient(),
-            e3_evm::EthProvider::new(self.provider.clone()).await?,
-            None,
-            0,
-        );
+        let next = collector.clone().recipient();
+        let reader = if contract == self.controller {
+            e3_evm::InterfoldSolReader::setup(&next).recipient()
+        } else {
+            CiphernodeRegistrySolReader::setup_with_factory(
+                &next,
+                e3_evm::EthProvider::new(self.provider.clone()).await?,
+                None,
+                0,
+            )
+            .recipient()
+        };
         let mut events = Vec::new();
         for log in receipt
             .logs()
             .iter()
-            .filter(|log| log.address() == registry)
+            .filter(|log| log.address() == contract)
         {
             let block = log.block_number.context("unmined qualification log")?;
             let timestamp = self
@@ -204,7 +203,7 @@ impl Chain {
                 .await?;
             match actix::clock::timeout(Duration::from_secs(10), rx.recv())
                 .await?
-                .context("registry decoder stopped")?
+                .context("contract decoder stopped")?
             {
                 InterfoldEvmEvent::Event(event) => {
                     let (data, ts, block) = event.split();
@@ -217,10 +216,9 @@ impl Chain {
                     ));
                 }
                 InterfoldEvmEvent::Processed(_) => (),
-                other => anyhow::bail!("registry decoder rejected mined log: {other:?}"),
+                other => anyhow::bail!("contract decoder rejected mined log: {other:?}"),
             }
         }
-        reader.send(StopForReopen).await??;
         collector.send(StopForReopen).await??;
         Ok(events)
     }
@@ -656,6 +654,55 @@ impl Chain {
 #[path = "decryption.rs"]
 mod decryption;
 
+/// Reopen both the commit log and the Sled stores (sequence index, snapshots and plaintext pins).
+struct DiskJournal {
+    system: EventSystem,
+    db: DataStore,
+    bus: BusHandle,
+    reader: actix::Recipient<e3_events::EventStoreQueryBy<e3_events::SeqAgg>>,
+}
+
+impl DiskJournal {
+    async fn open(directory: &Path, name: &str) -> Result<Self> {
+        let config =
+            AggregateConfig::new(HashMap::from([(AggregateId::new(31337), Duration::ZERO)]));
+        let system = EventSystem::persisted(
+            directory.join(format!("{name}-journal")),
+            directory.join(format!("{name}-index")),
+        )
+        .with_event_bus(EventBus::new(EventBusConfig { deduplicate: false }).start())
+        .with_aggregate_config(config.clone());
+        let db = system.store()?;
+        let reader = system.eventstore_reader()?.seq();
+        let fresh = e3_sync::preflight_schema_version(&db.repositories(), &config, &reader).await?;
+        e3_sync::preflight_node_role(&db.repositories(), fresh, e3_sync::NodeRole::Full).await?;
+        let bus = system
+            .enable_handle_with_hlc(e3_events::hlc::Hlc::new(7))
+            .await?;
+        Ok(Self {
+            system,
+            db,
+            bus,
+            reader,
+        })
+    }
+
+    async fn close(self) -> Result<()> {
+        self.bus.publish_shutdown_and_wait().await?;
+        self.bus.flush_event_pipeline().await?;
+        let EventStoreAddrs::Persisted(stores) = self.system.eventstore_addrs()? else {
+            anyhow::bail!("qualification requires a disk journal");
+        };
+        for actor in stores.values() {
+            actor.send(StopForReopen).await??;
+        }
+        self.db.shutdown().await?;
+        drop(self);
+        SledDb::close_all_connections();
+        Ok(())
+    }
+}
+
 async fn reopen_history(
     history: &[InterfoldEvent<Unsequenced>],
     directory: &Path,
@@ -664,61 +711,25 @@ async fn reopen_history(
     CanonicalPublicKeys,
     Vec<e3_events::SynchronizedDkgPublicationReady>,
 )> {
-    let logs = directory.join("authority-journal");
-    let index = directory.join("authority-index");
     let chain = AggregateId::new(31337);
-    let config = AggregateConfig::new(HashMap::from([(chain, Duration::ZERO)]));
-    {
-        let system = EventSystem::persisted(logs.clone(), index.clone())
-            .with_fresh_bus()
-            .with_aggregate_config(config.clone());
-        let store = system.store()?;
-        let reader = system.eventstore_reader()?.seq();
-        let fresh =
-            e3_sync::preflight_schema_version(&store.repositories(), &config, &reader).await?;
-        e3_sync::preflight_node_role(&store.repositories(), fresh, e3_sync::NodeRole::Full).await?;
-        let bus = system
-            .handle()?
-            .enable("real-synchronized-authority-journal");
-        for event in history {
-            bus.publish_from_remote(
-                event.get_data().clone(),
-                event.ts(),
-                event.block(),
-                event.source(),
-            )?;
-        }
-        bus.flush_event_pipeline().await?;
-        system
-            .buffer()?
-            .send(e3_events::FlushPendingSnapshots)
-            .await??;
-        if let EventStoreAddrs::Persisted(stores) = system.eventstore_addrs()? {
-            for actor in stores.values() {
-                actor.send(StopForReopen).await??;
-            }
-        }
-        store.shutdown().await?;
+    let node = DiskJournal::open(directory, "authority").await?;
+    for event in history {
+        node.bus.publish_from_remote(
+            event.get_data().clone(),
+            event.ts(),
+            event.block(),
+            event.source(),
+        )?;
     }
-    SledDb::close_all_connections();
-    let system = EventSystem::persisted(logs, index)
-        .with_fresh_bus()
-        .with_aggregate_config(config);
+    node.close().await?;
+    let node = DiskJournal::open(directory, "authority").await?;
     let keys = CanonicalPublicKeys::default();
     let mut projection =
         CanonicalKeyProjection::new(keys.clone(), HashMap::from([(31337, controller)]));
     projection
-        .recover(&system.eventstore_reader()?.seq(), &[chain], HashSet::new())
+        .recover(&node.reader, &[chain], HashSet::new())
         .await?;
-    let pending =
-        e3_evm::recover_synchronized_publications(&system.eventstore_reader()?.seq(), 31337, &keys)
-            .await?;
-    if let EventStoreAddrs::Persisted(stores) = system.eventstore_addrs()? {
-        for actor in stores.values() {
-            actor.send(StopForReopen).await??;
-        }
-    }
-    system.store()?.shutdown().await?;
-    SledDb::close_all_connections();
+    let pending = e3_evm::recover_synchronized_publications(&node.reader, 31337, &keys).await?;
+    node.close().await?;
     Ok((keys, pending))
 }

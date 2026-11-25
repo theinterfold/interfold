@@ -4211,6 +4211,7 @@ dependencies = [
  "e3-event-system",
  "e3-events",
  "e3-evm",
+ "e3-evm-config",
  "e3-evm-contracts",
  "e3-fhe",
  "e3-fhe-params",

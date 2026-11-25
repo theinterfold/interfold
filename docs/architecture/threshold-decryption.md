@@ -124,12 +124,13 @@ inclusive; a missing owner after expiry follows `DecryptionTimeout`.
 
 `pnpm rust:test:sync-dkg:recovery` rehearses the disabled insecure Minimum route from real signed
 registry publication to the keyshare/collector actors and a mined writer transaction. The Anvil
-controller seeds the finalized committee and one ciphertext; verification uses the production
-`InterfoldLifecycle.verifyPlaintext` and request-bound registry wrapper. Keyshare receives the
-original opening and the local effects-enabled event through its mailbox. The rehearsal starts the
-contribution below admission and calls the writer effect directly; it does not exercise production
-request admission or network delivery. The fixed-set and one-use policies await protocol review.
-Secure Minimum needs the
+controller seeds the finalized committee and emits a ciphertext reference. The production log reader
+and DA coordinator retrieve the object from a local HTTP fixture and deliver the opening to both
+designated keyshare mailboxes. After demotion the collector reopens its commit log, sequence index
+and plaintext checkpoints and rechecks the pinned rows. The writer effect calls the production
+`InterfoldLifecycle.verifyPlaintext` and request-bound registry wrapper. This exercises orderly
+restart below admission, not Avail bridge finality, production request admission or gossip delivery.
+The fixed-set and one-use policies await protocol review. Secure Minimum needs the
 [secure DKG-to-registry route](https://github.com/theinterfold/interfold/issues/2549) before the
 secure end-to-end qualification in [#2461](https://github.com/theinterfold/interfold/issues/2461).
 
