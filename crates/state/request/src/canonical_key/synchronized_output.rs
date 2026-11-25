@@ -65,6 +65,39 @@ impl SynchronizedDecryptionPlan {
         authority == &self.authority
     }
 
+    pub fn authority(&self) -> &SynchronizedDkgAuthority {
+        &self.authority
+    }
+
+    pub fn setup_binding(&self) -> [u128; 2] {
+        let binding =
+            e3_committee_hash::split_decryption_domain(self.authority.setup_binding.into());
+        [binding.hi, binding.lo]
+    }
+
+    pub fn domain(&self) -> [u128; 2] {
+        self.domain
+    }
+
+    pub fn ciphertext_commitment(&self) -> [u8; 32] {
+        self.ciphertext_commitment
+    }
+
+    /// The original derivation checked the level, both polynomials and c0. Rechecking their
+    /// exact byte hash and current chain projection does not need another polynomial opening.
+    pub fn check_current(&self, keys: &CanonicalPublicKeys, ciphertext: &ArcBytes) -> Result<()> {
+        let current = keys.synchronized_decryption_definition(
+            &self.e3_id,
+            self.profile,
+            std::slice::from_ref(ciphertext),
+        )?;
+        ensure!(
+            current.as_ref() == Some(self),
+            "synchronized decryption authority is no longer current"
+        );
+        Ok(())
+    }
+
     /// Compare a decoded C6 row with the independently selected chain facts.
     pub fn matches_c6(
         &self,
@@ -74,9 +107,7 @@ impl SynchronizedDecryptionPlan {
         let Ok(row) = self.designated().binary_search(&party) else {
             return false;
         };
-        let binding =
-            e3_committee_hash::split_decryption_domain(self.authority.setup_binding.into());
-        signals.binding() == Some([binding.hi, binding.lo])
+        signals.binding() == Some(self.setup_binding())
             && signals.party_id() == Some(party)
             && signals.dealers().as_deref() == Some(&self.authority.party_ids)
             && signals.decryption_domain() == Some(self.domain)

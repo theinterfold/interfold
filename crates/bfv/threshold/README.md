@@ -27,9 +27,11 @@ noise owner is consumed by that calculation; persisted copies must not mask anot
 Independent outputs need separately committed/dealt noise and matching proofs. Keep the
 vector-shaped payloads for encoding compatibility, not as authorization to reuse noise for a batch.
 
-The `synchronized` module carries directed PRF keys through DKG's encrypted SK-share packing.
-Synchronized admission remains disabled. Designated-set selection, ciphertext-share generation and
-reconstruction, and the consuming C6/C7 statements are separate work, not DKG transport primitives.
+The `synchronized` module carries directed PRF keys through DKG's encrypted SK-share packing. Its
+native partial calculation consumes the designated set and the signed noise coefficients from the
+local allocation. Incoming keys are in published H order; the native transport needs full committee
+slots. The [keyshare worker](../../orchestration/keyshare/README.md) owns recovery. Synchronized
+admission remains disabled.
 
 PRF keys and packed SK shares are secret material. Key objects zeroize on drop and redact Debug, but
 copying their bytes or packing them into an existing share does not make the copies safe to log or

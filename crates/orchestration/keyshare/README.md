@@ -88,22 +88,24 @@ preparation, while runtime admission stays disabled:
 ```sh
 E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 cargo test --locked -p e3-keyshare --lib synchronized
 E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 E3_CUSTOM_BB=$(which bb) cargo test --locked -p e3-keyshare --lib synchronized_prepared_runtime_requests_prove_with_real_crypto -- --ignored
+E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 E3_CUSTOM_BB=$(which bb) cargo test --locked -p e3-keyshare --lib synchronized_native_worker_real_c6_and_signed_reuse -- --ignored
 E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 E3_CUSTOM_BB=$(which bb) pnpm rust:test:sync-dkg:recovery
 E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 E3_CUSTOM_BB=$(which bb) pnpm rust:test:sync-dkg:qualification
 ```
 
 The proof commands require pinned nargo/bb and stage explicit variants in temporary directories,
-preserving source dependency pins. The second verifies ten real C1/C2/C3/C4 proofs. The recovery
-command verifies 37 proofs: C0–C4 across three independent actors/stores, then dealer/recipient
-joins, C5 and publication from their reopened signed artifacts, sealed keys and native PK-share
-bytes. It reopens exclusive local setup intents and consumes actor-produced H consents for a locally
-deployed registry, checks authority and PK-chunk readback, and rebuilds the shared authority from a
-reopened journal for all N handoffs. It requires Anvil, `pnpm install --frozen-lockfile`,
-`pnpm evm:build` and solc 0.8.28 on PATH; generated Honk/Solidity acceptance and substitution
-rejection are mandatory, not skipped when unavailable. It tests orderly stop/flush/cache
-eviction/reopen, exact saved work, non-prefix H `[0,2]`, self/outside-H recipients and authenticated
-replacement. Its ordinary variant and provisional negatives use synthetic signed statements, not
-valid proofs.
+preserving source dependency pins. The C1–C4 command verifies ten real proofs. The C6 worker test
+reopens the saved native shares after prover failure, proves both designated contributions and
+checks native plaintext reconstruction. Its DKG verdict is a fixture. The recovery command verifies
+37 proofs: C0–C4 across three independent actors/stores, then dealer/recipient joins, C5 and
+publication from their reopened signed artifacts, sealed keys and native PK-share bytes. It reopens
+exclusive local setup intents and consumes actor-produced H consents for a locally deployed
+registry, checks authority and PK-chunk readback, and rebuilds the shared authority from a reopened
+journal for all N handoffs. It requires Anvil, `pnpm install --frozen-lockfile`, `pnpm evm:build`
+and solc 0.8.28 on PATH; generated Honk/Solidity acceptance and substitution rejection are
+mandatory, not skipped when unavailable. It tests orderly stop/flush/cache eviction/reopen, exact
+saved work, non-prefix H `[0,2]`, self/outside-H recipients and authenticated replacement. Its
+ordinary variant and provisional negatives use synthetic signed statements, not valid proofs.
 
 The qualification command selects all synchronized keyshare cases, including recovery and a
 complementary ordinary durable-log replay test. That test reopens actual commit logs through

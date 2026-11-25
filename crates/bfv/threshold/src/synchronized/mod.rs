@@ -6,8 +6,10 @@
 
 mod keys;
 mod noise;
+mod partial;
 mod sealed_keys;
 
 pub use keys::{pack_key, unpack_key, PrfKey};
 pub use noise::contribution_noise_v1;
+pub use partial::weighted_share;
 pub use sealed_keys::SealedPrfKeys;
