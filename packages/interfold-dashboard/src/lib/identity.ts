@@ -50,7 +50,9 @@ export const PREVIEW_SERVICE = {
   domain: 'dashboard.theinterfold.com',
   scope: 'interfold-bond-owner',
   proofValidity: 7n * 86_400n,
-  maxValidity: 365n * 86_400n,
+  // Ten years (3,653 days) covers a passport's whole validity, so a credential lasts until the
+  // document expires and the owner renews only then.
+  maxValidity: 3_653n * 86_400n,
 } as const
 
 const PROOF_VERIFICATION_PARAMS = getAbiItem({ abi: zkPassportRootVerifierAbi, name: 'verify' }).inputs[0]
@@ -253,19 +255,36 @@ export function expiryLowerBound(proofs: readonly ProofResult[]): bigint | null 
   return null
 }
 
+/** ZKPassport's verification method for a proof that reads the document's chip. */
+export const ICAO_CHIP = 100
+
+/**
+ * Whether a ZKPassport version's public inputs end with the verification method, as from 0.23.0.
+ * A version is three big-endian uint16 values (major, minor, patch) at the start of a bytes32.
+ */
+export function hasVerificationMethod(version: Hex): boolean {
+  const word = BigInt(version)
+  return word >> 240n > 0n || ((word >> 224n) & 0xffffn) >= 23n
+}
+
 /** The values that the verifier reads from the proof's public inputs. */
 export function proofFacts(params: SolidityVerifierParameters): {
   proofDate: bigint
   nullifierType: number
   scopedNullifier: Hex
   oprfKeyHash: Hex
+  /** Null before ZKPassport 0.23.0, whose proofs always read the chip. */
+  verificationMethod: number | null
 } {
   const inputs = params.proofVerificationData.publicInputs
+  const withMethod = hasVerificationMethod(params.version as Hex)
+  const end = inputs.length - (withMethod ? 1 : 0)
   return {
     proofDate: BigInt(inputs[2]),
-    nullifierType: Number(BigInt(inputs[inputs.length - 3])),
-    scopedNullifier: inputs[inputs.length - 2] as Hex,
-    oprfKeyHash: inputs[inputs.length - 1] as Hex,
+    nullifierType: Number(BigInt(inputs[end - 3])),
+    scopedNullifier: inputs[end - 2] as Hex,
+    oprfKeyHash: inputs[end - 1] as Hex,
+    verificationMethod: withMethod ? Number(BigInt(inputs[inputs.length - 1])) : null,
   }
 }
 
@@ -406,6 +425,9 @@ export function buildProofBundle({
   const validUntil = expiryLowerBound(success.proofs)
   if (validUntil === null) throw new Error('The proof has no expiry-date check.')
   const facts = proofFacts(params)
+  if (facts.verificationMethod !== null && facts.verificationMethod !== ICAO_CHIP) {
+    throw new Error("This proof did not read the document's chip. Scan the chip of a passport or ID card in the ZKPassport app.")
+  }
   return {
     kind: 'interfold.identity.zkpassport-proof',
     chainId,

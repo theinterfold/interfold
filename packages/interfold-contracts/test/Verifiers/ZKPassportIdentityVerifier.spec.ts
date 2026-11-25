@@ -14,6 +14,14 @@ const { loadFixture, time } = networkHelpers;
 // ZKPassport encodes version 0.20.0 as three big-endian uint16 values at the start of a bytes32.
 const VERSION = ethers.zeroPadBytes("0x000000140000", 32);
 const OTHER_VERSION = ethers.zeroPadBytes("0x000000130000", 32);
+// From 0.23.0, the public inputs end with the verification method.
+const VERSION_0_23 = ethers.zeroPadBytes("0x000000170000", 32);
+const VerificationMethod = {
+  ICAO_CHIP: 100,
+  UIDAI_AADHAAR: 101,
+  ATTESTED_CAPTURE_IOS: 200,
+  ATTESTED_CAPTURE_ANDROID: 201,
+} as const;
 const OPRF_KEY = ethers.id("OPRF public key hash");
 const OTHER_OPRF_KEY = ethers.id("rotated OPRF public key hash");
 const DOMAIN = "dashboard.theinterfold.com";
@@ -92,7 +100,8 @@ async function setup() {
 type Context = Awaited<ReturnType<typeof setup>>;
 
 // Public inputs follow ZKPassport's layout: index 2 is the proof date, and the last three are the
-// nullifier type, the scoped nullifier and the OPRF key hash.
+// nullifier type, the scoped nullifier and the OPRF key hash. From 0.23.0 the verification method
+// follows them.
 function evidence(
   validUntil: number,
   proofDate: number,
@@ -100,7 +109,13 @@ function evidence(
     version = VERSION,
     nullifierType = NullifierType.NON_SALTED,
     oprfKeyHash = ethers.ZeroHash,
-  }: { version?: string; nullifierType?: number; oprfKeyHash?: string } = {},
+    verificationMethod,
+  }: {
+    version?: string;
+    nullifierType?: number;
+    oprfKeyHash?: string;
+    verificationMethod?: number;
+  } = {},
 ) {
   const publicInputs = [
     ethers.id("certificate root"),
@@ -112,6 +127,9 @@ function evidence(
     ethers.toBeHex(nullifierType, 32),
     DOCUMENT_ID,
     oprfKeyHash,
+    ...(verificationMethod === undefined
+      ? []
+      : [ethers.toBeHex(verificationMethod, 32)]),
   ];
   // The caller asks for dev mode, another domain and a long window; none of them may reach
   // ZKPassport's verifier.
@@ -359,5 +377,105 @@ describe("ZKPassportIdentityVerifier", function () {
         "InvalidConfiguration",
       );
     }
+  });
+
+  describe("ZKPassport 0.23", function () {
+    async function setup023() {
+      const ctx = await setup();
+      const args: unknown[] = [...ctx.verifierArgs];
+      args[1] = VERSION_0_23;
+      args[4] = NullifierType.SALTED;
+      args[5] = OPRF_KEY;
+      const verifier = await ethers.deployContract(
+        "ZKPassportIdentityVerifier",
+        args,
+      );
+      return { ...ctx, oldVerifier: ctx.verifier, verifier };
+    }
+    const salted = {
+      version: VERSION_0_23,
+      nullifierType: NullifierType.SALTED,
+      oprfKeyHash: OPRF_KEY,
+    };
+
+    it("reads the identifier settings before the verification method", async function () {
+      const ctx = await loadFixture(setup023);
+      expect(await ctx.verifier.HAS_VERIFICATION_METHOD()).to.equal(true);
+      expect(await ctx.oldVerifier.HAS_VERIFICATION_METHOD()).to.equal(false);
+      const proofDate = await time.latest();
+      const validUntil = proofDate + 30 * DAY;
+      await proveFor(ctx, ctx.owner.address, validUntil);
+
+      const [identityId] = await ctx.verifier.verify.staticCall(
+        ctx.owner.address,
+        evidence(validUntil, proofDate, {
+          ...salted,
+          verificationMethod: VerificationMethod.ICAO_CHIP,
+        }),
+      );
+      expect(identityId).to.equal(IDENTITY_ID);
+
+      await expect(
+        ctx.verifier.verify.staticCall(
+          ctx.owner.address,
+          evidence(validUntil, proofDate, {
+            ...salted,
+            oprfKeyHash: OTHER_OPRF_KEY,
+            verificationMethod: VerificationMethod.ICAO_CHIP,
+          }),
+        ),
+      )
+        .to.be.revertedWithCustomError(ctx.verifier, "UnexpectedOPRFKey")
+        .withArgs(OTHER_OPRF_KEY);
+    });
+
+    for (const method of [
+      VerificationMethod.UIDAI_AADHAAR,
+      VerificationMethod.ATTESTED_CAPTURE_IOS,
+      VerificationMethod.ATTESTED_CAPTURE_ANDROID,
+    ]) {
+      it(`rejects verification method ${method}, which does not read the document's chip`, async function () {
+        const ctx = await loadFixture(setup023);
+        const proofDate = await time.latest();
+        const validUntil = proofDate + 30 * DAY;
+        await proveFor(ctx, ctx.owner.address, validUntil);
+
+        await expect(
+          ctx.verifier.verify.staticCall(
+            ctx.owner.address,
+            evidence(validUntil, proofDate, {
+              ...salted,
+              verificationMethod: method,
+            }),
+          ),
+        )
+          .to.be.revertedWithCustomError(
+            ctx.verifier,
+            "UnsupportedVerificationMethod",
+          )
+          .withArgs(method);
+      });
+    }
+
+    it("refuses a version whose public-input layout it does not know", async function () {
+      const ctx = await loadFixture(setup);
+      const factory = await ethers.getContractFactory(
+        "ZKPassportIdentityVerifier",
+      );
+      const unknown = [
+        OTHER_VERSION, // 0.19.0
+        ethers.zeroPadBytes("0x000000180000", 32), // 0.24.0
+        ethers.zeroPadBytes("0x000100000000", 32), // 1.0.0
+        ethers.zeroPadBytes("0x00000017000001", 32), // 0.23.0 with trailing data
+        ethers.zeroPadValue("0x17", 32), // right-aligned, not ZKPassport's encoding
+      ];
+      for (const version of unknown) {
+        const args: unknown[] = [...ctx.verifierArgs];
+        args[1] = version;
+        await expect(factory.deploy(...args))
+          .to.be.revertedWithCustomError(factory, "UnsupportedVersion")
+          .withArgs(version);
+      }
+    });
   });
 });

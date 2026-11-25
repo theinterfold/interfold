@@ -27,6 +27,7 @@ import {
   credentialEnd,
   encodeEvidence,
   expiryLowerBound,
+  hasVerificationMethod,
   isContractCode,
   outerEvmProof,
   proofFacts,
@@ -46,7 +47,8 @@ const VALID_UNTIL = 1_830_000_000n
 
 function verifierParams(): SolidityVerifierParameters {
   return {
-    version: word(0x14_00_00n << 224n),
+    // ZKPassport 0.20.0: three big-endian uint16 values (major, minor, patch) at the start.
+    version: word(0x14n << 224n),
     proofVerificationData: {
       vkeyHash: word(7n),
       proof: '0x1234',
@@ -92,9 +94,53 @@ test('the evidence carries the outer proof and the committed expiry bound', () =
   assert.equal(expiryLowerBound([{ name: 'outer_evm' }]), null)
 
   const facts = proofFacts(verifierParams())
-  assert.deepEqual(facts, { proofDate: PROOF_DATE, nullifierType: 0, scopedNullifier: word(0xabcdefn), oprfKeyHash: word(0n) })
+  assert.deepEqual(facts, {
+    proofDate: PROOF_DATE,
+    nullifierType: 0,
+    scopedNullifier: word(0xabcdefn),
+    oprfKeyHash: word(0n),
+    verificationMethod: null,
+  })
   assert.equal(credentialEnd(VALID_UNTIL, PROOF_DATE, 365n * 86_400n), PROOF_DATE + 365n * 86_400n)
   assert.equal(credentialEnd(PROOF_DATE + 10n, PROOF_DATE, 365n * 86_400n), PROOF_DATE + 10n)
+})
+
+test('from ZKPassport 0.23.0 the verification method ends the public inputs, and only chip proofs pass', () => {
+  const params = verifierParams()
+  const version023 = word(0x17n << 224n)
+  const chip = {
+    ...params,
+    version: version023,
+    proofVerificationData: {
+      ...params.proofVerificationData,
+      publicInputs: [...params.proofVerificationData.publicInputs, word(100n)],
+    },
+  }
+  assert.equal(hasVerificationMethod(params.version as Hex), false)
+  assert.equal(hasVerificationMethod(version023), true)
+  assert.deepEqual(proofFacts(chip), {
+    proofDate: PROOF_DATE,
+    nullifierType: 0,
+    scopedNullifier: word(0xabcdefn),
+    oprfKeyHash: word(0n),
+    verificationMethod: 100,
+  })
+
+  const success = { proofs: proofs(), result: {} } as RequestSuccess
+  assert.equal(buildProofBundle({ success, params: chip, owner: OWNER, chainId: 1, faceMatch: true }).version, version023)
+  for (const method of [101n, 200n, 201n]) {
+    const other = {
+      ...chip,
+      proofVerificationData: {
+        ...chip.proofVerificationData,
+        publicInputs: [...params.proofVerificationData.publicInputs, word(method)],
+      },
+    }
+    assert.throws(
+      () => buildProofBundle({ success, params: other, owner: OWNER, chainId: 1, faceMatch: true }),
+      /did not read the document's chip/,
+    )
+  }
 })
 
 test('the evidence decodes as the verifier decodes it', () => {

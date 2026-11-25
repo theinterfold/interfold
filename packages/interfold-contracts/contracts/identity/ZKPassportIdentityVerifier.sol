@@ -22,14 +22,24 @@ import {
 ///      The domain, scope, identifier type and OPRF key are fixed per deployment. A change to any
 ///      of them changes every identifier, so it needs a new registry or a migration. A new
 ///      ZKPassport version needs a new deployment, because the public-input layout belongs to the
-///      version.
+///      version. This contract knows the layouts of versions 0.20 to 0.23 and refuses any other.
+///      From 0.23, ZKPassport also verifies proofs that do not read the document's chip, so this
+///      contract accepts only chip proofs.
 contract ZKPassportIdentityVerifier is IIdentityVerifier {
     /// @dev Index of the proof date (seconds) in ZKPassport's public inputs.
     uint256 internal constant PROOF_DATE_INDEX = 2;
-    /// @dev In the pinned version, the public inputs end with
-    ///      [nullifier type, scoped nullifier, OPRF key hash].
+    /// @dev Up to version 0.22, the public inputs end with
+    ///      [nullifier type, scoped nullifier, OPRF key hash]. From 0.23 they end with
+    ///      [nullifier type, scoped nullifier, OPRF key hash, verification method].
     uint256 internal constant NULLIFIER_TYPE_OFFSET_FROM_END = 3;
     uint256 internal constant OPRF_KEY_HASH_OFFSET_FROM_END = 1;
+    /// @dev ZKPassport's `VerificationMethod` for a proof that reads the document's chip.
+    uint256 internal constant ICAO_CHIP = 100;
+    /// @dev The ZKPassport minor versions (major 0) whose public-input layout this contract knows,
+    ///      and the first of them that ends with the verification method.
+    uint256 internal constant FIRST_KNOWN_MINOR = 20;
+    uint256 internal constant LAST_KNOWN_MINOR = 23;
+    uint256 internal constant FIRST_METHOD_MINOR = 23;
     /// @dev ZKPassport's `NullifierType`: 0 is non-salted, 1 is salted (OPRF). The mock and
     ///      no-identifier types are never accepted.
     uint8 internal constant SALTED = 1;
@@ -40,6 +50,7 @@ contract ZKPassportIdentityVerifier is IIdentityVerifier {
     error UnsupportedVersion(bytes32 version);
     error InvalidProof();
     error UnexpectedNullifierType(uint256 nullifierType);
+    error UnsupportedVerificationMethod(uint256 method);
     error UnexpectedOPRFKey(bytes32 oprfKeyHash);
     error MissingIdentifier();
     error WrongBinding(address senderAddress, uint256 chainId);
@@ -49,6 +60,8 @@ contract ZKPassportIdentityVerifier is IIdentityVerifier {
     IZKPassportVerifier public immutable ROOT_VERIFIER;
     /// @notice The only ZKPassport verifier version that this deployment accepts.
     bytes32 public immutable VERSION;
+    /// @notice Whether the pinned version's public inputs end with the verification method.
+    bool public immutable HAS_VERIFICATION_METHOD;
     /// @notice The accepted identifier type: 0 non-salted, 1 salted.
     uint8 public immutable NULLIFIER_TYPE;
     /// @notice The OPRF key hash that a proof must carry: ZKPassport's key for salted proofs, zero
@@ -88,6 +101,7 @@ contract ZKPassportIdentityVerifier is IIdentityVerifier {
         ) revert InvalidConfiguration();
         ROOT_VERIFIER = IZKPassportVerifier(_rootVerifier);
         VERSION = _version;
+        HAS_VERIFICATION_METHOD = _hasVerificationMethod(_version);
         domain = _domain;
         scope = _scope;
         NULLIFIER_TYPE = _nullifierType;
@@ -159,8 +173,18 @@ contract ZKPassportIdentityVerifier is IIdentityVerifier {
         bytes32[] memory publicInputs = params
             .proofVerificationData
             .publicInputs;
+        uint256 end = publicInputs.length;
+        if (HAS_VERIFICATION_METHOD) {
+            // A camera capture of the data page is not signed by the issuer and gives the same
+            // document a second identifier, and an Aadhaar proof is not a chip document. Either
+            // would let one person verify a second owner.
+            uint256 method = uint256(publicInputs[end - 1]);
+            if (method != ICAO_CHIP)
+                revert UnsupportedVerificationMethod(method);
+            end -= 1;
+        }
         uint256 proofNullifierType = uint256(
-            publicInputs[publicInputs.length - NULLIFIER_TYPE_OFFSET_FROM_END]
+            publicInputs[end - NULLIFIER_TYPE_OFFSET_FROM_END]
         );
         // Salted and non-salted identifiers of one document differ, so accepting both would let
         // one document register two owners.
@@ -170,12 +194,29 @@ contract ZKPassportIdentityVerifier is IIdentityVerifier {
         // A salted identifier depends on the OPRF key, so a second key would give one document a
         // second identifier.
         bytes32 proofOprfKeyHash = publicInputs[
-            publicInputs.length - OPRF_KEY_HASH_OFFSET_FROM_END
+            end - OPRF_KEY_HASH_OFFSET_FROM_END
         ];
         if (proofOprfKeyHash != OPRF_KEY_HASH) {
             revert UnexpectedOPRFKey(proofOprfKeyHash);
         }
         if (uniqueIdentifier == bytes32(0)) revert MissingIdentifier();
+    }
+
+    /// @dev ZKPassport encodes a version as three big-endian uint16 values (major, minor, patch) at
+    ///      the start of a bytes32. Reverts for a version whose public-input layout this contract
+    ///      does not know, so a new ZKPassport version needs a reviewed update of this contract.
+    function _hasVerificationMethod(
+        bytes32 version
+    ) internal pure returns (bool) {
+        uint256 word = uint256(version);
+        uint256 minor = (word >> 224) & type(uint16).max;
+        if (
+            word >> 240 != 0 ||
+            minor < FIRST_KNOWN_MINOR ||
+            minor > LAST_KNOWN_MINOR ||
+            word << 48 != 0
+        ) revert UnsupportedVersion(version);
+        return minor >= FIRST_METHOD_MINOR;
     }
 
     /// @dev Checks the owner and chain binding, the expiry bound and, when required, strict

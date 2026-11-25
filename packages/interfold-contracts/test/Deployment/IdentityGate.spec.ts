@@ -69,7 +69,8 @@ function config(identity: Record<string, unknown>): ProtocolConfigFile {
     name: "test-protocol",
     identity: {
       zkPassportRootVerifier: "0x1D000001000EFD9a6371f4d90bB8920D5431c0D8",
-      zkPassportVersion: ethersLib.zeroPadValue("0x14", 32),
+      // ZKPassport 0.20.0: three big-endian uint16 values at the start of a bytes32.
+      zkPassportVersion: ethersLib.zeroPadBytes("0x000000140000", 32),
       domain: "dashboard.theinterfold.com",
       scope: "interfold-bond-owner",
       nullifierType: 0,
@@ -161,7 +162,7 @@ describe("identity gate rollout", function () {
     const current = identityGateSettings(config({}));
     const nextVersion = {
       ...current,
-      zkPassportVersion: ethersLib.zeroPadValue("0x15", 32),
+      zkPassportVersion: ethersLib.zeroPadBytes("0x000000150000", 32),
     };
     expect(changedIdentifierSettings(current, nextVersion)).to.deep.equal([]);
     expect(sameVerifierSettings(current, nextVersion)).to.equal(false);
@@ -238,13 +239,18 @@ describe("identity gate rollout", function () {
         ["interfold.identity.zkpassport.v1", domain, scope],
       ),
     );
+    const expected = ethersLib.keccak256(
+      coder.encode(["bytes32", "bytes32"], [namespace, nullifier]),
+    );
     const bundle = {
       kind: "interfold.identity.zkpassport-proof",
       domain,
       scope,
+      // ZKPassport 0.20.0: three big-endian uint16 values at the start of a bytes32.
+      version: ethersLib.zeroPadBytes("0x000000140000", 32),
       params: {
         proofVerificationData: {
-          // The pinned version ends with [nullifier type, scoped nullifier, OPRF key hash].
+          // Up to 0.22 the inputs end with [nullifier type, scoped nullifier, OPRF key hash].
           publicInputs: [
             ethersLib.ZeroHash,
             ethersLib.ZeroHash,
@@ -254,11 +260,24 @@ describe("identity gate rollout", function () {
         },
       },
     } as unknown as ProofBundle;
-    expect(expectedIdentityId(bundle)).to.equal(
-      ethersLib.keccak256(
-        coder.encode(["bytes32", "bytes32"], [namespace, nullifier]),
-      ),
-    );
+    expect(expectedIdentityId(bundle)).to.equal(expected);
+    // From 0.23.0 the verification method follows the OPRF key hash.
+    const bundle023 = {
+      ...bundle,
+      version: ethersLib.zeroPadBytes("0x000000170000", 32),
+      params: {
+        proofVerificationData: {
+          publicInputs: [
+            ethersLib.ZeroHash,
+            ethersLib.ZeroHash,
+            nullifier,
+            ethersLib.ZeroHash,
+            ethersLib.toBeHex(100, 32),
+          ],
+        },
+      },
+    } as unknown as ProofBundle;
+    expect(expectedIdentityId(bundle023)).to.equal(expected);
 
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "identity-proof-"));
     const good = path.join(dir, "proof.json");

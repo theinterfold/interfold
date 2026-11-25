@@ -16,7 +16,8 @@
 // The `mainnet` network reads RPC_URL and PRIVATE_KEY, so it reaches the fork; the script refuses
 // any chain that is not an Anvil mainnet fork.
 //
-// Options: --proof-validity <seconds> (default 7 days), --max-validity <seconds> (default 365 days).
+// Options: --proof-validity <seconds> (default 7 days), --max-validity <seconds> (default 3,653 days,
+// so a credential lasts until the document expires).
 import { ethers as ethersLib } from "ethers";
 import fs from "node:fs";
 import path from "node:path";
@@ -56,10 +57,23 @@ export function readProofBundle(file: string): ProofBundle {
   return bundle;
 }
 
+/**
+ * Whether a ZKPassport version's public inputs end with the verification method, as from 0.23.0.
+ * A version is three big-endian uint16 values (major, minor, patch) at the start of a bytes32.
+ */
+export function hasVerificationMethod(version: string): boolean {
+  const word = BigInt(version);
+  return word >> 240n > 0n || ((word >> 224n) & 0xffffn) >= 23n;
+}
+
 /** The identifier that ZKPassportIdentityVerifier derives for the proof's scoped nullifier. */
 export function expectedIdentityId(bundle: ProofBundle): string {
   const coder = ethersLib.AbiCoder.defaultAbiCoder();
   const inputs = bundle.params.proofVerificationData.publicInputs;
+  // The scoped nullifier comes before the OPRF key hash, and from 0.23.0 also before the
+  // verification method.
+  const scopedNullifier =
+    inputs[inputs.length - (hasVerificationMethod(bundle.version) ? 3 : 2)];
   const namespace = ethersLib.keccak256(
     coder.encode(
       ["string", "string", "string"],
@@ -67,10 +81,7 @@ export function expectedIdentityId(bundle: ProofBundle): string {
     ),
   );
   return ethersLib.keccak256(
-    coder.encode(
-      ["bytes32", "bytes32"],
-      [namespace, inputs[inputs.length - 2]],
-    ),
+    coder.encode(["bytes32", "bytes32"], [namespace, scopedNullifier]),
   );
 }
 
@@ -114,7 +125,7 @@ export async function replayProof(): Promise<void> {
     throw new Error(`The proof binds chain ${bundle.chainId}, not mainnet`);
   }
   const proofValidity = BigInt(arg("proof-validity") ?? 7 * 86_400);
-  const maxValidity = BigInt(arg("max-validity") ?? 365 * 86_400);
+  const maxValidity = BigInt(arg("max-validity") ?? 3_653 * 86_400);
   const [deployer] = await ethers.getSigners();
   // Impersonated accounts sign through a plain provider, as in the service-migration simulation.
   const forkProvider = new ethersLib.JsonRpcProvider(

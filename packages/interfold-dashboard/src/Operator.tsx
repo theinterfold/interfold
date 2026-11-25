@@ -35,7 +35,6 @@ import {
   buildProofBundle,
   capacityWindowEnd,
   credentialEnd,
-  dateInput,
   fetchIdentityPolicy,
   fetchOwnerAccount,
   fetchVerifierConfig,
@@ -1519,8 +1518,9 @@ function IdentityPanel({
   // A published registry without a verifier, or with a verifier that is not ZKPassport's, keeps its
   // credentials, but this page cannot register with it.
   const registrationClosed = Boolean(policy) && verifier === null
-  // Until the owner types a date, the field offers the longest credential that the verifier allows.
-  const validUntilValue = validUntilInput ?? (current ? dateInput(current.now + service.maxValidity) : '')
+  // The owner enters the document's expiry date: the proof can only show a date that the document
+  // reaches, and the credential then lasts until the document expires.
+  const validUntilValue = validUntilInput ?? ''
 
   const create = async () => {
     const chain = boundChainName(CHAIN.id)
@@ -1820,14 +1820,14 @@ export function IdentityView({
                 this owner and to {NETWORK_NAME}.
               </p>
               <Field
-                label='Document valid until (UTC date)'
+                label='Document expiry date (UTC)'
                 value={validUntilInput}
                 onChange={onValidUntil}
                 placeholder='YYYY-MM-DD'
                 invalid={validUntilInput.trim() !== '' && validUntil === null}
-                hint={`The document must be valid at least until this date. The credential ends on this date, or ${formatDuration(
+                hint={`Enter the expiry date printed on the document, or an earlier date. The credential lasts until this date, so the owner renews only when the document expires (at most ${formatDuration(
                   service.maxValidity,
-                )} after the proof, if that is earlier.`}
+                )} after the proof).`}
               />
               {capacityApplies && plannedEnd !== null && windowEnd !== null && plannedEnd < windowEnd && (
                 <Note kind='warn'>

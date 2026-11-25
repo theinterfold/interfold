@@ -184,7 +184,8 @@ test('the claim covers the claimable seats of the connected recipient, and the s
 const DAY = 86_400n
 const NOW = 1_790_000_000n
 const word = (value: bigint): Hex => pad(toHex(value), { size: 32 })
-const VERSION = word(0x14n << 232n)
+// ZKPassport 0.20.0: three big-endian uint16 values (major, minor, patch) at the start.
+const VERSION = word(0x14n << 224n)
 
 const service: IdentityService = {
   domain: 'dashboard.theinterfold.com',
@@ -353,7 +354,7 @@ test('a proof registers from the owner, or as a Safe transaction', () => {
   assert.match(safeBatch, /The batch also refreshes the operator/)
 
   // The verifier accepts one ZKPassport version.
-  const otherVersion = { phase: 'ready', bundle: bundle(word(0x15n << 232n)) } as const
+  const otherVersion = { phase: 'ready', bundle: bundle(word(0x15n << 224n)) } as const
   const mismatch = renderToStaticMarkup(<IdentityView {...identityProps} request={otherVersion} />)
   assert.match(mismatch, /another ZKPassport version/)
   assert.match(mismatch, /<button class="btn btn--primary" disabled="">Register the identity/)
