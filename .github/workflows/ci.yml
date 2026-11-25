@@ -78,10 +78,41 @@ jobs:
       dappnode: ${{ steps.jobs.outputs.dappnode }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      # A pull request whose base branch is the head of another open pull request is inside a stack.
+      # Every push to a lower branch is merged or rebased into each branch above it, so the 32-core
+      # jobs would run once per layer. They run only at the bottom of a stack (base main or another
+      # trunk), at the top of a native GitHub stack, and for every other event. Run the workflow
+      # manually on a branch to force them on any layer.
+      - name: Locate the pull request in its stack
+        id: stack
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.base_ref }}
+          STACK_POSITION: ${{ github.event.pull_request.stack.position }}
+          STACK_SIZE: ${{ github.event.pull_request.stack.size }}
+        run: |
+          heavy=true
+          top=false
+          if [ "$EVENT_NAME" = pull_request ]; then
+            if [ -n "$STACK_SIZE" ] && [ "$STACK_SIZE" -gt 1 ] && [ "$STACK_POSITION" = "$STACK_SIZE" ]; then
+              # The top of a native stack holds every layer: it tests what a whole-stack merge lands.
+              top=true
+            elif [ -n "$(gh pr list --repo "$REPO" --head "$BASE_REF" --state open --json number --jq '.[0].number')" ]; then
+              heavy=false
+            fi
+          fi
+          echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
+          echo "top=$top" >> "$GITHUB_OUTPUT"
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         if: ${{ !inputs.release_candidate }}
         id: filter
         with:
+          # The top of a stack compares the whole stack with its trunk. Its own pull request diff
+          # holds only the top layer. An empty token makes the filter use git and honor `base`.
+          token: ${{ steps.stack.outputs.top != 'true' && github.token || '' }}
+          base: ${{ steps.stack.outputs.top == 'true' && github.event.pull_request.stack.base.ref || '' }}
           # Required for the '!' exclusions below. The default 'some' quantifier
           # IGNORES negated patterns — worse, a bare '!**/*.md' rule under 'some'
           # matches every non-markdown file, turning every filter always-true.
@@ -203,6 +234,8 @@ jobs:
         if: ${{ !inputs.release_candidate }}
         id: circuit_filter
         with:
+          token: ${{ steps.stack.outputs.top != 'true' && github.token || '' }}
+          base: ${{ steps.stack.outputs.top == 'true' && github.event.pull_request.stack.base.ref || '' }}
           predicate-quantifier: 'some-with-excludes'
           filters: .github/filters/circuits.yml
       - name: Compute job filters
@@ -227,12 +260,15 @@ jobs:
           OPENVM_WORKER="${{ steps.filter.outputs.openvm_worker }}"
           OPENVM_GUEST="${{ steps.filter.outputs.openvm_guest }}"
           FORCE="${{ github.event_name == 'workflow_dispatch' || inputs.release_candidate }}"
+          HEAVY="${{ steps.stack.outputs.heavy }}"
 
           any() { for v in "$@"; do [ "$v" = "true" ] && echo "true" && return; done; echo "false"; }
+          # The six jobs on the 32-core runner. See the stack step above.
+          heavy() { if [ "$HEAVY" = "true" ]; then any "$@"; else echo "false"; fi; }
 
           echo "rust_unit_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $BINDINGS $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "rust_integration_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "ciphernode_e2e=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "rust_integration_tests=$(heavy $FORCE $RUST $CONTRACTS $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "ciphernode_e2e=$(heavy $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $REACT $INTEGRATION $CIRCUITS $CI $TEMPLATES $TOOLING)" >> $GITHUB_OUTPUT
           # build_sdk also runs for React, integration, and template changes: it builds React, and
           # the integration and template jobs need its artifacts. Those changes cannot alter the SDK
@@ -241,7 +277,7 @@ jobs:
           # template_integration is the repo's cross-cutting end-to-end test: it
           # runs a full E3 round against real ciphernodes, so it must run on any
           # change to the stack it drives, not just template changes.
-          echo "templates=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "templates=$(heavy $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "zk=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $SYNC_PROOF_TOOLS $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "contracts=$(any $FORCE $CONTRACTS $CI $TOOLING)" >> $GITHUB_OUTPUT
           # The rust jobs already compile the workspace, so the image build only
@@ -260,9 +296,9 @@ jobs:
           echo "crypto_sources=$(any $FORCE $CIRCUITS $VERIFIERS $CRYPTO_CONFIG)" >> $GITHUB_OUTPUT
           # nargo reads only the circuit paths, so Rust and tooling changes skip the Noir checks.
           echo "noir_checks=$(any $FORCE $CIRCUITS $CI)" >> $GITHUB_OUTPUT
-          echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "zk_prover_integration=$(any $FORCE $RUST $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "integration_prebuild=$(heavy $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "zk_prover_integration=$(heavy $FORCE $RUST $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "build_interfold_cli=$(heavy $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
 
       - name: Check test runner dispatch and results
         run: node --test crates/net/tests/runner.test.mjs scripts/hooks/*.test.mjs
