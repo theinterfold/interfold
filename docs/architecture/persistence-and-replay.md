@@ -147,9 +147,11 @@ unchecked.
 For retained slashable failures, seed Failed into router recipients before replay or at effects for
 a newly admitted context; later recipients get it first. Stop keyshare, PK/plaintext aggregation
 (also while waiting for authority), C0 verification, ordinary compute, and DA recovery, while
-retaining accusation re-verification. Give cleanup the E3's aggregate/cursor so writes are not
-stale. Completed contexts receive `E3RequestComplete`, not another effects signal. Document
-publication recovery does not itself read lifecycle; canonical backfill closes it later.
+retaining accusation re-verification. The fixed-set plaintext collector treats the router's local
+`E3StageChanged(Failed)` seed as reconciliation and clears its checkpoints. A local `E3Failed`
+proposal stops the collector but preserves its checkpoints. Give cleanup the E3's aggregate/cursor
+so writes are not stale. Completed contexts receive `E3RequestComplete`, not another effects signal.
+Document publication recovery does not itself read lifecycle; canonical backfill closes it later.
 
 **Two open reconciliation gaps:** lifecycle stores stage but not failure reason, so a **locally
 Failed** context completes on restart even when accusation work remains. Also, a canonical Failed

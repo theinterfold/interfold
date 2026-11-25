@@ -6,8 +6,8 @@ use actix::prelude::*;
 use anyhow::{ensure, Result};
 use e3_data::{DataStore, DurableIntent};
 use e3_events::{
-    prelude::*, AggregationInputsReady, AggregationPhase, BusHandle, DecryptionshareCreated, E3id,
-    EventSource, EventStoreQueryBy, InterfoldEvent, InterfoldEventData as Data,
+    prelude::*, AggregationInputsReady, AggregationPhase, BusHandle, DecryptionshareCreated,
+    E3Stage, E3id, EventSource, EventStoreQueryBy, InterfoldEvent, InterfoldEventData as Data,
     PlaintextAggregated, SeqAgg,
 };
 use e3_request::canonical_key::{CanonicalPublicKeys, SynchronizedDecryptionPlan};
@@ -461,8 +461,11 @@ impl Handler<InterfoldEvent> for FixedSetPlaintext {
                 }
             }
             Data::DecryptionshareCreated(b) if b.e3_id == self.id => (),
+            // The router also delivers finalized failure directly as a Local stage before replay.
             Data::E3StageChanged(stage)
-                if stage.new_stage.is_terminal() && event.source() == EventSource::Evm =>
+                if (event.source() == EventSource::Evm && stage.new_stage.is_terminal())
+                    || (event.source() == EventSource::Local
+                        && stage.new_stage == E3Stage::Failed) =>
             {
                 self.retire(ctx);
                 return;
