@@ -100,7 +100,7 @@ impl CanonicalPublicKeys {
 }
 
 /// Confirmed setup rows in selected H order, never an SS ESM column.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct SynchronizedDkgAuthority {
     pub version: u8,
     pub context: SynchronizedDkgContext,

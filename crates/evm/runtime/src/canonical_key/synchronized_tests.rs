@@ -21,6 +21,101 @@ struct Fixture {
 }
 
 #[test]
+fn synchronized_contribution_requires_confirmed_phase_and_both_ciphertext_bindings() -> Result<()> {
+    let f = Fixture::new()?;
+    let id = &f.request.e3_id;
+    let profile = f.request.params_profile;
+    let params = profile.build_pair()?.0;
+    let ct = e3_bfv_client::bfv_encrypt(
+        vec![7u64],
+        f.bytes.to_vec(),
+        params.degree(),
+        params.plaintext(),
+        params.moduli(),
+    )?;
+    let bytes = [ArcBytes::from_bytes(&ct)];
+    let commitment = e3_bfv_client::compute_ct_commitment_with_params(&ct, &params)?;
+    let hash = alloy::primitives::keccak256(&ct);
+    for direct in [false, true] {
+        let (keys, mut projection) = f.projection();
+        for fact in f.facts() {
+            projection.observe(&event(fact, EventSource::Evm, Some(1)))?;
+        }
+        let output = e3_events::CiphertextOutputPublished {
+            e3_id: id.clone(),
+            ciphertext_output: bytes.to_vec(),
+            ciphertext_commitment: commitment,
+        };
+        let fact: InterfoldEventData = if direct {
+            output.clone().into()
+        } else {
+            e3_events::CiphertextOutputReferencePublished {
+                e3_id: id.clone(),
+                content_hash: hash.0,
+                ciphertext_commitment: commitment,
+                availability_block: 4,
+                availability_leaf_index: 0,
+            }
+            .into()
+        };
+        let phase = E3StageChanged {
+            e3_id: id.clone(),
+            previous_stage: E3Stage::KeyPublished,
+            new_stage: E3Stage::CiphertextReady,
+        };
+        let plan = || keys.synchronized_decryption_definition(id, profile, &bytes);
+        if direct {
+            projection.observe(&event(fact.clone(), EventSource::Evm, Some(2)))?;
+            projection.observe(&event(phase.clone(), EventSource::Local, Some(2)))?;
+            assert!(plan()?.is_none());
+        }
+        projection.observe(&event(output.clone(), EventSource::Local, Some(2)))?;
+        projection.observe(&event(fact.clone(), EventSource::Net, Some(2)))?;
+        projection.observe(&event(fact.clone(), EventSource::Evm, None))?;
+        projection.observe(&event(phase.clone(), EventSource::Evm, Some(2)))?;
+        if !direct {
+            assert!(plan()?.is_none());
+        }
+        projection.observe(&event(fact.clone(), EventSource::Evm, Some(2)))?;
+        projection.observe(&event(fact, EventSource::Evm, Some(3)))?;
+        let fixed = plan()?.unwrap();
+        assert_eq!(fixed.designated(), &[0, 2]);
+        assert_eq!(fixed.signer(2)?, f.committee[2]);
+        assert!(fixed.signer(1).is_err());
+        for wrong in [
+            vec![],
+            vec![bytes[0].clone(); 2],
+            vec![ArcBytes::from_bytes(&[1])],
+        ] {
+            assert!(keys
+                .synchronized_decryption_definition(id, profile, &wrong)
+                .is_err());
+        }
+        assert!(keys
+            .synchronized_decryption_definition(id, BfvProfile::SsInsecure64, &bytes)
+            .is_err());
+        let mut changed = output;
+        changed.ciphertext_commitment[0] ^= 1;
+        assert!(projection
+            .observe(&event(changed, EventSource::Evm, Some(3)))
+            .is_err());
+        assert_eq!(plan()?, Some(fixed));
+        projection.hydrating_contexts.insert(id.clone());
+        projection.observe(&event(
+            E3StageChanged {
+                previous_stage: phase.new_stage,
+                new_stage: E3Stage::Complete,
+                ..phase
+            },
+            EventSource::Evm,
+            Some(4),
+        ))?;
+        assert!(plan()?.is_none());
+    }
+    Ok(())
+}
+
+#[test]
 fn publication_selection_requires_confirmed_finalization_and_is_immutable() -> Result<()> {
     let f = Fixture::new()?;
     let (keys, mut projection) = f.projection();
