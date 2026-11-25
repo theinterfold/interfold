@@ -24,6 +24,17 @@ use tokio::sync::Mutex;
 /// request stops without an answer, this limit releases the lock for the other senders.
 const SEND_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// The headroom added to a gas estimate, as a fraction of it. A call whose cost depends on state
+/// that moves between the estimate and inclusion, such as an insert into Aztec's L1→L2 message
+/// tree, can need more than its estimate. A sub-call then runs out of gas and the transaction
+/// reverts. Unused gas is refunded, so the headroom costs only when it is used.
+const GAS_HEADROOM_DIVISOR: u64 = 4;
+
+/// The gas limit for an estimate: the estimate plus a quarter.
+fn gas_limit(estimate: u64) -> u64 {
+    estimate.saturating_add(estimate / GAS_HEADROOM_DIVISOR)
+}
+
 type Reservations = BTreeMap<(u64, Address), BTreeMap<u64, Instant>>;
 
 /// The nonces that this process sent, with their send times, by chain and account.
@@ -50,8 +61,9 @@ fn account_reservations(
 /// the lock is released, so several transactions of one account can wait for inclusion at the same
 /// time.
 ///
-/// It sets the gas limit, the EIP-1559 fees, and the chain ID of `call` from the node before it
-/// reserves the nonce, so values that the caller set on `call` are replaced.
+/// It sets the gas limit (the node's estimate with headroom), the EIP-1559 fees, and the chain ID
+/// of `call` from the node before it reserves the nonce, so values that the caller set on `call`
+/// are replaced.
 pub async fn send_with_next_nonce<P, D>(
     call: CallBuilder<P, D>,
     from: Address,
@@ -75,7 +87,7 @@ where
         // can hold the transaction, and the reservation keeps later sends off its nonce.
         account.insert(nonce, Instant::now());
         let call = call
-            .gas(gas)
+            .gas(gas_limit(gas))
             .max_fee_per_gas(fees.max_fee_per_gas)
             .max_priority_fee_per_gas(fees.max_priority_fee_per_gas)
             .chain_id(chain_id)
@@ -115,5 +127,11 @@ mod tests {
         assert_eq!(next_free_nonce(sepolia, 0, now), 0);
         let mainnet = account_reservations(&mut sent, 1, signer);
         assert_eq!(next_free_nonce(mainnet, 0, now), 1);
+    }
+
+    #[test]
+    fn adds_a_quarter_to_the_gas_estimate_without_overflow() {
+        assert_eq!(gas_limit(329_878), 412_347);
+        assert_eq!(gas_limit(u64::MAX), u64::MAX);
     }
 }
