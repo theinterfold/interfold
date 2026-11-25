@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: write
+      pull-requests: read
     steps:
       - name: Run ci on the retargeted branch when it left the stack
         env:
@@ -34,7 +35,9 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
-          if [ -n "$(gh pr list --repo "$REPO" --head "$BASE_REF" --state open --json number --jq '.[0].number')" ]; then
+          # Assignments, not tests: a failed lookup stops the job instead of reading as "no pull request".
+          above_base="$(gh pr list --repo "$REPO" --head "$BASE_REF" --state open --json number --jq '.[0].number')"
+          if [ -n "$above_base" ]; then
             echo "The new base $BASE_REF is still another open pull request; ci runs at the bottom only."
             exit 0
           fi
@@ -48,6 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: write
+      pull-requests: read
     steps:
       - name: Run ci on the pull request below when it became the top of the stack
         env:
@@ -57,12 +61,14 @@ jobs:
         run: |
           # In a native stack, github.base_ref is the stack base; the REST API reports the parent.
           base="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.base.ref')"
-          if [ -z "$(gh pr list --repo "$REPO" --head "$base" --state open --json number --jq '.[0].number')" ]; then
+          below="$(gh pr list --repo "$REPO" --head "$base" --state open --json number --jq '.[0].number')"
+          if [ -z "$below" ]; then
             echo "No open pull request has head $base; the closed pull request was not stacked."
             exit 0
           fi
-          if [ -n "$(gh pr list --repo "$REPO" --base "$base" --state open --json number --jq '.[0].number')" ]; then
-            echo "Another open pull request still targets $base; it is not the top of the stack."
+          above="$(gh pr list --repo "$REPO" --base "$base" --state open --json number --jq '.[0].number')"
+          if [ -n "$above" ]; then
+            echo "Open pull request #$above still targets $base; #$below is not the top of the stack."
             exit 0
           fi
           gh workflow run ci.yml --repo "$REPO" --ref "$base"
