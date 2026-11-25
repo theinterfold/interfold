@@ -6,9 +6,13 @@ name: Stack retarget
 # `edited` event, which ci does not handle. Start a full ci run on the branch so the new bottom of
 # the stack is tested before it merges. A native GitHub stack rebases the new bottom instead, and
 # that push starts ci by itself.
+#
+# Closing the top pull request of a stack without merging it makes the pull request below it the
+# new top. That sends no event to the new top, so its last ci run, which skipped the 32-core jobs,
+# would stand. Start a full ci run on it too.
 on:
   pull_request:
-    types: [edited]
+    types: [edited, closed]
 
 permissions:
   contents: read
@@ -22,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: write
+      pull-requests: read
     steps:
       - name: Run ci on the retargeted branch when it left the stack
         env:
@@ -30,8 +35,40 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
-          if [ -n "$(gh pr list --repo "$REPO" --head "$BASE_REF" --state open --json number --jq '.[0].number')" ]; then
+          # Assignments, not tests: a failed lookup stops the job instead of reading as "no pull request".
+          above_base="$(gh pr list --repo "$REPO" --head "$BASE_REF" --state open --json number --jq '.[0].number')"
+          if [ -n "$above_base" ]; then
             echo "The new base $BASE_REF is still another open pull request; ci runs at the bottom only."
             exit 0
           fi
           gh workflow run ci.yml --repo "$REPO" --ref "$HEAD_REF"
+
+  new_top_ci:
+    if: >-
+      github.event.action == 'closed' && !github.event.pull_request.merged && github.event.pull_request.head.repo.full_name ==
+      github.repository
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Run ci on the pull request below when it became the top of the stack
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # In a native stack, github.base_ref is the stack base; the REST API reports the parent.
+          base="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.base.ref')"
+          below="$(gh pr list --repo "$REPO" --head "$base" --state open --json number --jq '.[0].number')"
+          if [ -z "$below" ]; then
+            echo "No open pull request has head $base; the closed pull request was not stacked."
+            exit 0
+          fi
+          above="$(gh pr list --repo "$REPO" --base "$base" --state open --json number --jq '.[0].number')"
+          if [ -n "$above" ]; then
+            echo "Open pull request #$above still targets $base; #$below is not the top of the stack."
+            exit 0
+          fi
+          gh workflow run ci.yml --repo "$REPO" --ref "$base"

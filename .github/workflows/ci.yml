@@ -89,17 +89,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           REPO: ${{ github.repository }}
-          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           STACK_POSITION: ${{ github.event.pull_request.stack.position }}
           STACK_SIZE: ${{ github.event.pull_request.stack.size }}
         run: |
           heavy=true
           top=false
           if [ "$EVENT_NAME" = pull_request ]; then
+            # In a native stack, github.base_ref is the stack base (main) on every layer. The REST
+            # API still reports the branch each layer targets.
+            base="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.base.ref')" || base=
             if [ -n "$STACK_SIZE" ] && [ "$STACK_SIZE" -gt 1 ] && [ "$STACK_POSITION" = "$STACK_SIZE" ]; then
               # The top of a native stack holds every layer: it tests what a whole-stack merge lands.
               top=true
-            elif [ -n "$(gh pr list --repo "$REPO" --head "$BASE_REF" --state open --json number --jq '.[0].number')" ]; then
+            elif [ -n "$base" ] && [ -n "$(gh pr list --repo "$REPO" --head "$base" --state open --json number --jq '.[0].number')" ]; then
               heavy=false
             fi
           fi
