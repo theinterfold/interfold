@@ -15,7 +15,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, isAddress, parseUnits, type Address, type Hash } from 'viem'
-import { PLANNED_IDENTITY, capacityWindowEnd, credentialEnd } from '@interfold/contracts/zkpassport'
+import { ICAO_CHIP, PLANNED_IDENTITY, capacityWindowEnd, credentialEnd } from '@interfold/contracts/zkpassport'
 import Loader from './Loader'
 import {
   CHAIN,
@@ -1537,6 +1537,8 @@ function IdentityPanel({
         scope: service.scope,
         mode: 'compressed-evm',
         devMode: false,
+        // The verifier accepts only chip proofs, so the app refuses other documents before it proves.
+        allowedVerificationMethods: [ICAO_CHIP],
         ...(service.nullifierType === null
           ? {}
           : { uniqueIdentifierType: service.nullifierType === 1 ? sdk.NullifierType.SALTED : sdk.NullifierType.NON_SALTED }),
