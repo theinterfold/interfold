@@ -21,6 +21,10 @@ pub struct ThresholdKeyshareRecoveryPayloads {
 }
 
 impl ThresholdKeyshareRecoveryPayloads {
+    pub(super) fn repositories(&self) -> e3_data::Repositories {
+        use e3_data::RepositoriesFactory;
+        self.store.repositories()
+    }
     pub fn new(store: DataStore) -> Self {
         Self {
             store,

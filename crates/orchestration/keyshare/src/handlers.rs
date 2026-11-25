@@ -130,7 +130,13 @@ impl Handler<TypedEvent<ComputeResponse>> for ThresholdKeyshare {
 impl Handler<RedeliverDecryptionWork> for ThresholdKeyshare {
     type Result = ();
 
-    fn handle(&mut self, msg: RedeliverDecryptionWork, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: RedeliverDecryptionWork, ctx: &mut Self::Context) -> Self::Result {
+        if self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            if let Err(error) = self.drive_contribution(ctx) {
+                self.bus.err(EType::Decryption, error);
+            }
+            return;
+        }
         if let Err(error) = self.redeliver_decryption_work(msg.0) {
             error!(%error, "Could not redeliver decryption work");
         }
@@ -437,6 +443,9 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         // No event, collector result or deadline, or selection starts work and no decryption
         // work is redelivered after the end, also while the cleanup below retries.
         self.ended = true;
+        if let Some(handle) = self.contribution_running.take() {
+            ctx.cancel_future(handle);
+        }
         if let Some(retry) = self.synchronized_setup_retry.take() {
             ctx.cancel_future(retry);
         }
@@ -452,11 +461,20 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         let keys = self.bfv_keys.clone();
         let setup = (self.params_profile.protocol()
             == e3_fhe_params::BfvDecryptionProtocol::Synchronized)
-            .then(|| self.recovery_payloads.synchronized_setup());
+            .then(|| {
+                (
+                    self.recovery_payloads.synchronized_setup(),
+                    self.recovery_payloads.repositories(),
+                    event.e3_id.clone(),
+                )
+            });
         ctx.wait(
             async move {
                 keys.settle().await.context("BFV keypair removal failed")?;
-                if let Some(setup) = setup {
+                if let Some((setup, repos, id)) = setup {
+                    crate::synchronized::ContributionStore::retire(&repos, &id)
+                        .await
+                        .context("synchronized contribution removal failed")?;
                     setup
                         .settle()
                         .await

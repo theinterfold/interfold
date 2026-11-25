@@ -185,6 +185,9 @@ impl ThresholdKeyshare {
                     if let Err(error) = self.publish_synchronized_consent_definition(ctx) {
                         self.bus.err(EType::KeyGeneration, error);
                     }
+                    if let Err(error) = self.drive_contribution(ctx) {
+                        self.bus.err(EType::Decryption, error);
+                    }
                 }
             }
             Ok(SetupDriveOutcome::Retry(error)) => {

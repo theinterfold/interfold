@@ -13,6 +13,34 @@ pub struct CanonicalDkgTiming {
     pub window_secs: u64,
 }
 
+/// Frozen deadline and chain time from the same head; host wall time is not lifecycle authority.
+pub async fn read_decryption_window<P: Provider + Clone>(
+    provider: &EthProvider<P>,
+    address: Address,
+    e3: &E3id,
+) -> Result<(u64, u64)> {
+    ensure!(
+        provider.chain_id() == e3.chain_id(),
+        "decryption deadline reader is on the wrong chain"
+    );
+    let contract = IInterfold::new(address, provider.provider());
+    let head = provider
+        .provider()
+        .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
+        .await?
+        .context("missing head for decryption deadline")?
+        .header;
+    let deadline = contract
+        .getDeadlines(e3.clone().try_into()?)
+        .block(head.hash.into())
+        .call()
+        .await?
+        .decryptionDeadline
+        .try_into()?;
+    ensure!(deadline > 0, "missing frozen decryption deadline for {e3}");
+    Ok((deadline, head.timestamp))
+}
+
 pub async fn read_canonical_dkg_timing<P: Provider + Clone>(
     provider: &EthProvider<P>,
     contract_address: Address,

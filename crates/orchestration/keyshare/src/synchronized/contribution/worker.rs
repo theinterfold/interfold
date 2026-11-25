@@ -28,13 +28,25 @@ impl ContributionWorker {
         ciphertext: &ArcBytes,
         sk_poly_sum: &SensitiveBytes,
     ) -> Result<LocalContribution> {
+        self.run_fenced(store, keys, ciphertext, sk_poly_sum, None)
+            .await
+    }
+
+    pub(crate) async fn run_fenced(
+        &self,
+        store: &ContributionStore,
+        keys: &CanonicalPublicKeys,
+        ciphertext: &ArcBytes,
+        sk_poly_sum: &SensitiveBytes,
+        window: Option<(&fixed_set::DecryptionRuntime, u64)>,
+    ) -> Result<LocalContribution> {
         let current = {
             let (keys, plan, ct) = (keys.clone(), store.plan.clone(), ciphertext.clone());
             move || plan.check_current(&keys, &ct)
         };
         current()?;
         let group = scoped_task_group(&self.task_scope, store.plan.e3_id());
-        let (allocation, parent) = store.allocation(false).await?;
+        let (allocation, parent) = store.allocation(None).await?;
         let prepare = {
             let (plan, owner, ct) = (store.plan.clone(), store.owner, ciphertext.clone());
             let (sk, outgoing, incoming) = (
@@ -57,6 +69,11 @@ impl ContributionWorker {
                 )
             }
         };
+        if let Some((runtime, deadline)) = window {
+            runtime
+                .open_deadline(store.plan.e3_id(), Some(deadline))
+                .await?;
+        }
         let prepared = self
             .pool
             .spawn_in_group(
@@ -69,7 +86,7 @@ impl ContributionWorker {
         current()?;
         let share = prepared.share().clone();
         ensure!(
-            store.allocation(false).await?.1 == parent,
+            store.allocation(None).await?.1 == parent,
             "native allocation changed"
         );
         store.record_generated_at(&share, parent).await?;
@@ -95,6 +112,11 @@ impl ContributionWorker {
                 prepared.verified_proof(&prover, signed, &job)
             }
         };
+        if let Some((runtime, deadline)) = window {
+            runtime
+                .open_deadline(store.plan.e3_id(), Some(deadline))
+                .await?;
+        }
         let proof = self
             .pool
             .spawn_in_group(

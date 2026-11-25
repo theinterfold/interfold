@@ -192,6 +192,14 @@ impl CanonicalKeyProjection {
                         output.ciphertext_commitment,
                     )?;
                 }
+                if chain_fact || event.source() == EventSource::Local {
+                    self.keys.remember_synchronized_opening(
+                        &output.e3_id,
+                        &output.ciphertext_output,
+                        event.get_ctx(),
+                        self.bus.is_some(),
+                    )?;
+                }
             }
             InterfoldEventData::CiphertextOutputPublished(output)
                 if (chain_fact || event.source() == EventSource::Local)

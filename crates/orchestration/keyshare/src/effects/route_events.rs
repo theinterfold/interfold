@@ -13,6 +13,26 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             return;
         }
         let (msg, ec) = msg.into_components();
+        if self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+            if matches!(msg, InterfoldEventData::EffectsEnabled(_)) {
+                if ec.source() != e3_events::EventSource::Local {
+                    return;
+                }
+                if !self.effects_enabled {
+                    Self::start_decryption_redelivery(ctx);
+                }
+            }
+            if let InterfoldEventData::CiphertextOutputPublished(ref data) = msg {
+                self.observe_contribution_opening(&data.e3_id, &ec);
+                if let Err(error) = self.drive_contribution(ctx) {
+                    self.bus.err(EType::Decryption, error);
+                }
+                return;
+            }
+            if matches!(msg, InterfoldEventData::DecryptionShareProofSigned(_)) {
+                return;
+            }
+        }
         if matches!(
             &msg,
             InterfoldEventData::EffectsEnabled(_)
@@ -202,6 +222,9 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             && (self.canonical_key_published || self.bus.is_shutting_down())
         {
             self.discard_synchronized_consent(ctx);
+        }
+        if let Err(error) = self.drive_contribution(ctx) {
+            self.bus.err(EType::Decryption, error);
         }
     }
 }

@@ -6,6 +6,7 @@
 pub mod dealer;
 pub mod decryption;
 pub mod execution;
+pub mod fixed_set;
 pub mod partial;
 pub mod provenance;
 pub mod publication;
