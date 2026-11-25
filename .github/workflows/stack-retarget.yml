@@ -1,0 +1,37 @@
+name: Stack retarget
+
+# ci skips its 32-core jobs on a pull request stacked on another open pull request, so the skipped
+# template_integration check passes. When the lower pull request merges, this pull request is
+# retargeted to the trunk: by hand, or by GitHub if the merged branch is deleted. That is an
+# `edited` event, which ci does not handle. Start a full ci run on the branch so the new bottom of
+# the stack is tested before it merges. A native GitHub stack rebases the new bottom instead, and
+# that push starts ci by itself.
+on:
+  pull_request:
+    types: [edited]
+
+permissions:
+  contents: read
+
+jobs:
+  full_ci:
+    if: >-
+      github.event.changes.base && github.event.pull_request.stack == null && github.event.pull_request.head.repo.full_name ==
+      github.repository
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Run ci on the retargeted branch when it left the stack
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ -n "$(gh pr list --repo "$REPO" --head "$BASE_REF" --state open --json number --jq '.[0].number')" ]; then
+            echo "The new base $BASE_REF is still another open pull request; ci runs at the bottom only."
+            exit 0
+          fi
+          gh workflow run ci.yml --repo "$REPO" --ref "$HEAD_REF"
