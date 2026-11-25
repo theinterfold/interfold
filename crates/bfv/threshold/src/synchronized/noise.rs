@@ -42,25 +42,36 @@ pub fn contribution_noise_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::primitives::{b256, keccak256};
 
     #[test]
     fn synchronized_contribution_v1_saved_seed_keeps_its_whole_noise_polynomial() -> Result<()> {
-        // A sampler dependency change that passes ordinary reopen tests can still change the
-        // opening for an old allocation. This public test seed is never used by the runtime.
-        let coeffs = contribution_noise_v1(
-            BfvProfile::SyncDecInsecure64,
-            CiphernodesCommitteeSize::Minimum,
-            &[42; 32],
-        )?;
+        let profile = BfvProfile::SyncDecInsecure64;
+        let committee = CiphernodesCommitteeSize::Minimum;
+        let config_id = profile.crypto_config_id(committee)?;
+        // #2542 changed the bound. The old vector describes only the old binary and tuple;
+        // accepting either digest for a given configuration would hide a changed opening.
+        let vectors = [
+            (
+                b256!("b1cb9d22ade2378a77048667354ecb1846121df390f57e6bc79b3dd7bcd3ab05"),
+                b256!("a91f7beb78c81fe00f7a1501430eb656c921fead55aacb70da8fd0b9ec3a4be4"),
+            ),
+            (
+                b256!("fe0e258735d79bc000f057bbc65136f31e6006884bd8d56f58a43bb236079fd7"),
+                b256!("ae91ef8b6391f224678a7dcfd18f15733da9c10c724fce3aff3c4891189981aa"),
+            ),
+        ];
+        let (_, expected) = vectors
+            .into_iter()
+            .find(|(id, _)| *id == config_id)
+            .with_context(|| format!("no v1 sampler vector for {config_id}"))?;
+        let coeffs = contribution_noise_v1(profile, committee, &[42; 32])?;
         let values = coeffs
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(",");
-        assert_eq!(
-            alloy::primitives::keccak256(values).to_string(),
-            "0xa91f7beb78c81fe00f7a1501430eb656c921fead55aacb70da8fd0b9ec3a4be4"
-        );
+        assert_eq!(keccak256(values), expected, "v1 sampler for {config_id}");
         Ok(())
     }
 }

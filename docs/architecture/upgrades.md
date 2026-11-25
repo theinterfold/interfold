@@ -516,11 +516,16 @@ adds an exclusive v1 keyshare subtree, not a field in existing SS snapshots or a
 variant. No admitted profile writes it. Keep existing schema, wire majors, `protocol_version`,
 `node_generation`, circuit pins and deployed verifiers for these two slices. No migration is needed
 for pre-existing SS records. The plan serialization, encryption envelope, predecessor binding and
-pinned sampler are part of the v1 private format. An older binary cannot resume a synchronized
-allocation. Revert the dormant code before activation; retain any qualification store with its
-matching binary/key. Changing the sampler or restoring older state for an in-flight request is not a
-compatible retry. The wider drain/reset cutover still applies. Activation, mixed-version policy and
-rollback need human review under #2461.
+pinned sampler are part of the v1 private format. The [BFV profile cutover](#bfv-profile-cutover)
+changes the Minimum sampling bound: the same seed produces a different polynomial. The node rejects
+the retired configuration ID, and that ID is part of the allocation binding. The profile name alone
+does not identify a retry.
+
+A binary without this format cannot resume the allocation. Retain each qualification store with its
+matching binary and key. Do not migrate, relabel, or redraw an in-flight allocation across the
+cutover. Before activation the dormant code can be reverted; restoring an older store for an
+in-flight request is not a rollback. The wider drain/reset still applies. Activation, mixed-version
+policy and rollback need human review under #2461.
 
 ### Retiring a BFV profile
 

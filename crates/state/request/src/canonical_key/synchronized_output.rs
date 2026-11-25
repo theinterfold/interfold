@@ -93,7 +93,7 @@ mod binding_tests {
 
     #[test]
     fn non_prefix_owner_v1_checkpoint_binding() -> Result<()> {
-        let plan = SynchronizedDecryptionPlan {
+        let mut plan = SynchronizedDecryptionPlan {
             e3_id: E3id::new("7", 31337),
             profile: BfvProfile::SyncDecInsecure64,
             committee: CiphernodesCommitteeSize::Minimum,
@@ -117,12 +117,15 @@ mod binding_tests {
             c0_commitment: [16; 32],
             domain: [17, 18],
         };
+        let binding = plan.local_contribution_binding_v1(2)?;
         assert_eq!(
-            plan.local_contribution_binding_v1(2)?,
+            binding,
             alloy::primitives::b256!(
                 "a33af4df180d615eebbc46c965edcd07872d8d1ebc2974da896e31e7234c8d74"
             )
         );
+        plan.authority.context.crypto_config_id[0] ^= 1;
+        assert_ne!(plan.local_contribution_binding_v1(2)?, binding);
         Ok(())
     }
 }

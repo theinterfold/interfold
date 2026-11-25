@@ -73,6 +73,15 @@ fn frozen_context_and_authority_are_immutable_and_request_bound() -> Result<()> 
     assert!(keys
         .insert_synchronized_dkg_authority(id.clone(), key.clone())
         .is_err());
+    let mut retired = authority(&mut key).context;
+    retired.crypto_config_id = alloy::primitives::b256!(
+        "b1cb9d22ade2378a77048667354ecb1846121df390f57e6bc79b3dd7bcd3ab05"
+    )
+    .0;
+    assert!(keys
+        .remember_synchronized_context(id.clone(), retired)
+        .is_err());
+    assert!(keys.synchronized_context(&id).is_none());
     remember(&keys, &id, &key)?;
     remember(&keys, &id, &key)?;
     let mut changed = authority(&mut key).context;
