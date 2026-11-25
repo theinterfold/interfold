@@ -270,17 +270,19 @@ deployment script refuses to deploy it on a chain that is not a known test or lo
 
 ### Presets by chain
 
-`ActiveCryptoConfig.sol` selects the supported presets from `block.chainid`:
+`ActiveCryptoConfig.sol` selects the supported presets from `block.chainid`. The committee sizes
+come from the circuit build and the deployment configuration: the contract accepts any committee
+size whose threshold is set, and only Sepolia and local configurations set `Large`.
 
 | Chain            | Chain ID    | Presets                      | Committee sizes in the circuit build |
 | ---------------- | ----------- | ---------------------------- | ------------------------------------ |
 | Ethereum mainnet | 1           | `secure-8192`                | `Minimum`, `Micro`, `Small`          |
-| Sepolia          | 11155111    | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
-| Local            | 31337, 1337 | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
+| Sepolia          | 11155111    | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`, `Large` |
+| Local            | 31337, 1337 | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`, `Large` |
 
-Any chain that is not Sepolia or local gets the mainnet rules. The mainnet launch pricing
+Any chain that is not Sepolia or local gets the mainnet presets. The mainnet launch pricing
 configuration sets `minCommitteeSize` to 19. With that value, `getE3Quote` rejects `Minimum` and
-`Micro` requests on mainnet, so only `Small` can be requested.
+`Micro` requests on mainnet, and `Large` has no threshold there, so only `Small` can be requested.
 
 Each request must name the expected circuit configuration in `expectedCryptoConfigId`. The ID binds
 the scheme, the parameter hash, and the circuit version (`keccak256("interfold-bfv-v5")`).

@@ -59,7 +59,7 @@ stored-event identity still deduplicate the fact. Do not accept or forward IDs r
 six-hour seen window. Stored-event retention is also bounded; rejected handoff releases its
 reservation and append failure stops the node.
 
-Capacity follows four concurrent N=19/H=14 E3s with 2x margin plus retry bursts. Peers borrow idle
+Capacity follows four concurrent N=45/H=34 E3s with 2x margin plus retry bursts. Peers borrow idle
 capacity. At pressure a peer at fair share evicts its own oldest ID; a peer below share reclaims
 from the largest owner. Early eviction increments `seen_ids_early_evictions_total` in bounded WARN
 logs. Retention may shorten, but new valid protocol inputs must not be rate-throttled away. The
@@ -167,15 +167,15 @@ failures do not retry.
 Ingress never awaits a long DHT fetch. Keep propagation-peer attribution transiently through
 buffering, not in document identity/serialized metadata. An early notification is keyed by
 peer/document/party filter, keeps latest expiry, and is rechecked after selection. Allowed filters
-are empty or one party. The early queue allows 3,040 notifications (four N=19 rounds, 2x margin);
+are empty or one party. The early queue allows 16,560 notifications (four N=45 rounds, 2x margin);
 prune expiry on new ingress.
 
-Document fetches use at most **8 active reads, 512 queued documents, 128 announcers per document**.
-A due peer with fewest active reads gets the next slot, rotating ties; a lone peer may use all
-capacity. One GET attempt releases its slot within 90 seconds; retries return to the fair queue with
-backoff until success, E3 closure, or notification expiry, not an arbitrary six-failure limit.
-Duplicate announcements do not advance retry deadlines. A document has at most one fetch and can use
-any retained announcer; at capacity replace oldest announcers after the first. Assign queue
+Document fetches use at most **8 active reads, 2,048 queued documents, 128 announcers per
+document**. A due peer with fewest active reads gets the next slot, rotating ties; a lone peer may
+use all capacity. One GET attempt releases its slot within 90 seconds; retries return to the fair
+queue with backoff until success, E3 closure, or notification expiry, not an arbitrary six-failure
+limit. Duplicate announcements do not advance retry deadlines. A document has at most one fetch and
+can use any retained announcer; at capacity replace oldest announcers after the first. Assign queue
 ownership to the least-loaded retained announcer, including retry; move shared work before eviction.
 A busy peer cannot evict shared work while another announcer has no queue. No per-peer cap wastes
 idle global capacity; pressure can reclaim from largest owners, otherwise replace only the peer's
@@ -187,7 +187,7 @@ those bytes. A forged/expired notification cannot displace correct metadata or a
 record for the wrong key. Suppress duplicate documents.
 
 Inbound puts cannot replace a locally published record or shorten a replica's expiry; no expiry
-means unlimited lifetime. Replica ledger bounds inbound storage at 160 per sender, 3,040 total, and
+means unlimited lifetime. Replica ledger bounds inbound storage at 368 per sender, 16,560 total, and
 2 GiB value bytes. Under pressure evict expired first, then sender's oldest at sender limit;
 globally, donor over fair share in the short dimension loses oldest records until enough room.
 Refuse only if eligible evictions cannot make room. Local/restored publications are never evicted

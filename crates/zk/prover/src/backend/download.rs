@@ -28,6 +28,15 @@ const CIRCUIT_VARIANT_DIRS: &[&str] = &["default", "evm", "recursive"];
 /// Longest time `bb --version` may run. A binary that hangs must not block setup or startup.
 const BB_VERSION_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Downloads have no deadline of their own: the circuit archive grows with every supported pair,
+/// and a slow but steady link must still finish. They fail when a connection cannot be opened or
+/// stops delivering data. On node start the download still counts against the startup timeout.
+const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// Without a total deadline a misbehaving endpoint could stream forever. The largest download, the
+/// eight-pair circuit archive, is about 352 MB, so 1 GiB leaves room for growth.
+const MAX_DOWNLOAD_BYTES: u64 = 1 << 30;
+
 // Release validation and installation use the same per-configuration inventory.
 const REQUIRED_ARTIFACTS: &str = include_str!("../../required-artifacts.json");
 
@@ -696,7 +705,8 @@ fn find_bb_in_dir(dir: &Path) -> Result<PathBuf, ZkError> {
 
 async fn download_with_progress(url: &str, message: &str) -> Result<Vec<u8>, ZkError> {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(300))
+        .connect_timeout(DOWNLOAD_CONNECT_TIMEOUT)
+        .read_timeout(DOWNLOAD_STALL_TIMEOUT)
         .build()
         .map_err(|e| ZkError::DownloadFailed(url.to_string(), e.to_string()))?;
 
@@ -714,6 +724,12 @@ async fn download_with_progress(url: &str, message: &str) -> Result<Vec<u8>, ZkE
     }
 
     let total_size = response.content_length().unwrap_or(0);
+    if total_size > MAX_DOWNLOAD_BYTES {
+        return Err(ZkError::DownloadFailed(
+            url.to_string(),
+            format!("size {total_size} exceeds the {MAX_DOWNLOAD_BYTES}-byte limit"),
+        ));
+    }
 
     let pb = ProgressBar::new(total_size);
     pb.set_style(
@@ -731,6 +747,12 @@ async fn download_with_progress(url: &str, message: &str) -> Result<Vec<u8>, ZkE
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| ZkError::DownloadFailed(url.to_string(), e.to_string()))?;
+        if bytes.len() as u64 + chunk.len() as u64 > MAX_DOWNLOAD_BYTES {
+            return Err(ZkError::DownloadFailed(
+                url.to_string(),
+                format!("more than {MAX_DOWNLOAD_BYTES} bytes received"),
+            ));
+        }
         bytes.extend_from_slice(&chunk);
         pb.set_position(bytes.len() as u64);
     }

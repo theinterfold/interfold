@@ -82,12 +82,12 @@ tree** under the old hash scheme. Another tree needs a rebuild, not a new label.
 | OpenVM application commitments and receipt identity | Guest executable, VM configuration, proving/deployed verifier boundary | Artifact SHA-256 or source reproducibility by itself.            |
 
 `required_circuits_version` equals Interfold release version without v; binary resolves GitHub tag
-`v{version}` / `circuits-{version}.tar.gz`. Release workflow rejects mismatch. All six pairs in
+`v{version}` / `circuits-{version}.tar.gz`. Release workflow rejects mismatch. All eight pairs in
 [supported-configurations](../../crates/zk/prover/supported-configurations.json) must ship:
-insecure-64 and secure-8192 × minimum/micro/small. That matrix is canonical for release/installation
-and must be a subset of `scripts/circuits/build-pairs.json` (tooling test), which also builds the
-large pairs. Both Rust and TypeScript read that build policy. Wildcards preserve its order, not a
-Cartesian product; an unsupported explicit pair fails before tools or writes.
+insecure-64 and secure-8192 × minimum/micro/small/large. That matrix is canonical for
+release/installation and must be a subset of `scripts/circuits/build-pairs.json` (tooling test).
+Both Rust and TypeScript read that build policy. Wildcards preserve its order, not a Cartesian
+product; an unsupported explicit pair fails before tools or writes.
 
 The builder's legacy `--preset` option now selects a protocol profile; SS retains its existing
 `insecure-64`/`secure-8192` artifact namespaces. The disabled `sync-insecure-64` definition uses
@@ -114,7 +114,7 @@ does not accept a received NodeFold VK hash as that pin. This does not make a pa
 installable or release-qualified. An isolated C5/publication wrapper and contextual Solidity
 verifier now exist, with a separate unactivated
 [registry/attestation boundary](proof-statements.md#synchronized-registry-authority-unactivated). No
-release manifest, deployed synchronized route or hydration path exists; the existing six SS pairs
+release manifest, deployed synchronized route or hydration path exists; the existing eight SS pairs
 and their anchors are unchanged. Emitting a disabled profile's canonical Solidity identity is not
 artifact or request admission.
 
@@ -143,9 +143,9 @@ Default `store:circuits pull` selects newest first-parent artifact commit with m
 not necessarily branch tip. Release uses it and `verify-release` checks every pair, stamps,
 manifests, and required artifacts before publication. Non-release CI/full-proof integration can use
 `pull --compatible` without a source match. This selects the latest first-parent artifact commit
-with the checkout's exact VK catalogue and verifies the checksums and all six VK genealogies before
-replacing local artifacts. It does not infer compatibility from the branch name or repair a bad
-archive. `--hydrate-bin-only` requires a stamp and every
+with the checkout's exact VK catalogue and verifies the checksums and every pair's VK genealogy
+before replacing local artifacts. It does not infer compatibility from the branch name or repair a
+bad archive. `--hydrate-bin-only` requires a stamp and every
 [required artifact](../../crates/zk/prover/required-artifacts.json), reports a source mismatch, and
 records the original artifact hash in the active stamp. It never rewrites the archived stamp.
 `--skip-if-built` still requires a source match and every required artifact. These development reuse

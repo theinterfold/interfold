@@ -209,11 +209,11 @@ rounds.
 
 ## Aztec v6 toolchain cutover
 
-The current source declares protocol **9**, generation **2**. `bb` 6.0.0 and Noir `v1.0.0-rc.3`
+The current source declares protocol **10**, generation **2**. `bb` 6.0.0 and Noir `v1.0.0-rc.3`
 change every verification key, VK tree anchor, and Honk verifier; proofs do not verify across
 toolchains, so a mixed fleet attests honest peers' proofs as invalid. Use the contract/protocol
-rollout: pause/drain, publish all six artifact pairs, replace PK/decryption wrappers and routers in
-the governance batch that raises the required protocol version, and upgrade every node before
+rollout: pause/drain, publish all eight artifact pairs, replace PK/decryption wrappers and routers
+in the governance batch that raises the required protocol version, and upgrade every node before
 resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them first. The
 cutover also carries chunked C2: the C2a, C2b, and `c2ab_fold` keys and the C2 branch of the VK tree
 change, and final C2 proofs gain a trailing key-tree public field. Stored C2 proofs from in-flight
@@ -228,9 +228,9 @@ their public layout, so their keys, the `dkg_aggregator` key, the nodes-tree anc
 verifier change. A nodes fold of an in-flight E3 cannot continue under the new circuits; drain it
 first. `ZkRequest::NodesFoldStep` carries `inner_proofs` and `slot_indices`, which changes its
 event-log encoding. The request is local-only and shares the **unreleased
-schema-9/protocol-9/generation-2 cutover**: this change raises no counter, and there is no migration
-or supported replay between intermediate builds. Rollback uses the prior backup or a controlled
-reset/resync, never an older binary on a journal that holds the new encoding.
+schema-9/protocol-10/generation-2 cutover**: this change raises no counter, and there is no
+migration or supported replay between intermediate builds. Rollback uses the prior backup or a
+controlled reset/resync, never an older binary on a journal that holds the new encoding.
 
 The cutover also carries chunked C4: the final C4 verifies one limb circuit per CRT limb. The C4 and
 `c4ab_fold` keys, the C4 branch of the VK tree, the nodes-tree anchor and the DKG verifier change,
@@ -250,7 +250,7 @@ verifier/artifact pair selections are unchanged. Existing chain records are not 
 application indexers retain frozen threshold-only v5/v1 reads, not active-E3 migration or old-format
 request admission. Storage schema 9, keyshare recovery 9, sortition recovery 2, and node-fold
 recovery 2 reject the previous layouts; gossip/sync majors stay unchanged because the changed
-request, selection, and proof-work payloads are local-only. The unreleased protocol 9/generation 2
+request, selection, and proof-work payloads are local-only. The unreleased protocol 10/generation 2
 target remains unchanged. [#2458](https://github.com/theinterfold/interfold/issues/2458) upgrades
 contracts, nodes, and applications together with no active E3s; reset/resync and rollback use the
 [existing state policy](#controlled-state-reset-never-directory-deletion), not active-E3 migration.
@@ -297,8 +297,71 @@ Resuming CRISP therefore requires a CRISP server release that accepts 3 and 4, a
 stay registered but inert, because the earlier implementation does not route them. The indexer
 resolves indices 3 and 4 only through a current profile identity. It reads indices 0, 1 and 2 from
 the append-only registry bytes and accepts only the frozen threshold-only ID of those exact bytes:
-v5 at indices 0 and 2, v1 at indices 0 and 1. `crates/bfv/params/tests/fixtures/bfv_protocol.json`
-freezes these vectors.
+v5 at indices 0 and 2, v1 at indices 0 and 1. E3s that the unreleased profile-aware build (the
+source just before the n = 45 search) requested at indices 0 and 2 carry committee-specific profile
+IDs, so the indexer skips their committee keys. That build was never tagged, live Sepolia and
+Mainnet hold only threshold-only history, and replay between intermediate builds is not supported,
+so that history is not preserved; a deployment that ran it must reset and resync.
+`crates/bfv/params/tests/fixtures/bfv_protocol.json` freezes these vectors.
+
+The Large committee slice routes `insecure-64/large` and `secure-8192/large` on Sepolia and local
+chains only; Mainnet routes and configuration are unchanged. A secure-8192 public-key aggregation
+(C5) at Large peaks above one 13 GiB prover slot: 14.3 GiB at 16 threads on Linux (16 threads, 32
+GiB host, bb 6.0.0), and 15.3 GiB under the `--slow_low_memory` retry. The scheduler gives that job
+two slots, or the whole pool on a host with fewer, and the retry keeps them. A node whose detected
+memory limit is below 28 GiB (the 4 GiB reserve, 8 GiB for a full router buffer, 16 GiB) refuses the
+job instead of risking an OOM kill. bb 6.0.0 aborts on an allocator assertion with four threads or
+fewer on that circuit, so the job always sets at least eight bb threads, overriding an inherited
+`HARDWARE_CONCURRENCY`, and is time-sliced on a smaller host. Four concurrent secure-Large rounds
+hold about 299 MiB of publications, so the publication outbox and its recovery limit are 512 MiB. On
+Sepolia, `upgrade:v19` deploys both routes and adds `setCommitteeThresholds(3, [34, 45])` from the
+configuration. The call follows the upgrade in the batch, because the earlier implementation reverts
+on size 3; `prepare` reads that revert as an unset threshold only for Large, the size this release
+adds. `upgrade:v19` does not change timeout windows. Live Sepolia holds `dkgWindow` 1800 s, and one
+Large node measured 1,213 s of DKG on 16 cores / 32 threads, so a Sepolia batch must add
+`setTimeoutConfig` with the configured windows, which raise `dkgWindow` to 7200 s for every Sepolia
+committee size; node checkpoints scale with it. A fresh deployment sets them from the configuration.
+`upgrade:v19:validate`, which `upgrade:v19:resume` runs first, compares `getTimeoutConfig()` with
+the configured windows and refuses while they differ. An owner that unpauses directly bypasses that
+check.
+
+Sepolia is normally redeployed for a release rather than upgraded in place; the in-place steps above
+apply only if it is upgraded instead. Either way, Large needs a CRISP program built against this
+release. Review of the recorded dev.3 CRISP deployment found that its `validate()` decodes the full
+`E3`, whose committee enum then ends at 2 (not checked from this repository), so a Large request
+would revert during creation even with 45 operators. Before Large is enabled on Sepolia, deploy
+CRISP (separate repository) against this release and complete a Large request through it; the
+registry tests use a mock program and do not cover this.
+
+The v19 batch upgrades two proxies: Interfold first, then `CiphernodeRegistryOwnable` through its
+own `ProxyAdmin`, before it sets the Large threshold. The registry's linked `DkgPublicationLib`
+decodes the full `E3` struct from `controller.getE3`, and an implementation compiled before Large
+rejects `committeeSize == 3` in that decode, so `publishCommittee` would revert for every Large E3.
+`prepare` deploys the registry implementation with `RegistrySortitionLib` and `DkgPublicationLib`
+linked, records it and the previous one in the plan, and checks that the protocol owner owns the
+registry `ProxyAdmin`. `validate` and `resume` refuse until the registry proxy runs the planned
+implementation with the planned `DkgPublicationLib`, and `--write-records` records both.
+
+Tag `v0.20.0-dev.3` already declared protocol 9, generation 2, and live Sepolia's
+`NodeReleaseRegistry` requires that pair, so a dev.3 node would count as release-ready after this
+cutover although it cannot read parameter sets 3 and 4 or the new encodings. This release therefore
+declares protocol 10: the Sepolia and Mainnet batches raise the required release, readiness counts
+only nodes that acknowledge it, and protocol 10 nodes form a libp2p network separate from protocol 9
+nodes. `--ciphernodes-restarted` still attests that operators run the new build. Live Sepolia also
+has fewer than 45 active operators, so Large requests revert with `InsufficientCiphernodes` until
+enough operators join. There, `upgrade:v19:resume`, `upgrade:node-release` resume and
+`upgrade:vrf-sortition:resume` take `--sepolia-committee-size` for a smaller gate.
+
+The 7200 s window rests on one node's DKG measurement; it does not qualify Large end to end. The
+nodes-fold step and the 23-leaf C6 Chonk stack are not measured at N = 45. The count budgets in
+`crates/net/src/ingress_limits.rs` and `crates/state/request/src/routing/event_buffer.rs` are now
+sized for four concurrent N = 45 E3s, but no capacity test exercises that load, and their byte
+ceilings are unchanged. Treat Large on Sepolia as a trial until those are measured.
+
+`CiphernodesCommitteeSize::Large` is an appended variant in the event log, keyshare pending payloads
+and threshold-keyshare recovery, so an older binary cannot read a journal that holds it. It shares
+the unreleased schema-9/protocol-10/generation-2 cutover: rollback uses the prior backup or a
+controlled reset/resync, and a set size-3 threshold cannot be cleared.
 
 The DKG runtime slice changes local C1/C2/C4 and native-generation request/response encodings,
 `ThresholdSharePending` (optional SS lane plus encrypted own rows), and keyshare recovery (optional
@@ -336,7 +399,7 @@ No deployed synchronized wrapper is supported.
 The contract-authority extension does not change old node payloads. Its native handoff follow-up
 appends `SynchronizedDkgContextEstablished` to the durable event enum; existing variant positions
 and SS encodings remain unchanged. A new binary reads those earlier encodings, but an older binary
-cannot read the new variant. This remains within the **unreleased schema-9, protocol-9/generation-2
+cannot read the new variant. This remains within the **unreleased schema-9, protocol-10/generation-2
 cutover**, with no additional counter change, active-state migration or supported rolling upgrade
 between intermediate builds. Drain/reset/resync and rollback retain the backup/reset requirements
 above; do not open new-variant journals with the previous binary.
@@ -346,7 +409,7 @@ without changing earlier discriminants. The jobs carry public child proofs, inde
 expectations and native PK bytes; recipient responses also carry setup anchors. These nested layouts
 can appear in durable compute requests, responses and errors, even though synchronized production
 admission is still disabled. Existing SS encodings remain readable; an older binary cannot decode
-the new variants. They share the **unreleased schema-9/protocol-9/generation-2 cutover**, not a new
+the new variants. They share the **unreleased schema-9/protocol-10/generation-2 cutover**, not a new
 counter bump, migration or rolling intermediate upgrade. Rollback uses the prior backup or
 controlled reset/resync, never an older binary on a new-variant journal. Explicit definition
 qualification does not enable production admission or qualify old-intermediate replay.
@@ -356,7 +419,7 @@ version-1 dealer record under `//synchronized_dkg/dealer/v1/{e3_id}`. It retains
 the local plan/context and completed output; it contains no plaintext keys. The owner writes and
 flushes this record directly before compute/output publication; snapshot batches never write this
 key. Restart allocates a fresh compute correlation and retains original proof bytes. These additions
-share the same **unreleased schema-9/protocol-9/generation-2 drain/reset cutover**. Existing event
+share the same **unreleased schema-9/protocol-10/generation-2 drain/reset cutover**. Existing event
 discriminants and SS recovery records remain unchanged; previous binaries cannot decode the new
 event, and rollback requires the prior backup or reset/resync. This local output is excluded from
 peer forwarding; that slice kept gossip/sync majors at 5/4. It changed no circuit, verifier or
@@ -365,7 +428,7 @@ contract encoding.
 The recipient follow-up appends local native-intent/setup-result events and a signed peer join
 event, and adds an exclusive version-1 recipient record under
 `//synchronized_dkg/recipient/v1/{e3_id}`. Existing discriminants, SS payloads and prior record
-layouts are unchanged. New events/records share the **unreleased schema-9/protocol-9/generation-2
+layouts are unchanged. New events/records share the **unreleased schema-9/protocol-10/generation-2
 drain/reset cutover**, without another counter bump or supported rolling intermediate upgrade. Old
 binaries cannot decode the appended variants; rollback requires the prior backup or controlled
 reset/resync, never old binaries on new journals. The record retains public proofs, native
@@ -391,7 +454,7 @@ recovery material now retains ordered native PK-share bytes. An exclusive versio
 lives at `synchronized-setup` within the existing per-E3 keyshare recovery-payload scope. It retains
 the local recipient verdict, selection, sealed material and original causal context; snapshot
 batches never write this key. It is flushed before consent and removed at terminal cleanup. These
-encodings extend the same **unreleased schema-9/protocol-9/generation-2 drain/reset cutover**. The
+encodings extend the same **unreleased schema-9/protocol-10/generation-2 drain/reset cutover**. The
 embedded optional material changes existing keyshare recovery-row encodings for SS too; sharing
 schema 9 does not make intermediate databases byte-compatible. Intermediate rolling upgrades and
 old-binary rollback over new journals remain unsupported. Rollback requires the prior backup or
@@ -465,13 +528,14 @@ work that it still owes. Retire a profile in this order:
 Step 3 changes the circuit source hash of every preset/committee pair, although no circuit and no
 configuration ID changes. The hash covers `crates/bfv/params/src`, where the flag lives, and the
 generated `packages/interfold-contracts/crypto-config.json`, which records it. The release workflow
-pulls only the circuit artifacts that carry the source hash of its commit, so rebuild all six pairs
-of `scripts/circuits/build-pairs.json` for that release, push them with `pnpm store:circuits push`
-and qualify them again (see the [circuit builder usage](../../scripts/circuits/README.md#usage)).
-Regenerate the sources with `pnpm generate:crypto-config`. `BfvProtocol.sol` retains exact identity
-constants even for disabled profiles; identity is not admission. `ActiveCryptoConfig.sol` must stop
-referencing retired identities in step 1. `pnpm check:crypto-config` checks all identity constants
-separately from exactly admitted request identities.
+pulls only the circuit artifacts that carry the source hash of its commit, so rebuild all eight
+pairs of `scripts/circuits/build-pairs.json` for that release, push them with
+`pnpm store:circuits push` and qualify them again (see the
+[circuit builder usage](../../scripts/circuits/README.md#usage)). Regenerate the sources with
+`pnpm generate:crypto-config`. `BfvProtocol.sol` retains exact identity constants even for disabled
+profiles; identity is not admission. `ActiveCryptoConfig.sol` must stop referencing retired
+identities in step 1. `pnpm check:crypto-config` checks all identity constants separately from
+exactly admitted request identities.
 
 If a node of that release still refuses to start, it still owes work under the profile, such as
 accusation or slashing work for a failed E3. Run the previous release until that work ends. Do not

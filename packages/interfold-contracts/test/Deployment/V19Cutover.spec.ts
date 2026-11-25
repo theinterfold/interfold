@@ -9,16 +9,25 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
+import { proxyAdminInterface } from "../../scripts/protocol/constants";
+import type { ProtocolDeployment } from "../../scripts/protocol/types";
+import { getProxyAdmin } from "../../scripts/proxy";
+import { deployUpgradeImplementation } from "../../scripts/upgrade/safeProxyUpgrade";
 import {
   BFV_SCHEME_ID,
+  SIZES_ADDED_BY_RELEASE,
   buildV19CutoverTransactions,
+  readCommitteeThreshold,
   readOpenVmIdentity,
+  requireTimeoutConfig,
+  requireV19RegistryUpgrade,
   resolveOpenVmCrisp,
 } from "../../scripts/upgrade/v19Cutover";
 import {
   Interfold__factory as InterfoldFactory,
   NodeReleaseRegistry__factory as NodeReleaseRegistryFactory,
 } from "../../types";
+import { ethers } from "../fixtures";
 
 const interfoldInterface = InterfoldFactory.createInterface();
 const releaseInterface = NodeReleaseRegistryFactory.createInterface();
@@ -32,8 +41,14 @@ function decisions() {
     interfold: addr(1),
     interfoldProxyAdmin: addr(2),
     interfoldImplementation: addr(3),
+    registry: addr(10),
+    registryProxyAdmin: addr(11),
+    registryImplementation: addr(12),
     paramSets: [{ index: 3, encoded: "0x1234" }],
-    committeeThresholds: [{ size: 2n, quorum: 9n, total: 20n }],
+    committeeThresholds: [
+      { size: 2n, quorum: 9n, total: 20n },
+      { size: 3n, quorum: 34n, total: 45n },
+    ],
     pkVerifier: addr(4),
     decryptionVerifier: addr(5),
     ciphertextVerifier: addr(6),
@@ -64,7 +79,9 @@ describe("v0.19 cutover", function () {
     const bindInterfold = ethersLib.id("bindInterfold(address)").slice(0, 10);
     expect(names(txs)).to.deep.equal([
       upgradeAndCall,
+      upgradeAndCall,
       "setParamSet",
+      "setCommitteeThresholds",
       "setCommitteeThresholds",
       "setPkVerifier",
       "setDecryptionVerifier",
@@ -76,9 +93,28 @@ describe("v0.19 cutover", function () {
     ]);
     expect(txs[0].to).to.equal(addr(2));
     expect(txs[txs.length - 1].to).to.equal(addr(9));
-    const pk = interfoldInterface.parseTransaction({ data: txs[3].data })!;
+    const pk = interfoldInterface.parseTransaction({ data: txs[5].data })!;
     expect(pk.args[0]).to.equal(BFV_SCHEME_ID);
     expect(pk.args[1]).to.equal(addr(4));
+  });
+
+  it("upgrades the registry right after Interfold and before the Large threshold", function () {
+    const txs = buildV19CutoverTransactions(decisions());
+    // A registry that predates `Large` rejects a size-3 E3 in its `E3` decode, so it must be
+    // replaced before governance can set the Large threshold.
+    const [interfoldUpgrade, registryUpgrade] = txs.slice(0, 2).map((tx) => ({
+      to: tx.to,
+      args: proxyAdminInterface.decodeFunctionData("upgradeAndCall", tx.data),
+    }));
+    expect(interfoldUpgrade.to).to.equal(addr(2));
+    expect([...interfoldUpgrade.args]).to.deep.equal([addr(1), addr(3), "0x"]);
+    expect(registryUpgrade.to).to.equal(addr(11));
+    expect([...registryUpgrade.args]).to.deep.equal([addr(10), addr(12), "0x"]);
+    const large = txs.findIndex((tx) => {
+      const parsed = interfoldInterface.parseTransaction({ data: tx.data });
+      return parsed?.name === "setCommitteeThresholds" && parsed.args[0] === 3n;
+    });
+    expect(large).to.be.greaterThan(1);
   });
 
   it("leaves out the steps that the chain already satisfies", function () {
@@ -92,7 +128,7 @@ describe("v0.19 cutover", function () {
       bindProgram: undefined,
       nodeRelease: undefined,
     });
-    expect(names(txs).slice(1)).to.deep.equal([
+    expect(names(txs).slice(2)).to.deep.equal([
       "setPkVerifier",
       "setDecryptionVerifier",
     ]);
@@ -114,6 +150,64 @@ describe("v0.19 cutover", function () {
         encoded: parsed!.args[1],
       }));
     expect(registered).to.deep.equal(paramSets);
+  });
+
+  it("rejects the old Sepolia DKG window against the shipped configuration", function () {
+    const configured = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/sepolia-protocol.config.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ).interfold.timeoutConfig;
+    // Live Sepolia before the cutover's `setTimeoutConfig`.
+    const live = {
+      dkgWindow: 1800n,
+      computeWindow: 604800n,
+      decryptionWindow: 21600n,
+    };
+    expect(() => requireTimeoutConfig(live, configured)).to.throw(
+      /dkgWindow is 1800 s; the configuration sets 7200 s/,
+    );
+    expect(() =>
+      requireTimeoutConfig({ ...live, dkgWindow: 7200n }, configured),
+    ).not.to.throw();
+  });
+
+  it("reads a committee size that the replaced implementation lacks as unset", async function () {
+    const reverting = (error: unknown) => async (): Promise<bigint> => {
+      throw error;
+    };
+    // Live Sepolia answers `committeeThresholds(3, …)` with an empty revert.
+    expect(
+      await readCommitteeThreshold(
+        reverting({ code: 3, data: "0x" }),
+        3n,
+        SIZES_ADDED_BY_RELEASE,
+      ),
+    ).to.equal(undefined);
+    // A size the replaced implementation already has must answer; an empty revert there is an error.
+    await expect(
+      readCommitteeThreshold(
+        reverting({ code: 3, data: "0x" }),
+        0n,
+        SIZES_ADDED_BY_RELEASE,
+      ),
+    ).to.be.rejected;
+    // A transport failure is not a missing function.
+    await expect(
+      readCommitteeThreshold(
+        reverting(new Error("RPC unavailable")),
+        3n,
+        SIZES_ADDED_BY_RELEASE,
+      ),
+    ).to.be.rejectedWith("RPC unavailable");
+    const live = async (index: bigint) => (index === 0n ? 34n : 45n);
+    expect(
+      await readCommitteeThreshold(live, 3n, SIZES_ADDED_BY_RELEASE),
+    ).to.deep.equal([34n, 45n]);
   });
 
   it("reads an OpenVM guest identity and refuses a malformed one", function () {
@@ -163,5 +257,63 @@ describe("v0.19 cutover", function () {
 
   it("requires the CRISP deployment record to be named", function () {
     expect(() => resolveOpenVmCrisp("mainnet")).to.throw("--crisp-deployments");
+  });
+
+  it("fails validation while the registry implementation is stale", async function () {
+    const [owner] = await ethers.getSigners();
+    const poseidon = await ethers.deployContract("PoseidonT3");
+    const deployment = {
+      poseidonT3: await poseidon.getAddress(),
+    } as ProtocolDeployment;
+    // Each call deploys fresh libraries, so the two implementations differ in address and links.
+    const stale = await deployUpgradeImplementation(
+      ethers,
+      owner,
+      "ciphernodeRegistry",
+      deployment,
+    );
+    const planned = await deployUpgradeImplementation(
+      ethers,
+      owner,
+      "ciphernodeRegistry",
+      deployment,
+    );
+    const proxy = await ethers.deployContract("TransparentUpgradeableProxy", [
+      stale.implementation,
+      owner.address,
+      "0x",
+    ]);
+    const registryProxy = await proxy.getAddress();
+    const plan = {
+      registryProxy,
+      registryImplementation: planned.implementation,
+      dkgPublicationLibrary: planned.dkgPublicationLibrary!,
+    };
+
+    await expect(requireV19RegistryUpgrade(ethers, plan)).to.be.rejectedWith(
+      "CiphernodeRegistry implementation mismatch",
+    );
+
+    const proxyAdmin = await ethers.getContractAt(
+      "ProxyAdmin",
+      await getProxyAdmin(ethers.provider, registryProxy),
+      owner,
+    );
+    await (
+      await proxyAdmin.upgradeAndCall(
+        registryProxy,
+        planned.implementation,
+        "0x",
+      )
+    ).wait();
+    await requireV19RegistryUpgrade(ethers, plan);
+
+    // The planned library must be the one that the implementation links.
+    await expect(
+      requireV19RegistryUpgrade(ethers, {
+        ...plan,
+        dkgPublicationLibrary: stale.dkgPublicationLibrary!,
+      }),
+    ).to.be.rejectedWith("registry DkgPublicationLib link mismatch");
   });
 });

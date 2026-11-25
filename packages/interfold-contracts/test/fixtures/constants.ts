@@ -94,6 +94,8 @@ export const COMMITTEE_SIZE_MINIMUM = 0;
 export const COMMITTEE_SIZE_MICRO = 1;
 /** N=19, T=9, H=14. */
 export const COMMITTEE_SIZE_SMALL = 2;
+/** N=45, T=22, H=34. */
+export const COMMITTEE_SIZE_LARGE = 3;
 
 /**
  * Canonical on-chain thresholds: `[H, N]` (required honest roster and committee
@@ -120,6 +122,7 @@ export const COMMITTEE_THRESHOLDS_ONCHAIN: ReadonlyArray<
   [COMMITTEE_SIZE_MINIMUM, [2, 3]],
   [COMMITTEE_SIZE_MICRO, [5, 9]],
   [COMMITTEE_SIZE_SMALL, [14, 19]],
+  [COMMITTEE_SIZE_LARGE, [34, 45]],
 ];
 
 /** Single-size fixture used by sortition / pricing smoke tests. */

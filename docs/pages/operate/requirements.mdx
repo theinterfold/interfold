@@ -63,6 +63,12 @@ lower than the requested value, the node logs
 | 17 GiB to less than 30 GiB | 1                                |
 | 30 GiB or more             | 2 (the default request)          |
 
+The 4 GiB reserve covers the node's typical memory, not its worst case. Its buffer limits are
+ceilings: up to 6 GiB of deferred protocol events, 2 GiB of DHT replicas and 512 MiB of pending
+publications, plus about 6.5 GiB of baseline and allocator overhead. A node at the minimum can run
+out of memory if those buffers fill while a prover job runs, for example with several concurrent
+`large` E3s. Leave headroom above the table's thresholds if you serve `large` committees.
+
 When the memory limit is too small for one job, startup stops with this error:
 
 ```text
@@ -71,7 +77,11 @@ the detected memory limit cannot safely run one prover job in addition to the no
 
 The node proves its share-encryption (C3) proofs, a large batch of small proofs, up to four at a
 time, each with a quarter of the threads. Four of them take the place of every job the limit admits,
-so nothing else runs beside them. Every other job counts as one full job.
+so nothing else runs beside them. The aggregator's public-key aggregation proof for a secure-8192
+Large committee needs about 14–15 GiB, so it counts as two jobs. On a node that admits only one, it
+runs alone; below a 28 GiB memory limit (which also counts a full event buffer) the node refuses it
+instead. It always runs with at least eight threads, because the prover fails with four or fewer.
+Every other job counts as one full job.
 
 The node never admits more jobs than the memory limit allows, also when you set a higher
 `multithread_concurrent_jobs`. You can set the value in the configuration file or with the

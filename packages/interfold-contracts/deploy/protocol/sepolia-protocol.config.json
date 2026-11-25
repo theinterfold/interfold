@@ -43,7 +43,7 @@
     "maxDuration": "2592000",
     "markFailedGracePeriod": "3600",
     "timeoutConfig": {
-      "dkgWindow": "1200",
+      "dkgWindow": "7200",
       "computeWindow": "604800",
       "decryptionWindow": "21600"
     },
@@ -80,6 +80,11 @@
         "size": "2",
         "quorum": "14",
         "total": "19"
+      },
+      {
+        "size": "3",
+        "quorum": "34",
+        "total": "45"
       }
     ],
     "registerActiveBfvParamSet": true,

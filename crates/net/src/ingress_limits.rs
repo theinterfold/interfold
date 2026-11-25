@@ -4,9 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Capacity planning for four concurrent N=19, H=14 committees, with a 2x margin.
+//! Capacity planning for four concurrent committees of the largest supported size (N=45, H=34),
+//! with a 2x margin. Smaller committees use a fraction of these budgets.
 
-pub(crate) const COMMITTEE_SIZE: usize = 19;
+pub(crate) const COMMITTEE_SIZE: usize = 45;
 const CONCURRENT_E3S: usize = 4;
 const MARGIN: usize = 2;
 // C0 keys, recipient C2/C3 bundles, and C4 bundles.
@@ -17,11 +18,16 @@ const PUBLICATION_ROUND: usize = CONCURRENT_E3S * PUBLICATIONS_PER_E3 * MARGIN;
 // Reserve the initial round and the three retries before the five-minute retry interval.
 pub(crate) const SEEN_BURST: usize = 4 * PUBLICATION_ROUND;
 pub(crate) const SEEN_RATE: usize = PUBLICATION_ROUND.div_ceil(5 * 60);
-// A node holds the replicas of the documents of the other dealers: with replication factor 20
-// and committees of 19, every node is among the closest peers of every key.
+// A node holds the replicas of the documents of the other dealers. With replication factor 20 and
+// N=45, a node is among the closest peers of only some keys, but it may be among them for all of a
+// dealer's documents, so the full per-dealer and per-E3 document counts remain upper bounds.
 const DOCUMENTS_PER_DEALER: usize = DOCUMENTS_PER_E3 / COMMITTEE_SIZE;
 pub(crate) const REPLICAS_PER_PEER: usize = DOCUMENTS_PER_DEALER * CONCURRENT_E3S * MARGIN;
 pub(crate) const REPLICAS: usize = DOCUMENTS_PER_E3 * CONCURRENT_E3S * MARGIN;
+// One node's pending publications for an E3: its documents, its nine per-party publications, and, as
+// aggregator, the roster and public-key result. At N=19 this gave 248, the outbox's former 256.
+pub(crate) const PENDING_PUBLICATIONS: usize =
+    ((DOCUMENTS_PER_DEALER + 9 + 2) * CONCURRENT_E3S * MARGIN).next_power_of_two();
 /// A memory ceiling, not the whole load: four E3s of threshold-share documents near their
 /// historical 1.78 MB need about 2.3 GB of replicas, so at that load a node keeps the newest 2 GiB
 /// and evicts the oldest. The dealers keep their own documents, and other closest peers keep

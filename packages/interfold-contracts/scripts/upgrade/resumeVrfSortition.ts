@@ -2,7 +2,7 @@
 import path from "node:path";
 
 import { assertRefreshedOwnerCapacity } from "../../tasks/committeeCapacity";
-import { connect, hasFlag } from "../protocol/cli";
+import { arg, connect, hasFlag } from "../protocol/cli";
 import {
   deploymentPath,
   governanceSafeBuilderPath,
@@ -31,6 +31,7 @@ import type {
 } from "../protocol/types";
 import { loadConfig, requireContract } from "../protocol/values";
 import { proxyImplementation } from "./safeProxyUpgrade";
+import { requiredActiveOperators } from "./v19Cutover";
 
 function upgradePlanPath(name: string): string {
   return path.join(protocolDir, `${name}.vrf-sortition.upgrade.json`);
@@ -141,12 +142,10 @@ export async function prepareVrfSortitionResume(): Promise<void> {
       `interfold.nodeReleaseRegistry: expected ${plan.nodeReleaseRegistry}, got ${configuredNodeRelease}`,
     );
   }
-  const requiredActiveNodes = config.interfold.committeeThresholds.reduce(
-    (maximum, threshold) => {
-      const total = BigInt(threshold.total);
-      return total > maximum ? total : maximum;
-    },
-    0n,
+  const requiredActiveNodes = requiredActiveOperators(
+    config.interfold.committeeThresholds,
+    config.chainId,
+    arg("sepolia-committee-size"),
   );
   const activeNodes = await bonding.numActiveOperators();
   if (activeNodes < requiredActiveNodes) {

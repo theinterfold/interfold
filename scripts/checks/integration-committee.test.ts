@@ -54,9 +54,9 @@ check_committee_sizes "$2" "$3"
     const result = check('true', size)
     assert.equal(result.status, 0, result.stderr + result.stdout)
     assert.match(result.stdout, new RegExp(`configured committee sizes \\[${size}\\]`))
-    assert.notEqual(check('true', '0 1 2').status, 0)
+    assert.notEqual(check('true', '0 1 2 3').status, 0)
   }
-  assert.equal(check('false', '0 1 2').status, 0)
+  assert.equal(check('false', '0 1 2 3').status, 0)
   assert.notEqual(check('false', '0').status, 0)
   select('unknown')
   assert.notEqual(check('true', '0').status, 0)

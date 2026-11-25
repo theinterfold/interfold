@@ -23,7 +23,6 @@ use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_events::trap_fut;
 
-#[cfg(test)]
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::EType;
 use e3_events::{
@@ -33,7 +32,6 @@ use e3_events::{
 };
 #[cfg(test)]
 use e3_events::{PkBfvProofRequest, VerifyShareProofsRequest};
-#[cfg(test)]
 use e3_fhe_params::BfvProfile;
 #[cfg(test)]
 use e3_trbfv::TrBFVFailure;
@@ -190,16 +188,58 @@ impl Multithread {
 /// threads, split evenly.
 const LIGHT_JOBS_AT_ONCE: u32 = 4;
 
+/// Slots a secure-8192 public-key aggregation (C5) takes at the Large committee. Its `bb prove`
+/// peaked at 14.3 GiB on Linux (16 threads, 32 GiB host), over one [`PROVER_JOB_MEMORY`] slot,
+/// and `--slow_low_memory` (the retry) uses more, 15.3 GiB.
+///
+/// [`PROVER_JOB_MEMORY`]: crate::PROVER_JOB_MEMORY_BYTES
+const SECURE_LARGE_C5_SLOTS: u32 = 2;
+
+/// Fewest bb threads for a secure-Large C5: bb 6.0.0 aborts on an allocator assertion with four
+/// threads or fewer on that circuit. The job always sets its thread count, so an inherited
+/// `HARDWARE_CONCURRENCY` cannot lower it; on a smaller pool bb time-slices, slower but correct.
+const SECURE_LARGE_C5_MIN_THREADS: usize = 8;
+
+/// Memory a secure-Large C5 needs beside the node: its retry peaked at 15.3 GiB, and the router's
+/// deferred-event buffer can hold 6 GiB (7.7 GiB resident when full, measured on Linux).
+const SECURE_LARGE_C5_MEMORY_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const ROUTER_BUFFER_RESIDENT_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
+fn is_secure_large_c5(request: &ComputeRequestKind) -> bool {
+    matches!(request, ComputeRequestKind::Zk(ZkRequest::PkAggregation(request))
+        if request.params_profile == BfvProfile::SsSecure8192
+            && request.committee_h == CiphernodesCommitteeSize::Large.values().h)
+}
+
+/// Why this host cannot prove `request`, when it is a secure-Large C5 and the detected memory limit
+/// (host or cgroup) is below the node reserve, a full router buffer and the C5 peak together. An
+/// undetected limit passes.
+fn c5_memory_shortfall(request: &ComputeRequestKind, limit: Option<u64>) -> Option<String> {
+    let needed = crate::NODE_MEMORY_RESERVE_BYTES
+        + ROUTER_BUFFER_RESIDENT_BYTES
+        + SECURE_LARGE_C5_MEMORY_BYTES;
+    let limit = limit.filter(|limit| is_secure_large_c5(request) && *limit < needed)?;
+    Some(format!(
+        "secure-8192 Large public-key aggregation needs {needed} bytes of memory with the node \
+         reserve and a full event buffer; the detected limit is {limit}"
+    ))
+}
+
 /// Admission units and bb threads for a request. A node proves its C3 share encryptions as one
 /// batch of small proofs, and four of them at once, each on a quarter of the threads, prove the
 /// batch faster than one at a time on every thread. A C3 job takes a quarter of the pool's units,
-/// so at most four run at once and nothing else is admitted beside them. Every other job takes one
-/// slot and every thread, as before.
+/// so at most four run at once and nothing else is admitted beside them. A secure-Large C5 takes
+/// two slots, or the whole pool where it has fewer (the pool clamps the units). Every other job
+/// takes one slot and every thread.
 fn job_weight(request: &ComputeRequestKind, pool: &TaskPool) -> (u32, Option<usize>) {
     match request {
         ComputeRequestKind::Zk(ZkRequest::ShareEncryption(_)) => (
             pool.capacity_units() / LIGHT_JOBS_AT_ONCE,
             Some(pool.threads() / LIGHT_JOBS_AT_ONCE as usize),
+        ),
+        request if is_secure_large_c5(request) => (
+            SECURE_LARGE_C5_SLOTS * e3_task_pool::SLOT_UNITS,
+            Some(pool.threads().max(SECURE_LARGE_C5_MIN_THREADS)),
         ),
         _ => (e3_task_pool::SLOT_UNITS, None),
     }
@@ -462,6 +502,41 @@ mod task_group_tests {
         assert_eq!(compute_retry_delay(100), Duration::from_secs(300));
     }
 
+    #[test]
+    fn a_secure_large_c5_takes_two_slots_and_at_least_eight_threads() {
+        let c5 = |params_profile, committee: CiphernodesCommitteeSize| {
+            let values = committee.values();
+            ComputeRequestKind::Zk(ZkRequest::PkAggregation(
+                e3_events::PkAggregationProofRequest {
+                    keyshare_bytes: Vec::new(),
+                    aggregated_pk_bytes: e3_utils::ArcBytes::default(),
+                    params_profile,
+                    committee_n: values.n,
+                    committee_h: values.h,
+                    committee_threshold: values.threshold,
+                },
+            ))
+        };
+        let small_pool = TaskPool::new(4, 2);
+        let large_pool = TaskPool::new(16, 2);
+        let slot = e3_task_pool::SLOT_UNITS;
+        let secure_large = c5(BfvProfile::SsSecure8192, CiphernodesCommitteeSize::Large);
+
+        assert_eq!(job_weight(&secure_large, &small_pool), (2 * slot, Some(8)));
+        assert_eq!(job_weight(&secure_large, &large_pool), (2 * slot, Some(16)));
+        let gib = 1024 * 1024 * 1024;
+        assert!(c5_memory_shortfall(&secure_large, Some(20 * gib)).is_some());
+        assert!(c5_memory_shortfall(&secure_large, Some(28 * gib)).is_none());
+        assert!(c5_memory_shortfall(&secure_large, None).is_none());
+        for other in [
+            c5(BfvProfile::SsSecure8192, CiphernodesCommitteeSize::Small),
+            c5(BfvProfile::SsInsecure64, CiphernodesCommitteeSize::Large),
+        ] {
+            assert_eq!(job_weight(&other, &small_pool), (slot, None));
+            assert!(c5_memory_shortfall(&other, Some(17 * gib)).is_none());
+        }
+    }
+
     #[actix::test]
     async fn superseded_attempt_interrupts_worker_retry_without_cancelling_its_e3() {
         let pool = TaskPool::new(1, 1);
@@ -690,6 +765,25 @@ async fn handle_compute_request_event(
 
     let is_zk = matches!(&request_snapshot.request, ComputeRequestKind::Zk(_));
     let (units, light_job_threads) = job_weight(&request_snapshot.request, &pool);
+    let memory_limit = crate::memory::effective_memory_limit_bytes();
+    if let Some(reason) = c5_memory_shortfall(&request_snapshot.request, memory_limit) {
+        // Running it would risk an OOM kill of the whole node; another aggregator can take over.
+        error!(request = %msg_string, %reason, "Refusing a compute request this host cannot fit");
+        publish_compute_outcome(
+            &bus,
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(reason)),
+                request_snapshot,
+            )
+            .into(),
+            ctx,
+            &pool,
+            &task_group,
+            &mut cancellation,
+        )
+        .await?;
+        return Ok(());
+    }
     let retries_local_worker_failures =
         is_zk || is_retryable_trbfv_request(&request_snapshot.request);
     let mut attempt = 1usize;

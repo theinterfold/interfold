@@ -16,7 +16,7 @@
         {
           "name": "DocumentPublisher",
           "role": "Announces the documents this node publishes (DHT store plus gossip notice), uploads replicas, and fetches documents that peers name.",
-          "ref": "crates/net/src/document_publishing/actor.rs@148@pub struct DocumentPublisher {"
+          "ref": "crates/net/src/document_publishing/actor.rs@150@pub struct DocumentPublisher {"
         },
         {
           "name": "NetEventTranslator",
@@ -127,7 +127,7 @@
         {
           "name": "publications waiting to be announced and uploaded",
           "where": "memory",
-          "ref": "crates/net/src/document_publishing/actor.rs@163@publications: HashMap<DocumentId, Publication>,"
+          "ref": "crates/net/src/document_publishing/actor.rs@165@publications: HashMap<DocumentId, Publication>,"
         },
         {
           "name": "documents received after restart, kept until SyncEnded",
@@ -228,12 +228,12 @@
         {
           "pattern": "actix-message",
           "note": "A private message type that carries a publication key into the actor.",
-          "ref": "crates/net/src/document_publishing/actor.rs@94@struct AnnounceDocument(DocumentId);"
+          "ref": "crates/net/src/document_publishing/actor.rs@96@struct AnnounceDocument(DocumentId);"
         },
         {
           "pattern": "tokio-spawn",
           "note": "A tokio task forwards broadcast NetEvents into the actor mailbox.",
-          "ref": "crates/net/src/document_publishing/actor.rs@340@tokio::spawn({"
+          "ref": "crates/net/src/document_publishing/actor.rs@342@tokio::spawn({"
         },
         {
           "pattern": "derive-macro",

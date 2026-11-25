@@ -10,13 +10,13 @@ use e3_utils::AsBytesSerde;
 use e3_zk_config::DkgInputType;
 
 const MIB: usize = 1024 * 1024;
-const N: usize = 19;
-const H: usize = 14;
+const N: usize = 45;
+const H: usize = 34;
 const LIMBS: usize = secure_8192::threshold::MODULI.len();
 const ROW: usize = secure_8192::DEGREE * 8;
 const THRESHOLD_POLY: usize = LIMBS * ROW;
 const DKG_POLY: usize = secure_8192::dkg::MODULI.len() * ROW;
-const COMMITTEE: CiphernodesCommitteeSize = CiphernodesCommitteeSize::Small;
+const COMMITTEE: CiphernodesCommitteeSize = CiphernodesCommitteeSize::Large;
 
 // Each call owns new, nonzero storage. The extra 64 bytes cover encoding and AEAD headers.
 // These are size fixtures for the router, not cryptographic proof fixtures.
@@ -245,7 +245,10 @@ async fn secure_history(router: &Addr<E3Router>, id: &E3id) -> Result<()> {
         early_bytes +=
             send_documented(router, id, &mut sequence, peer_share(id, party, true), true).await;
     }
-    assert!(early_bytes < 80 * MIB);
+    assert!(
+        early_bytes < 256 * MIB,
+        "before selection: {early_bytes} bytes"
+    );
     late_bytes += send_data(
         router,
         &mut sequence,
@@ -363,7 +366,10 @@ async fn secure_history(router: &Addr<E3Router>, id: &E3id) -> Result<()> {
         )
         .await;
     }
-    assert!(late_bytes < 512 * MIB, "secure history: {late_bytes} bytes");
+    assert!(
+        late_bytes < 1280 * MIB,
+        "secure history: {late_bytes} bytes"
+    );
     println!("secure history {id}: {sequence} records, {late_bytes} late bytes, {early_bytes} bytes before local selection");
     Ok(())
 }
@@ -430,7 +436,7 @@ async fn allocated_histories_fit_and_default_bytes_isolate_overflow() -> Result<
             "capacity histories must own distinct resident payloads"
         );
         assert!(
-            resident < 2560 * MIB,
+            resident < 6144 * MIB,
             "four legitimate histories need memory margin"
         );
     }
@@ -440,7 +446,7 @@ async fn allocated_histories_fit_and_default_bytes_isolate_overflow() -> Result<
 
     // Exercise the shipped byte budgets, with one missing recipient and independently allocated data.
     // Four queues reach the global budget while every individual queue stays below its own budget.
-    for (queues, entries, overflowed) in [(1, 64, 0), (4, 47, 3)] {
+    for (queues, entries, overflowed) in [(1, 128, 0), (4, 95, 3)] {
         let store = DataStore::from_in_mem(&InMemStore::new(false).start());
         let recorder = Recorder::default().start();
         let router =
@@ -473,13 +479,13 @@ async fn allocated_histories_fit_and_default_bytes_isolate_overflow() -> Result<
             println!("{queues} saturated queues: {resident} resident bytes above baseline");
             if queues == 4 {
                 assert!(
-                    resident > 2816 * MIB,
+                    resident > 5632 * MIB,
                     "saturation must use distinct resident payloads"
                 );
             }
             assert!(
-                memory_bytes("VmHWM:").saturating_sub(baseline) < 4608 * MIB,
-                "router memory must leave headroom on an 8 GiB node"
+                memory_bytes("VmHWM:").saturating_sub(baseline) < 9216 * MIB,
+                "router memory must leave headroom in the node's 12.5 GiB process budget"
             );
         }
         let failed = &ids[overflowed];
@@ -525,7 +531,7 @@ async fn allocated_histories_fit_and_default_bytes_isolate_overflow() -> Result<
     let healthy = E3id::new("72", 1);
     route(&router, admission(&failed)).await;
     let mut encoded_bytes = 0;
-    for sequence in 2..=65 {
+    for sequence in 2..=129 {
         let event = InterfoldEvent::<Sequenced>::test_event("capacity")
             .data(DecryptionshareCreated {
                 e3_id: failed.clone(),
@@ -539,16 +545,16 @@ async fn allocated_histories_fit_and_default_bytes_isolate_overflow() -> Result<
         encoded_bytes += bincode::serialized_size(&event)?;
         route(&router, event).await;
     }
-    assert!(encoded_bytes < 128 * MIB as u64);
+    assert!(encoded_bytes < 256 * MIB as u64);
     route(&router, admission(&healthy)).await;
     route(&router, share(&healthy, 2)).await;
     route(&router, attach(&healthy, 3)).await;
     assert_eq!(recorder.send(Recorded(healthy)).await?, [1, 2, 3]);
-    route(&router, attach(&failed, 66)).await;
-    route(&router, share(&failed, 67)).await;
+    route(&router, attach(&failed, 130)).await;
+    route(&router, share(&failed, 131)).await;
     assert_eq!(
         recorder.send(Recorded(failed)).await?,
-        [66, 67],
+        [130, 131],
         "nested allocations must fail only their deferred queue"
     );
     #[cfg(target_os = "linux")]
@@ -556,8 +562,8 @@ async fn allocated_histories_fit_and_default_bytes_isolate_overflow() -> Result<
         let peak = memory_bytes("VmHWM:").saturating_sub(baseline);
         println!("peak resident growth including overflow and draining: {peak} bytes");
         assert!(
-            peak < 4608 * MIB,
-            "router memory must leave headroom on an 8 GiB node"
+            peak < 9216 * MIB,
+            "router memory must leave headroom in the node's 12.5 GiB process budget"
         );
     }
     Ok(())
