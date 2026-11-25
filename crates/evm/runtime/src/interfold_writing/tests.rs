@@ -224,14 +224,26 @@ async fn submit_mailbox_rechecks_synchronized_authority_before_any_chain_call() 
     // issue a stage preflight and settle on this reply; the synchronized branch must hold it.
     rpc.push_success(&Bytes::from(U256::from(5).to_be_bytes::<32>().to_vec()));
     let stale = intent(&id, &keys, 19);
-    writer.publication.record(id.clone(), stale);
+    writer.publication.record(
+        id.clone(),
+        super::handlers::SubmitPlaintext {
+            protocol: BfvDecryptionProtocol::Synchronized,
+            intent: stale,
+        },
+    );
     writer.publication.enable_effects();
     let command = writer.publication.start(&id).unwrap();
     let writer = writer.start();
-    writer
-        .send(super::handlers::SubmitPlaintext(command))
-        .await?;
+    writer.send(command.clone()).await?;
     assert_eq!(writer.send(PlaintextWork).await?, (0, 1));
+    keys.remove(&id);
+    writer.send(command.clone()).await?;
+    assert_eq!(writer.send(PlaintextWork).await?, (0, 1));
+    // Even a present SS key cannot redirect a previously admitted synchronized intent. This
+    // is a known mismatch, so release the slot rather than retrying it as missing authority.
+    keys.insert(id.clone(), key())?;
+    writer.send(command).await?;
+    assert_eq!(writer.send(PlaintextWork).await?, (0, 0));
     assert_eq!(rpc.read_q().len(), 1, "unexpected chain call");
     Ok(())
 }

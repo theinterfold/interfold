@@ -4,6 +4,7 @@
 
 use super::*;
 use alloy::sol_types::SolError;
+use anyhow::Context as _;
 use e3_events::{AggregateId, CorrelationId, EventSource, EventStoreQueryResponse};
 use std::ops::RangeInclusive;
 
@@ -265,6 +266,60 @@ pub(in crate::actors::interfold_sol_writer) async fn publish_plaintext_output<
     .await
 }
 
+#[derive(Debug)]
+pub(super) enum RejectedSynchronizedIntent {
+    Domain,
+    Proof,
+}
+
+impl std::fmt::Display for RejectedSynchronizedIntent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Domain => "synchronized plaintext differs from confirmed request",
+            Self::Proof => "synchronized plaintext proof rejected by the verifier",
+        })
+    }
+}
+impl std::error::Error for RejectedSynchronizedIntent {}
+
+fn check_synchronized_intent(
+    intent: &PlaintextAggregated,
+    keys: &CanonicalPublicKeys,
+    contract: Address,
+) -> Result<()> {
+    let unavailable = "synchronized plaintext authority is unavailable";
+    let key = keys.get(&intent.e3_id).context(unavailable)?;
+    anyhow::ensure!(
+        key.params_profile == e3_fhe_params::BfvProfile::SyncDecInsecure64
+            && plaintext_has_canonical_domain(intent, &key, keys, contract).context(unavailable)?,
+        RejectedSynchronizedIntent::Domain
+    );
+    Ok(())
+}
+
+// Only structured verifier reverts from the publication call reject a proof. Missing setup,
+// an unknown revert, an ambiguous receipt or an RPC message containing a selector can retry.
+fn classify_plaintext_revert(error: anyhow::Error) -> anyhow::Error {
+    use e3_evm_contracts::decryption_errors::{
+        DecryptionHonk::DecryptionHonkErrors,
+        SynchronizedDecryptionVerifier::SynchronizedDecryptionVerifierErrors,
+    };
+    if error.chain().any(|cause| {
+        cause
+            .downcast_ref::<alloy::contract::Error>()
+            .is_some_and(|e| {
+                e.as_decoded_interface_error::<SynchronizedDecryptionVerifierErrors>()
+                    .is_some()
+                    || e.as_decoded_interface_error::<DecryptionHonkErrors>()
+                        .is_some()
+            })
+    }) {
+        error.context(RejectedSynchronizedIntent::Proof)
+    } else {
+        error
+    }
+}
+
 /// Request-bound writer effect, callable below disabled admission for qualification. Returning
 /// None means the E3 is already terminal or past its frozen publication window.
 pub async fn publish_synchronized_plaintext_definition<P: Provider + WalletProvider + Clone>(
@@ -275,13 +330,10 @@ pub async fn publish_synchronized_plaintext_definition<P: Provider + WalletProvi
 ) -> Result<Option<TransactionReceipt>> {
     let id = &intent.e3_id;
     anyhow::ensure!(
-        provider.chain_id() == id.chain_id()
-            && keys
-                .get(id)
-                .is_some_and(|k| k.params_profile == e3_fhe_params::BfvProfile::SyncDecInsecure64)
-            && plaintext_has_canonical_domain(intent, keys, contract) == Some(true),
-        "synchronized plaintext differs from confirmed request"
+        provider.chain_id() == id.chain_id(),
+        "writer provider differs from confirmed request chain"
     );
+    check_synchronized_intent(intent, keys, contract)?;
     match should_publish_plaintext(provider.clone(), contract, id.clone()).await? {
         PlaintextPublication::Done => return Ok(None),
         PlaintextPublication::NotYet => anyhow::bail!("chain not yet at CiphertextReady"),
@@ -291,10 +343,7 @@ pub async fn publish_synchronized_plaintext_definition<P: Provider + WalletProvi
     if now > deadline {
         return Ok(None);
     }
-    anyhow::ensure!(
-        plaintext_has_canonical_domain(intent, keys, contract) == Some(true),
-        "synchronized plaintext authority retired"
-    );
+    check_synchronized_intent(intent, keys, contract)?;
     Ok(Some(
         publish_plaintext_output(
             provider,
@@ -303,7 +352,8 @@ pub async fn publish_synchronized_plaintext_definition<P: Provider + WalletProvi
             intent.decrypted_output[0].to_vec(),
             intent.decryption_aggregator_proofs.first(),
         )
-        .await?,
+        .await
+        .map_err(classify_plaintext_revert)?,
     ))
 }
 
@@ -496,6 +546,31 @@ mod tests {
     fn rpc_error(response: &str) -> alloy::contract::Error {
         let error = TransportError::ErrorResp(serde_json::from_str(response).unwrap());
         alloy::contract::Error::TransportError(error)
+    }
+
+    #[test]
+    fn only_a_verifier_rejection_releases_a_synchronized_proof() {
+        use super::{classify_plaintext_revert, RejectedSynchronizedIntent};
+        use e3_evm_contracts::decryption_errors::{DecryptionHonk, SynchronizedDecryptionVerifier};
+        let rejected = |error: alloy::contract::Error| {
+            classify_plaintext_revert(anyhow::Error::new(error).context("publishPlaintextOutput"))
+                .is::<RejectedSynchronizedIntent>()
+        };
+        assert!(rejected(eth_call_revert(
+            SynchronizedDecryptionVerifier::InvalidProof::SELECTOR,
+            0
+        )));
+        let length = DecryptionHonk::ProofLengthWrongWithLogN::SELECTOR;
+        assert!(rejected(eth_call_revert(length, 3)));
+        assert!(!rejected(eth_call_revert(length, 0))); // incomplete revert data
+        assert!(!rejected(eth_call_revert(
+            IInterfold::InvalidStage::SELECTOR,
+            3
+        )));
+        assert!(!rejected(rpc_error(&format!(
+            r#"{{"code":-32005,"message":"rate limited","data":"0x{}"}}"#,
+            hex::encode(SynchronizedDecryptionVerifier::InvalidProof::SELECTOR)
+        ))));
     }
 
     #[test]

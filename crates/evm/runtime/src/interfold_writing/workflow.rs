@@ -12,7 +12,7 @@
 
 use alloy::primitives::{Address, U256};
 use e3_events::{E3Stage, E3id, PlaintextAggregated, Proof};
-use e3_request::canonical_key::CanonicalPublicKeys;
+use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
 use e3_utils::{backoff_delay, utility_types::ArcBytes};
 use e3_zk_config::CircuitName;
 use std::collections::HashMap;
@@ -21,10 +21,10 @@ use std::time::Duration;
 /// Missing authority defers admission. A mismatched final domain discards the intent.
 pub(crate) fn plaintext_has_canonical_domain(
     intent: &PlaintextAggregated,
+    key: &CanonicalPublicKey,
     keys: &CanonicalPublicKeys,
     interfold_address: Address,
 ) -> Option<bool> {
-    let key = keys.get(&intent.e3_id)?;
     if key.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
         if key.interfold_address != interfold_address {
             return Some(false);

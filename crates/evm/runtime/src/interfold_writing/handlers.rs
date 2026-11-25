@@ -22,9 +22,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
         if self.terminal_e3s.contains(&intent.e3_id) {
             return true;
         }
-        if self
-            .canonical_keys
-            .get(&intent.e3_id)
+        let key = self.canonical_keys.get(&intent.e3_id);
+        if key
+            .as_ref()
             .is_some_and(|key| !key.params_profile.admission_enabled())
         {
             return true;
@@ -37,8 +37,20 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
             tracing::warn!(e3_id = %intent.e3_id, %error, "Discarding invalid plaintext publication intent");
             return true;
         }
-        match plaintext_has_canonical_domain(&intent, &self.canonical_keys, self.contract_address) {
-            Some(true) => self.publication.record(intent.e3_id.clone(), intent),
+        let Some(key) = key else { return false };
+        match plaintext_has_canonical_domain(
+            &intent,
+            &key,
+            &self.canonical_keys,
+            self.contract_address,
+        ) {
+            Some(true) => self.publication.record(
+                intent.e3_id.clone(),
+                SubmitPlaintext {
+                    protocol: key.params_profile.protocol(),
+                    intent,
+                },
+            ),
             Some(false) => {
                 tracing::warn!(e3_id = %intent.e3_id, "Discarding plaintext publication intent with a noncanonical domain");
             }
@@ -55,8 +67,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
         if self.terminal_e3s.contains(e3_id) {
             return;
         }
-        if let Some(intent) = self.publication.start(e3_id) {
-            ctx.notify(SubmitPlaintext(intent));
+        if let Some(command) = self.publication.start(e3_id) {
+            ctx.notify(command);
         }
     }
 
@@ -353,9 +365,14 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
     }
 }
 
-#[derive(Message)]
+// Local teardown can release canonical keys before an admitted SS publication finishes.
+// Keep the admitted route so a missing key can never redirect a synchronized intent to SS.
+#[derive(Clone, Message)]
 #[rtype(result = "()")]
-pub(super) struct SubmitPlaintext(pub(super) PlaintextAggregated);
+pub(super) struct SubmitPlaintext {
+    pub(super) protocol: BfvDecryptionProtocol,
+    pub(super) intent: PlaintextAggregated,
+}
 
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPlaintext>
     for InterfoldSolWriter<P>
@@ -363,7 +380,10 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPlaintext>
     type Result = ResponseActFuture<Self, ()>;
 
     fn handle(&mut self, command: SubmitPlaintext, _ctx: &mut Self::Context) -> Self::Result {
-        let msg = command.0;
+        let SubmitPlaintext {
+            protocol,
+            intent: msg,
+        } = command;
         if !self.publication.contains(&msg.e3_id) {
             self.publication.finish(&msg.e3_id, false);
             return Box::pin(async {}.into_actor(self));
@@ -376,15 +396,16 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPlaintext>
         let keys = self.canonical_keys.clone();
         Box::pin(
             async move {
-                let Some(key) = keys.get(&e3_id) else {
-                    return (e3_id, false);
-                };
-                if key.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized {
+                if protocol == BfvDecryptionProtocol::Synchronized {
                     let result = publish_synchronized_plaintext_definition(provider, &keys, contract_address, &msg).await;
-                    let settled = result.is_ok();
-                    if let Err(error) = result {
-                        bus.err(EType::Evm, error);
-                    }
+                    let settled = match result {
+                        Ok(_) => true,
+                        Err(error) => {
+                            let rejected = error.is::<RejectedSynchronizedIntent>();
+                            bus.err(EType::Evm, error);
+                            rejected
+                        }
+                    };
                     return (e3_id, settled);
                 }
                 // The event can represent multiple ciphertext outputs, but the contract accepts one
@@ -925,6 +946,21 @@ mod tests {
             }
             // A mailbox barrier completes event routing before effects resume.
             writer.send(E3RequestComplete { e3_id: id.clone() }).await?;
+            if !authority_after_replay {
+                // The SS intent has already passed canonical admission. Local teardown drops
+                // the projection before its first submit; only the chain can settle the intent.
+                crate::canonical_key::CanonicalKeyProjection::new(
+                    keys.clone(),
+                    HashMap::from([(1, contract)]),
+                )
+                .attach(&bus)
+                .await?;
+                let complete = bus.event_from(E3RequestComplete { e3_id: id.clone() }, None)?;
+                bus.event_bus()
+                    .send(EventBusFanout(complete.into_sequenced(3)))
+                    .await??;
+                assert!(keys.get(&id).is_none());
+            }
             assert!(
                 captured.lock().unwrap().is_empty(),
                 "replay released a transaction"

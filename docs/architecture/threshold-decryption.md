@@ -152,6 +152,12 @@ unrelated E3s do not rescan it. Reject mismatches and allow corrected intents. C
 stages retire pending work and reject later intents; local completion alone does not prove that the
 result landed.
 
+The writer retains the admitted protocol with the intent. An SS intent that already passed the
+domain check can still submit after local cleanup releases the key. A synchronized intent instead
+rechecks the current opening at submission. Missing authority or an ambiguous RPC outcome leaves it
+pending; a confirmed domain mismatch or a decoded proof-data rejection releases its slot for a
+subsequent corrected intent.
+
 After `EffectsEnabled`, the writer checks chain state, coalesces the first admitted local intent,
 and calls permissionless `publishPlaintextOutput`. The contract requires `CiphertextReady`,
 inclusive decryption deadline, currently viable request-time committee, and mandatory final

@@ -31,6 +31,7 @@ use e3_events::{
     PlaintextAggregated, Proof, SeqAgg, Shutdown, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_evm_transactions::require_successful_receipt;
+use e3_fhe_params::BfvDecryptionProtocol;
 use e3_request::canonical_key::CanonicalPublicKeys;
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
 use std::collections::{HashMap, HashSet};
@@ -53,7 +54,7 @@ pub struct InterfoldSolWriter<P> {
     contract_address: Address,
     bus: BusHandle,
     effects_enabled: bool,
-    publication: ReplaySubmissionGate<E3id, PlaintextAggregated>,
+    publication: ReplaySubmissionGate<E3id, handlers::SubmitPlaintext>,
     canonical_keys: CanonicalPublicKeys,
     eventstore: Recipient<EventStoreQueryBy<SeqAgg>>,
     deferred_plaintexts: HashMap<E3id, std::ops::RangeInclusive<u64>>,
