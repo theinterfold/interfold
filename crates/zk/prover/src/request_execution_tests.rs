@@ -568,9 +568,9 @@ async fn proof_work_rejects_disabled_profiles_before_witness_or_verifier_access(
             committee_size: committee,
         }),
         ZkRequest::NodesFoldStep(NodesFoldStepRequest {
-            inner_proof: proof(),
+            inner_proofs: vec![proof()],
             prior_accumulator: None,
-            slot_index: 0,
+            slot_indices: vec![0],
             total_slots: 0,
             e3_id: "7".into(),
             params_profile: profile,
@@ -728,10 +728,11 @@ async fn execution_rejects_a_native_request_without_touching_its_secret() {
     );
 }
 
-/// A secret-shared C2 proof passes only when its trailing key tree hashes this node's chunk keys,
-/// through the public C2 verifier and the peer handler alike. A synchronized C2 has no key tree.
+/// A secret-shared C2 or C4 proof passes only when its trailing key tree hashes this node's chunk
+/// keys, through the public verifier and the peer handler alike. A synchronized C2 or C4 has no key
+/// tree.
 #[test]
-fn both_c2_verifiers_reject_a_key_tree_other_than_this_nodes() {
+fn both_chunked_verifiers_reject_a_key_tree_other_than_this_nodes() {
     use ark_ff::{BigInteger, PrimeField};
     use e3_fhe_params::BfvProfile;
     use e3_zk_config::CircuitName;
@@ -760,65 +761,76 @@ fn both_c2_verifiers_reject_a_key_tree_other_than_this_nodes() {
     );
     let prover = ZkProver::new(&backend);
     let artifacts_dir = "insecure-64/minimum";
-    let circuit = CircuitName::SkShareComputation;
-    let outer = prover
-        .circuits_dir(CircuitVariant::Recursive, artifacts_dir)
-        .join(circuit.dir_path());
-    fs::create_dir_all(&outer).unwrap();
-    fs::write(outer.join(format!("{}.vk", circuit.as_str())), [0u8; 32]).unwrap();
-    let chunks = crate::circuits::aggregation::chain_keys::chunk_circuits(circuit).unwrap();
-    for (i, chunk) in chunks.iter().enumerate() {
-        let dir = prover
-            .circuits_dir(CircuitVariant::Default, artifacts_dir)
-            .join(chunk.dir_path());
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(format!("{}.vk", chunk.as_str())), [0u8; 32]).unwrap();
-        fs::write(
-            dir.join(format!("{}.vk_hash", chunk.as_str())),
-            field_bytes(ark_bn254::Fr::from(i as u64 + 1)),
-        )
-        .unwrap();
-    }
-    let tree = e3_zk_witness::compute_vk_hash(vec![1u64.into(), 2u64.into()]);
-    let proof = |key_tree: ark_bn254::Fr| {
-        let mut signals = field_bytes(7u64.into());
-        signals.extend(field_bytes(key_tree));
-        Proof::new(
-            circuit,
-            ArcBytes::from_bytes(&[0u8; 8]),
-            ArcBytes::from_bytes(&signals),
-        )
-    };
-    let other = tree + ark_bn254::Fr::from(1u64);
+    for circuit in [
+        CircuitName::SkShareComputation,
+        CircuitName::DkgShareDecryption,
+    ] {
+        let outer = prover
+            .circuits_dir(CircuitVariant::Recursive, artifacts_dir)
+            .join(circuit.dir_path());
+        fs::create_dir_all(&outer).unwrap();
+        fs::write(outer.join(format!("{}.vk", circuit.as_str())), [0u8; 32]).unwrap();
+        let chunks = crate::circuits::aggregation::chain_keys::chunk_circuits(circuit).unwrap();
+        let mut hashes = Vec::with_capacity(chunks.len());
+        for (i, chunk) in chunks.iter().enumerate() {
+            let dir = prover
+                .circuits_dir(CircuitVariant::Default, artifacts_dir)
+                .join(chunk.dir_path());
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join(format!("{}.vk", chunk.as_str())), [0u8; 32]).unwrap();
+            let hash = ark_bn254::Fr::from(i as u64 + 1);
+            fs::write(
+                dir.join(format!("{}.vk_hash", chunk.as_str())),
+                field_bytes(hash),
+            )
+            .unwrap();
+            hashes.push(hash);
+        }
+        let tree = e3_zk_witness::compute_vk_hash(hashes);
+        let proof = |key_tree: ark_bn254::Fr| {
+            let mut signals = field_bytes(7u64.into());
+            signals.extend(field_bytes(key_tree));
+            Proof::new(
+                circuit,
+                ArcBytes::from_bytes(&[0u8; 8]),
+                ArcBytes::from_bytes(&signals),
+            )
+        };
+        let other = tree + ark_bn254::Fr::from(1u64);
 
-    for (key_tree, accepted) in [(tree, true), (other, false)] {
-        let proof = proof(key_tree);
-        assert_eq!(
-            ShareComputationCircuit
-                .verify(&prover, &proof, "e3-1", 1, artifacts_dir)
+        for (key_tree, accepted) in [(tree, true), (other, false)] {
+            let proof = proof(key_tree);
+            let public = if circuit == CircuitName::DkgShareDecryption {
+                ShareDecryptionCircuit.verify(&prover, &proof, "e3-1", 1, artifacts_dir)
+            } else {
+                ShareComputationCircuit.verify(&prover, &proof, "e3-1", 1, artifacts_dir)
+            };
+            assert_eq!(public.unwrap(), accepted, "{circuit}");
+            assert_eq!(
+                zk_verify_share_proof_bundle(
+                    &prover,
+                    BfvProfile::SsInsecure64,
+                    &proof,
+                    "e3-1",
+                    1,
+                    artifacts_dir
+                )
                 .unwrap(),
-            accepted
-        );
-        assert_eq!(
+                accepted,
+                "{circuit}"
+            );
+        }
+        assert!(
             zk_verify_share_proof_bundle(
                 &prover,
-                BfvProfile::SsInsecure64,
-                &proof,
+                BfvProfile::SyncDecInsecure64,
+                &proof(other),
                 "e3-1",
                 1,
                 artifacts_dir
             )
             .unwrap(),
-            accepted
+            "{circuit}"
         );
     }
-    assert!(zk_verify_share_proof_bundle(
-        &prover,
-        BfvProfile::SyncDecInsecure64,
-        &proof(other),
-        "e3-1",
-        1,
-        artifacts_dir
-    )
-    .unwrap());
 }

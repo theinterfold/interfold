@@ -11,8 +11,8 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
         "../../../../../circuits/benchmarks/config.json"
     ))
     .unwrap();
-    assert_eq!(config.select("secure", &[]).unwrap().len(), 15);
-    assert_eq!(config.select("insecure", &[]).unwrap().len(), 14);
+    assert_eq!(config.select("secure", &[]).unwrap().len(), 18);
+    assert_eq!(config.select("insecure", &[]).unwrap().len(), 17);
     assert!(config.select("insecure", &["config".into()]).is_err());
     assert!(config
         .select("secure", &["threshold/missing".into()])
@@ -30,13 +30,16 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
 }
 
 #[test]
-fn c2_chunk_cases_always_run_in_the_default_variant() {
+fn chunk_and_limb_cases_always_run_in_the_default_variant() {
     use e3_zk_config::{CircuitName, CircuitVariant};
     for chunk in [
         CircuitName::SkShareComputationChain,
         CircuitName::SkShareComputationChainLast,
         CircuitName::ESmShareComputationChain,
         CircuitName::ESmShareComputationChainLast,
+        CircuitName::DkgShareDecryptionLimb0,
+        CircuitName::DkgShareDecryptionLimb1,
+        CircuitName::DkgShareDecryptionLimb2,
     ] {
         for requested in [
             CircuitVariant::Recursive,
@@ -49,10 +52,11 @@ fn c2_chunk_cases_always_run_in_the_default_variant() {
             assert_eq!(record.variant, "default");
         }
     }
-    // Every other case, the final C2 circuits included, runs in the requested variant.
+    // Every other case, the final C2 and C4 circuits included, runs in the requested variant.
     for case in [
         Case::Named(CircuitName::SkShareComputation),
         Case::Named(CircuitName::ESmShareComputation),
+        Case::Named(CircuitName::DkgShareDecryption),
         Case::Named(CircuitName::PkBfv),
         Case::Ude,
     ] {

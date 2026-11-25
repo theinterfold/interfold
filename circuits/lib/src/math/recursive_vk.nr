@@ -4,8 +4,6 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::math::commitments::compute_vk_hash;
-
 /// Keep the leaf, fold, and kernel VK hashes constant throughout a sequential fold.
 pub fn predecessor_key_hash(
     inner_key_hash: Field,
@@ -20,15 +18,6 @@ pub fn predecessor_key_hash(
     } else {
         fold_key_hash
     }
-}
-
-/// Commit to the ordered fold, kernel, and leaf verification keys.
-pub fn sequential_fold_vk_hash(
-    fold_key_hash: Field,
-    kernel_key_hash: Field,
-    inner_key_hash: Field,
-) -> Field {
-    compute_vk_hash([fold_key_hash, kernel_key_hash, inner_key_hash].as_vector())
 }
 
 #[test]

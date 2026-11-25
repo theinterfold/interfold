@@ -37,8 +37,8 @@
     "id": "D3",
     "supported": true,
     "refs": [
-      "circuits/bin/recursive_aggregation/c4ab_fold/src/main.nr@30@verify_honk_proof(c4a_vk, c4a_proof",
-      "circuits/bin/recursive_aggregation/c4ab_fold/src/main.nr@31@verify_honk_proof(c4b_vk, c4b_proof"
+      "circuits/bin/recursive_aggregation/c4ab_fold/src/main.nr@32@verify_honk_proof(c4a_vk, c4a_proof",
+      "circuits/bin/recursive_aggregation/c4ab_fold/src/main.nr@33@verify_honk_proof(c4b_vk, c4b_proof"
     ],
     "line_text": [
       "verify_honk_proof(c4a_vk, c4a_proof, c4a_public, c4a_key_hash);",
@@ -50,28 +50,28 @@
     "id": "D4",
     "supported": true,
     "refs": [
-      "circuits/bin/recursive_aggregation/c6_fold/src/main.nr@43@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs",
-      "circuits/bin/recursive_aggregation/c6_fold/src/main.nr@52@verify_honk_proof_non_zk(acc_vk, acc_proof",
-      "circuits/bin/recursive_aggregation/c6_fold_kernel/src/main.nr@40@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs",
-      "crates/zk/prover/src/circuits/aggregation/c6_accumulator.rs@121@if proof.circuit != CircuitName::ThresholdShareDecryption {"
+      "circuits/bin/chonk/c6_chonk_app/src/main.nr@30@verify_honk_proof(leaf_vk, proofs[k], c6_public_inputs[k]",
+      "circuits/bin/recursive_aggregation/c6_chonk_tube/src/main.nr@22@std::verify_proof_with_type(",
+      "circuits/bin/recursive_aggregation/c6_chonk_root/src/main.nr@30@verify_root_rolluphonk_proof(tube_vk, tube_proofs[k]",
+      "crates/zk/prover/src/circuits/aggregation/c6_chonk.rs@30@if proof.circuit != CircuitName::ThresholdShareDecryption {"
     ],
     "line_text": [
-      "verify_honk_proof(inner_vk, inner_proof, c6_public_inputs, inner_key_hash);",
-      "verify_honk_proof_non_zk(acc_vk, acc_proof, acc_public_inputs, acc_key_hash);",
-      "verify_honk_proof(inner_vk, inner_proof, c6_public_inputs, inner_key_hash);",
+      "verify_honk_proof(leaf_vk, proofs[k], c6_public_inputs[k], leaf_key_hash);",
+      "std::verify_proof_with_type(",
+      "verify_root_rolluphonk_proof(tube_vk, tube_proofs[k], tube_publics[k], tube_key);",
       "if proof.circuit != CircuitName::ThresholdShareDecryption {"
     ],
-    "note": "c6_fold verifies each inner ThresholdShareDecryption (C6) proof plus the previous accumulator, and c6_fold_kernel verifies only the inner C6 proof for the genesis step."
+    "note": "c6_chonk_app verifies all T + 1 C6 proofs of a decryption in one Chonk stack; c6_chonk_tube verifies the stack's Chonk proof as a rollup and c6_chonk_root closes its IPA claim (taking the tube twice, as a root rollup closes two claims). The prover's c6_chonk module drives it."
   },
   {
     "id": "D5",
     "supported": true,
     "refs": [
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@107@verify_honk_proof(c0_vk, c0_proof",
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@108@verify_honk_proof(c1_vk, c1_proof",
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@109@verify_honk_proof_non_zk(c2ab_vk, c2ab_proof",
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@110@verify_honk_proof_non_zk(c3ab_vk, c3ab_proof",
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@111@verify_honk_proof_non_zk(c4ab_vk, c4ab_proof"
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@111@verify_honk_proof(c0_vk, c0_proof",
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@112@verify_honk_proof(c1_vk, c1_proof",
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@113@verify_honk_proof_non_zk(c2ab_vk, c2ab_proof",
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@114@verify_honk_proof_non_zk(c3ab_vk, c3ab_proof",
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@115@verify_honk_proof_non_zk(c4ab_vk, c4ab_proof"
     ],
     "line_text": [
       "verify_honk_proof(c0_vk, c0_proof, c0_public, c0_key_hash);",
@@ -86,35 +86,35 @@
     "id": "D6",
     "supported": true,
     "refs": [
-      "circuits/bin/recursive_aggregation/nodes_fold/src/main.nr@49@inner_proof,",
-      "circuits/bin/recursive_aggregation/nodes_fold/src/main.nr@61@verify_honk_proof_non_zk(acc_vk, acc_proof",
-      "circuits/bin/recursive_aggregation/nodes_fold_kernel/src/main.nr@46@inner_proof,"
+      "circuits/bin/recursive_aggregation/nodes_fold/src/main.nr@55@inner_proofs[k],",
+      "circuits/bin/recursive_aggregation/nodes_fold/src/main.nr@68@verify_honk_proof_non_zk(acc_vk, acc_proof",
+      "circuits/bin/recursive_aggregation/nodes_fold_kernel/src/main.nr@51@inner_proofs[k],"
     ],
-    "line_text": ["inner_proof,", "verify_honk_proof_non_zk(acc_vk, acc_proof, acc_public_inputs, acc_key_hash);", "inner_proof,"],
-    "note": "nodes_fold verifies one node_fold proof per step plus the previous accumulator over the H rows, and nodes_fold_kernel verifies only the inner node_fold proof for the genesis step."
+    "line_text": ["inner_proofs[k],", "verify_honk_proof_non_zk(acc_vk, acc_proof, acc_public_inputs, acc_key_hash);", "inner_proofs[k],"],
+    "note": "nodes_fold verifies three node_fold proofs per step plus the previous accumulator over the H rows, and nodes_fold_kernel verifies only its three node_fold proofs."
   },
   {
     "id": "D7",
     "supported": true,
     "refs": [
-      "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@74@nodes_fold_proof,",
-      "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@78@verify_honk_proof_non_zk(c5_vk, c5_proof"
+      "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@75@nodes_fold_proof,",
+      "circuits/bin/recursive_aggregation/dkg_aggregator/src/main.nr@79@verify_honk_proof_non_zk(c5_vk, c5_proof"
     ],
     "line_text": ["nodes_fold_proof,", "verify_honk_proof_non_zk(c5_vk, c5_proof, c5_public, c5_key_hash);"],
-    "note": "dkg_aggregator verifies the nodes_fold proof (argument at line 74) and the C5 PkAggregation proof (line 78), so C5 is in the final DKG proof."
+    "note": "dkg_aggregator verifies the nodes_fold proof (argument at line 75) and the C5 PkAggregation proof (line 79), so C5 is in the final DKG proof."
   },
   {
     "id": "D8",
     "supported": true,
     "refs": [
-      "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@89@verify_honk_proof_non_zk(c6_fold_vk, c6_fold_proof",
-      "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@90@verify_honk_proof_non_zk(c7_vk, c7_proof"
+      "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@85@verify_honk_proof_non_zk(c6_root_vk, c6_root_proof",
+      "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@86@verify_honk_proof_non_zk(c7_vk, c7_proof"
     ],
     "line_text": [
-      "verify_honk_proof_non_zk(c6_fold_vk, c6_fold_proof, c6_fold_public, c6_fold_vk_hash);",
+      "verify_honk_proof_non_zk(c6_root_vk, c6_root_proof, c6_root_public, c6_root_vk_hash);",
       "verify_honk_proof_non_zk(c7_vk, c7_proof, c7_public, c7_key_hash);"
     ],
-    "note": "decryption_aggregator verifies the c6_fold proof (line 89) and the C7 decrypted-shares aggregation proof (line 90), so C7 is in the final decryption proof."
+    "note": "decryption_aggregator verifies the c6_chonk_root proof and the C7 decrypted-shares aggregation proof, so C7 is in the final decryption proof."
   },
   {
     "id": "D9",
@@ -133,7 +133,7 @@
     "refs": [
       "packages/interfold-contracts/contracts/Interfold.sol@487@address(e3.decryptionVerifier),",
       "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@332@IDecryptionVerifier(verifierAddress).verify(",
-      "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@218@circuitVerifier.verify(rawProof, publicInputs)",
+      "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@223@circuitVerifier.verify(rawProof, publicInputs)",
       "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3248@contract DecryptionAggregatorVerifier is"
     ],
     "line_text": [
@@ -142,7 +142,7 @@
       "if (!circuitVerifier.verify(rawProof, publicInputs)) {",
       "contract DecryptionAggregatorVerifier is"
     ],
-    "note": "Interfold passes its decryption verifier to InterfoldLifecycle, which calls verify (line 332), and BfvDecryptionVerifier forwards the proof to the DecryptionAggregatorVerifier Honk contract (line 218)."
+    "note": "Interfold passes its decryption verifier to InterfoldLifecycle, which calls verify (line 332), and BfvDecryptionVerifier forwards the proof to the DecryptionAggregatorVerifier Honk contract (line 223)."
   },
   {
     "id": "D12",
@@ -198,7 +198,7 @@
     "refs": [
       "crates/orchestration/aggregator/src/public_key_aggregation/state.rs@76@GeneratingC5Proof {",
       "crates/orchestration/aggregator/src/public_key_aggregation/handlers.rs@189@if !self.can_continue_aggregation_effects() {",
-      "crates/orchestration/aggregator/src/public_key_aggregation/actor.rs@146@fn can_continue_aggregation_effects",
+      "crates/orchestration/aggregator/src/public_key_aggregation/actor.rs@153@fn can_continue_aggregation_effects",
       "crates/orchestration/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@373@Publishing PkAggregationProofPending for C5 proof generation",
       "crates/orchestration/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@375@PkAggregationProofPending {",
       "crates/zk/prover/src/proof_request/effects/aggregation_proofs.rs@39@ZkRequest::PkAggregation(msg.proof_request)"

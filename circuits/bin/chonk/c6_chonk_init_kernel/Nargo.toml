@@ -1,5 +1,5 @@
 [package]
-name = "c6_fold"
+name = "c6_chonk_init_kernel"
 type = "bin"
 authors = ["Gnosis Guild / Interfold"]
 

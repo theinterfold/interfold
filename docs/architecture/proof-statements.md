@@ -16,7 +16,7 @@ audit remediation is not completeness evidence.
 | C1      | Threshold public share derives from SK; integer smudging bound is enforced; output commits to SK, PK, and ESM residues.                                                                   |
 | C2a/C2b | Correct Shamir splitting of SK/ESM, linked to C1 secrets. Proven as a chunk chain whose final proof keeps C2's commitments.                                                               |
 | C3a/C3b | Correct recipient encryption of those shares under the C0 key, linked to C2 messages.                                                                                                     |
-| C4a/C4b | The H selected received shares open their C2 commitments and form the normalized summed SK/ESM anchors.                                                                                   |
+| C4a/C4b | The H selected received shares open their C2 commitments and form the normalized summed SK/ESM anchors. Proven one CRT limb per proof under a final proof that keeps C4's commitment.     |
 | C5      | Aggregate PK derives from exactly the H canonical dealer shares.                                                                                                                          |
 | C6      | The decryption share derives from the anchored SK/ESM and ciphertext, in one canonical E3 domain. Full `d` enters Fiat-Shamir; the C7-facing commitment binds the configured native tail. |
 | C7      | Exactly T+1 distinct ordered shares reconstruct every claimed message coefficient, including zeros.                                                                                       |
@@ -473,15 +473,24 @@ CRT reconstruction. Host validation is not a substitute for those circuit constr
 
 ## Recursive trust and exported values
 
-Sequential C6 and nodes folds keep `(leaf, fold, kernel)` VK hashes constant across predecessors.
-The kernel proves the chain's first leaf at that leaf's slot; every fold step carries its
-predecessor's rows forward, the kernel's included, and adds one leaf to an empty slot. A chain of
-`n >= 2` leaves is one kernel and `n - 1` fold proofs. The first step verifies the kernel;
-continuation verifies the fold; the final consumer binds the declared fold hash to the verified VK.
-C3ab covers both complete C3 chains. Node-fold covers child folds and their nested keys. DKG
-aggregation requires one node-tree hash across every selected row.
+The sequential nodes fold keeps `(leaf, fold, kernel)` VK hashes constant across predecessors. The
+kernel proves the chain's first leaves at their slots; every fold step carries its predecessor's
+rows forward, the kernel's included, and adds up to three leaves to empty slots. The first step
+verifies the kernel; continuation verifies the fold; the final consumer binds the declared fold hash
+to the verified VK. C3ab covers both complete C3 chains. Node-fold covers child folds and their
+nested keys. DKG aggregation requires one node-tree hash across every selected row.
 
-C3 chains run over Chonk (`lib::math::chonk`) instead. A stack is `c3_chonk_app`, which verifies
+`nodes_fold_kernel` and `nodes_fold` verify three `node_fold` proofs per step
+(`lib::math::nodes_fold`); a row must be all zero before it is written. An empty place in a step
+carries slot `H`: it must still verify a `node_fold` proof but writes nothing, and the prover pads
+with `total_slots`, which equals the circuit's `H`. Each node statement carries every party's rows,
+so a fourth node takes a step past 2^22 gates (4.28M at 39 parties), while three stay within it. The
+aggregator streams the steps: each `NodesFoldStepRequest` takes the next slots in canonical order
+once all their proofs are buffered, and `nodes_fold_step_len` fixes that count so the dispatcher and
+its response handler agree without extra state. A chain of at most three nodes splits one and the
+rest, so it never ends on the kernel.
+
+C3 chains run over Chonk (`lib::math::chonk`). A stack is `c3_chonk_app`, which verifies
 `C3_CHONK_LEAVES` (24) C3 proofs, then the init, tail and hiding kernels; `c3_chonk_tube` verifies
 the stack's Chonk proof as a rollup proof, and `c3_chonk_accumulate` merges an accumulator or tube
 on the left with a tube on the right. `c3ab_fold` verifies each chain's last accumulator as a root
@@ -500,6 +509,18 @@ proof that verifies under the leaf key; the prover repeats the stack's first lea
 does not require that choice, and the place adds no row. Within a stack every written slot must be
 empty, and merging rejects a slot filled on both sides, so no row is overwritten or duplicated.
 
+A decryption's C6 proofs run over the same Chonk stack design, all in one stack: `c6_chonk_app`
+verifies all `T + 1` of them, checks they share the first leaf's domain and places their sk, esm, ct
+and d commitments by slot (`lib::math::c6_chonk_rows`), so `T + 1` must stay within the stack's
+ECCVM bound (24 C3-sized proofs). `c6_chonk_tube` verifies the stack as a rollup proof and
+`c6_chonk_root` closes its IPA claim. A root rollup closes exactly two claims, so the root takes the
+tube twice under the tube key and states only the first; its final IPA check fails unless both
+claims are valid. The root ends by exposing the hash of the tube's seven key hashes before the data.
+The decryption aggregator verifies the root and requires `hash(root key, key-list hash)` to equal
+the anchored C6 tree, and the ciphertext commitment in every slot, so no slot stays empty. The C6
+tree anchor keeps the retired `c6_fold` artifact path, which `BfvDecryptionVerifier` deployments
+read.
+
 The trust tree uses ordered SAFE `DS_VK_HASH` hashing:
 
 ```text
@@ -508,10 +529,12 @@ C2b chain  = hash(e_sm_share_computation_chain, e_sm_share_computation_chain_las
 C2 tree    = hash(C2a, C2a chain, C2b, C2b chain)
 C3 chain   = hash(c3_chonk_accumulate, c3_chonk_tube, hiding kernel, C3, app, init, tail)
 C3 tree    = hash(C3a chain, C3b chain)
-C4 tree    = hash(C4a, C4b)
+C4 chain   = hash(share_decryption_limb_0, share_decryption_limb_1, share_decryption_limb_2)
+C4 tree    = hash(C4a, C4 chain, C4b, C4 chain)
 node tree  = hash(C0, C1, c2ab_fold, C2 tree, c3ab_fold, C3 tree, c4ab_fold, C4 tree)
 nodes tree = hash(nodes_fold, nodes_fold_kernel, node_fold, node tree)
-C6 tree    = hash(c6_fold, c6_fold_kernel, C6)
+C6 chain   = hash(c6_chonk_tube, c6_chonk_tube, hiding kernel, C6, app, init, tail)
+C6 tree    = hash(c6_chonk_root, C6 chain)
 ```
 
 Final public input zero is the complete nodes/C6 tree, pinned immutably from `.vk_tree_hash`, not
@@ -561,6 +584,22 @@ keys (`zk_verify_share_proof_bundle`); the proof alone does not pin them.
 
 The chunk circuits are proven non-ZK and only verified inside the final circuit, so the build
 publishes them in the `default` variant alone; the final circuits keep every variant.
+
+## Chunked C4
+
+C4's openings and sums are independent per CRT limb, and the aggregate commitment C6 reads is one
+SAFE sponge over the normalized limbs in order. So limb `l`'s proof runs C4's statement for that
+limb (`aggregate_limb`: open every honest party's limb-`l` share commitment with checked packing,
+sum, reverse and center) and continues the aggregate sponge from the state limb `l - 1` left; the
+last limb squeezes the unchunked C4 commitment. Each limb packs into its own carriers and can start
+mid-block, and its start position follows from the limb index, so each limb has its own circuit.
+
+The final `share_decryption` circuit verifies the three limb proofs, each with its own key, links
+them from the fresh aggregate sponge (`DS_SHARE_DECRYPTION_CHAIN_STATE`), and returns the aggregate
+commitment then the hash of the limb keys. `c4ab_fold` folds that hash into the VK tree; a peer
+verifying a C4 directly compares it with its own limb keys (`zk_verify_share_proof_bundle`). The
+limb circuits are proven non-ZK and only verified inside the final circuit, so the build publishes
+them in the `default` variant alone.
 
 ## Evidence and change review
 

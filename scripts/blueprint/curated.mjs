@@ -607,7 +607,7 @@ function circuits() {
         title: 'c4ab_fold',
         lines: ['C4a + C4b'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/c4ab_fold/src/main.nr@30@verify_honk_proof(c4a_vk, c4a_proof`,
+        ref: `${CIR}/recursive_aggregation/c4ab_fold/src/main.nr@32@verify_honk_proof(c4a_vk, c4a_proof`,
       },
       {
         id: 'node',
@@ -618,7 +618,7 @@ function circuits() {
         title: 'node_fold',
         lines: ['one proof per member:', 'C0 · C1 · c2ab', 'c3ab · c4ab'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/node_fold/src/main.nr@107@verify_honk_proof(c0_vk, c0_proof`,
+        ref: `${CIR}/recursive_aggregation/node_fold/src/main.nr@111@verify_honk_proof(c0_vk, c0_proof`,
       },
       {
         id: 'c5',
@@ -640,7 +640,7 @@ function circuits() {
         title: 'nodes_fold',
         lines: ["all H members' node proofs"],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/nodes_fold/src/main.nr@61@verify_honk_proof_non_zk(acc_vk, acc_proof`,
+        ref: `${CIR}/recursive_aggregation/nodes_fold/src/main.nr@68@verify_honk_proof_non_zk(acc_vk, acc_proof`,
       },
       {
         id: 'dkgagg',
@@ -651,7 +651,7 @@ function circuits() {
         title: 'dkg_aggregator',
         lines: ['nodes_fold + C5', 'one DKG proof'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/dkg_aggregator/src/main.nr@78@verify_honk_proof_non_zk(c5_vk, c5_proof`,
+        ref: `${CIR}/recursive_aggregation/dkg_aggregator/src/main.nr@79@verify_honk_proof_non_zk(c5_vk, c5_proof`,
       },
       {
         id: 'dkgver',
@@ -672,10 +672,10 @@ function circuits() {
         y: 820,
         w: 320,
         h: 80,
-        title: 'c6_fold',
+        title: 'C6 Chonk → c6_chonk_root',
         lines: ['C6 of the T + 1 selected members'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/c6_fold/src/main.nr@43@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs`,
+        ref: `${CIR}/chonk/c6_chonk_app/src/main.nr@30@verify_honk_proof(leaf_vk, proofs[k], c6_public_inputs[k]`,
       },
       {
         id: 'c7',
@@ -695,9 +695,9 @@ function circuits() {
         w: 280,
         h: 220,
         title: 'decryption_aggregator',
-        lines: ['c6_fold + C7', 'one decryption proof'],
+        lines: ['C6 root + C7', 'one decryption proof'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/decryption_aggregator/src/main.nr@89@verify_honk_proof_non_zk(c6_fold_vk, c6_fold_proof`,
+        ref: `${CIR}/recursive_aggregation/decryption_aggregator/src/main.nr@85@verify_honk_proof_non_zk(c6_root_vk, c6_root_proof`,
       },
       {
         id: 'decver',
@@ -750,7 +750,7 @@ function circuits() {
       { from: 'c5', to: 'dkgagg', fs: 'r', ts: 'l', ta: 0.25, refs: ev('D7', 'D14') },
       { from: 'dkgagg', to: 'dkgver', fs: 'r', ts: 'l', tip: 'Checked in publishCommittee, through BfvPkVerifier', refs: ev('D9') },
       { from: 'c6', to: 'c6f', fs: 'r', ts: 'l', refs: ev('D4', 'D16') },
-      { from: 'c6f', to: 'decagg', fs: 'r', ts: 'l', ta: (860 - 780) / 220, label: 'folded C6', refs: ev('D8') },
+      { from: 'c6f', to: 'decagg', fs: 'r', ts: 'l', ta: (860 - 780) / 220, label: 'C6 root', refs: ev('D8') },
       { from: 'c7', to: 'decagg', fs: 'r', ts: 'l', ta: (955 - 780) / 220, refs: ev('D8', 'D15') },
       {
         from: 'decagg',

@@ -17,6 +17,7 @@ pub use crate::circuits::aggregation::c3_chonk::{
     generate_c3_chonk_accumulate, generate_c3_chonk_chain_with_substituted_key,
     generate_c3_chonk_tubes,
 };
+pub use crate::circuits::aggregation::c6_chonk::generate_c6_chonk_root_with_substituted_key;
 pub use crate::circuits::vk::load_vk_artifacts;
 
 /// Repository root for prover tests and their shared artifacts.

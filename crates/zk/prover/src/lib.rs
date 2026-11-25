@@ -32,7 +32,8 @@ pub use domain::commitment_links::default_links;
 pub use backend::{BBPath, SetupStatus, ZkBackend};
 pub use circuits::aggregation::c2_chain::{final_circuit_inputs, ChunkCircuits};
 pub use circuits::aggregation::c3_chonk::generate_c3_chonk_chain;
-pub use circuits::aggregation::c6_accumulator::generate_sequential_c6_fold;
+pub use circuits::aggregation::c4_chain::{final_share_decryption_inputs, LimbCircuits};
+pub use circuits::aggregation::c6_chonk::generate_c6_chonk_root;
 pub use circuits::aggregation::chain_keys::chunk_circuits;
 pub use circuits::aggregation::node_dkg_fold::{
     prove_decryption_aggregation_jobs, prove_dkg_aggregation, prove_node_dkg_fold,
@@ -40,7 +41,8 @@ pub use circuits::aggregation::node_dkg_fold::{
     NodeDkgFoldProveResult,
 };
 pub use circuits::aggregation::nodes_fold_accumulator::{
-    generate_nodes_fold_step, generate_sequential_nodes_fold,
+    generate_nodes_fold_step, generate_sequential_nodes_fold, nodes_fold_step_len,
+    NODES_FOLD_LEAVES,
 };
 pub use circuits::dkg::pk::PkCircuit;
 pub use circuits::dkg::share_computation::ShareComputationCircuit;

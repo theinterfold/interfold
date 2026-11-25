@@ -4,6 +4,22 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+//! DKG share decryption and aggregation (C4a / C4b), one CRT limb at a time.
+//!
+//! **Role:** Verify decrypted shares against C2 commitments and publish a commitment to the sum
+//! over honest parties (run twice: sk path and e_sm path).
+//!
+//! **Consumes:** Per-party share commitments from C2 (sk or e_sm branch).
+//!
+//! **Produces:**
+//! - C4a: `commit(agg_sk)` -> C6 (threshold share decryption).
+//! - C4b: `commit(agg_e_sm)` -> C6 (threshold share decryption).
+//!
+//! [`aggregate_limb`] is C4's statement for one limb; `share_decryption_chain` proves it per limb
+//! and carries the aggregate commitment's sponge between the limbs. `BIT_MSG` hashes per-share
+//! plaintexts (aligned with C2). `BIT_AGG` hashes the CRT aggregate
+//! (`compute_aggregated_shares_commitment`) and must match threshold C6 `BIT_SK` / `BIT_E_SM`.
+
 use crate::math::commitments::{
     compute_aggregated_shares_commitment, compute_share_encryption_commitment_from_message_checked,
 };
@@ -13,112 +29,61 @@ use crate::math::polynomial::Polynomial;
 /// Bits allowed for the carry that [`normalize_aggregated`] divides out.
 ///
 /// The aggregate is a sum of `H` coefficients, each in `[0, q)`, so the carry is at most `H`. Eight
-/// bits cover every committee up to 255 members, and `execute` asserts that. It is deliberately
-/// loose: the carry bound exists to keep the reduction an integer identity, not to select the
-/// representative — the centered window does that — so slack costs a fraction of a gate per
-/// coefficient and buys independence from the committee config.
+/// bits cover every committee up to 255 members, and `aggregate_canonical_limb` asserts that. It is
+/// deliberately loose: the carry bound exists to keep the reduction an integer identity, not to
+/// select the representative — the centered window does that — so slack costs a fraction of a gate
+/// per coefficient and buys independence from the committee config.
 pub global AGGREGATION_BIT_CARRY: u32 = 8;
 
-/// DKG share decryption and aggregation (C4a / C4b).
+/// C4's statement for one CRT limb with modulus `q`: every honest party's decrypted share opens its
+/// C2 commitment, and the shares' sum, reversed and centered as C6 hashes it, is returned.
 ///
-/// **Role:** Verify decrypted shares against C2 commitments and publish a commitment to the sum
-/// over honest parties (run twice: sk path and e_sm path).
-///
-/// **Consumes:** Per-party share commitments from C2 (sk or e_sm branch).
-///
-/// **Produces:**
-/// - C4a: `commit(agg_sk)` -> C6 (threshold share decryption).
-/// - C4b: `commit(agg_e_sm)` -> C6 (threshold share decryption).
-///
-/// `BIT_MSG` hashes per-share plaintexts (aligned with C2). `BIT_AGG` hashes the CRT aggregate
-/// (`compute_aggregated_shares_commitment`) and must match threshold C6 `BIT_SK` / `BIT_E_SM`.
-pub struct ShareDecryption<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> {
-    /// Expected commitments to the share polynomials, produced in C2a (for C4a) or C2b (for C4b)
-    /// via commit_to_party_shares. Organised as [party_idx][mod_idx], covering all H honest
-    /// parties and L CRT moduli.
-    /// (public witnesses)
-    expected_commitments: [[Field; L]; H],
+/// Each share is reversed to C2's highest-degree-first order and opened with the checked packing
+/// helper. Asserting each digit fits its slot makes the opening unique, so the witness must be the
+/// share C2 committed and already bounded to `[0, q)`. That transferred bound is what
+/// `normalize_aggregated` relies on to cap its carry at `H`; the aggregate itself needs no bound
+/// of its own. Since commitments are binding, any substitution or tampering, claiming a different
+/// decrypted value or using the wrong secret key, fails the commitment check.
+pub fn aggregate_limb<let N: u32, let H: u32, let BIT_MSG: u32>(
+    expected_commitments: [Field; H],
+    decrypted_shares: [Polynomial<N>; H],
+    q: Field,
+) -> Polynomial<N> {
+    for party_idx in 0..H {
+        // Reverse the share polynomial to match the commitment format used by C2's
+        // commit_to_party_shares, which stores coefficients highest-degree-first.
+        let share = decrypted_shares[party_idx];
+        let mut reversed_coeffs: [Field; N] = [0; N];
+        for i in 0..N {
+            reversed_coeffs[N - 1 - i] = share.coefficients[i];
+        }
+        assert(
+            compute_share_encryption_commitment_from_message_checked::<N, BIT_MSG>(Polynomial::new(
+                reversed_coeffs,
+            ))
+                == expected_commitments[party_idx],
+            "Commitment mismatch",
+        );
+    }
 
-    /// Decrypted share polynomials from H honest parties.
-    /// Organised as [party_idx][mod_idx].
-    /// (secret witnesses)
-    decrypted_shares: [[Polynomial<N>; L]; H],
+    aggregate_canonical_limb::<N, H, BIT_MSG>(decrypted_shares, q)
 }
 
-impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> ShareDecryption<N, L, H, BIT_MSG, BIT_AGG> {
-    pub fn new(
-        expected_commitments: [[Field; L]; H],
-        decrypted_shares: [[Polynomial<N>; L]; H],
-    ) -> Self {
-        ShareDecryption { expected_commitments, decrypted_shares }
-    }
-
-    /// Verifies that each decrypted share matches its expected commitment from C2a/C2b.
-    ///
-    /// For each honest party and each CRT modulus, hashes the decrypted share polynomial
-    /// and confirms it equals the commitment produced in C2 via commit_to_party_shares.
-    ///
-    /// Opens with the checked packing helper: asserting each digit fits its slot makes the opening
-    /// unique, so the witness must be the share C2 committed and already bounded to `[0, q_j)`. That
-    /// transferred bound is what `normalize_aggregated` relies on to cap its carry at `H`; the
-    /// aggregate itself needs no bound of its own.
-    /// Since commitments are binding, any substitution or tampering, claiming a different
-    /// decrypted value or using the wrong secret key, will cause this assertion to fail.
-    fn verify_commitments(self) {
-        for party_idx in 0..H {
-            for mod_idx in 0..L {
-                // Reverse the share polynomial to match the commitment format used by C2's
-                // commit_to_party_shares, which stores coefficients highest-degree-first.
-                let share = self.decrypted_shares[party_idx][mod_idx];
-                let mut reversed_coeffs: [Field; N] = [0; N];
-                for i in 0..N {
-                    reversed_coeffs[N - 1 - i] = share.coefficients[i];
-                }
-                assert(
-                    compute_share_encryption_commitment_from_message_checked::<N, BIT_MSG>(
-                        Polynomial::new(reversed_coeffs),
-                    )
-                        == self.expected_commitments[party_idx][mod_idx],
-                    "Commitment mismatch",
-                );
-            }
+/// The caller must first bind and canonically bound every native-order share to `[0, q)`.
+///
+/// Sums the shares coefficient-wise, then reverses and centers the sum as C6 hashes it. No
+/// reduction is applied while summing: each coefficient is bounded to `[0, q)`, so the sum stays
+/// under `H * q` and fits the field. This is the threshold key construction, `sk = sum(sk_i)` over
+/// the honest parties.
+pub fn aggregate_canonical_limb<let N: u32, let H: u32, let BIT_MSG: u32>(
+    shares: [Polynomial<N>; H],
+    q: Field,
+) -> Polynomial<N> {
+    let mut sum = [0 as Field; N];
+    for coefficient in 0..N {
+        for row in 0..H {
+            sum[coefficient] += shares[row].coefficients[coefficient];
         }
-    }
-
-    /// Executes the share decryption and aggregation circuit.
-    ///
-    /// Returns a commitment to the aggregated shares:
-    /// - C4a: commit(agg_sk), consumed by C6 in P4
-    /// - C4b: commit(agg_e_sm), consumed by C6 in P4
-    ///
-    /// `moduli` must be the threshold CRT moduli `[q_0, ..., q_{L-1}]`.
-    /// They are used to reverse and center the aggregated polynomials so that
-    /// `compute_aggregated_shares_commitment` produces the same hash as C6's
-    /// Rust witness (which operates on sk coefficients already reduced to `[0, q_l)`
-    /// and then applies `.reverse()` and `.center(&qi)` before hashing).
-    pub fn execute(self, moduli: [Field; L]) -> Field {
-        // Step 1: Verify decrypted shares match expected C2 commitments, opened injectively.
-        self.verify_commitments();
-
-        // Step 2: Sum shares coefficient-wise per CRT limb.
-        aggregate_canonical_shares::<N, L, H, BIT_MSG, BIT_AGG>(self.decrypted_shares, moduli)
-    }
-}
-
-/// The caller must first bind and canonically bound every native-order share to `[0, q_l)`.
-pub fn aggregate_canonical_shares<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32>(
-    shares: [[Polynomial<N>; L]; H],
-    moduli: [Field; L],
-) -> Field {
-    let mut aggregated = [Polynomial::new([0; N]); L];
-    for limb in 0..L {
-        let mut coefficients = [0; N];
-        for coefficient in 0..N {
-            for row in 0..H {
-                coefficients[coefficient] += shares[row][limb].coefficients[coefficient];
-            }
-        }
-        aggregated[limb] = Polynomial::new(coefficients);
     }
 
     // The carry `normalize_aggregated` divides out is at most H; see AGGREGATION_BIT_CARRY.
@@ -126,15 +91,27 @@ pub fn aggregate_canonical_shares<let N: u32, let L: u32, let H: u32, let BIT_MS
     // `BIT_MSG` is the share width, so it covers `q` and can serve as the canonical range
     // width below. Both are compile-time constants, so this folds away rather than costing
     // gates -- it turns that agreement into something the build checks instead of assumes.
-    for mod_idx in 0..L {
-        (moduli[mod_idx] - 1).assert_max_bit_size::<BIT_MSG>();
+    (q - 1).assert_max_bit_size::<BIT_MSG>();
+
+    // Normalize to match C6's representation: reverse and centre-reduce mod q.
+    normalize_aggregated::<N, 1, BIT_MSG, AGGREGATION_BIT_CARRY>([Polynomial::new(sum)], [q])[0]
+}
+
+/// The caller must first bind and canonically bound every native-order share to `[0, q_l)`.
+pub fn aggregate_canonical_shares<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32>(
+    shares: [[Polynomial<N>; L]; H],
+    moduli: [Field; L],
+) -> Field {
+    let mut normalized: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
+    for limb in 0..L {
+        let mut limb_shares = [Polynomial::new([0; N]); H];
+        for row in 0..H {
+            limb_shares[row] = shares[row][limb];
+        }
+        normalized[limb] = aggregate_canonical_limb::<N, H, BIT_MSG>(limb_shares, moduli[limb]);
     }
 
-    // Step 3: Normalize to match C6's representation: reverse and centre-reduce mod q.
-    let normalized =
-        normalize_aggregated::<N, L, BIT_MSG, AGGREGATION_BIT_CARRY>(aggregated, moduli);
-
-    // Step 4: Publish commitment to the aggregate (C6 input).
+    // Publish commitment to the aggregate (C6 input).
     compute_aggregated_shares_commitment::<N, L, BIT_AGG>(normalized)
 }
 
@@ -151,7 +128,7 @@ pub fn aggregate_canonical_shares<let N: u32, let L: u32, let H: u32, let BIT_MS
 /// check it does is the one that pins the result.
 ///
 /// The input bound is inherited, not re-derived. C2 range-checks every share coefficient to
-/// `[0, q_l)`, and `verify_commitments` opens the C2 commitment with the checked packing helper, so
+/// `[0, q_l)`, and `aggregate_limb` opens the C2 commitment with the checked packing helper, so
 /// the opening is injective and the witness must be the coefficient C2 bounded. Summing `H` of them
 /// gives `aggregated < H * q_l`, which is what makes the carry at most `H`.
 fn normalize_aggregated<let N: u32, let L: u32, let BIT_Q: u32, let BIT_CARRY: u32>(

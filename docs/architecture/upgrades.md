@@ -218,8 +218,26 @@ the governance batch that raises the required protocol version, and upgrade ever
 resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them first. The
 cutover also carries chunked C2: the C2a, C2b, and `c2ab_fold` keys and the C2 branch of the VK tree
 change, and final C2 proofs gain a trailing key-tree public field. Stored C2 proofs from in-flight
-E3s can be neither folded nor link-checked, so drain them first too. Storage schema and gossip/sync
-wire majors are unchanged.
+E3s can be neither folded nor link-checked, so drain them first too. C6 now aggregates over Chonk:
+the `decryption_aggregator` key, the C6 tree anchor and every `BfvDecryptionVerifier` change, and no
+event encoding changes. Each pair gains 18 required C6 Chonk artifacts (the app, three kernels, tube
+and root) and drops the six `c6_fold` and `c6_fold_kernel` files; only `c6_fold.vk_tree_hash` keeps
+its retired path. Storage schema and gossip/sync wire majors are unchanged.
+
+The cutover also carries three-node `nodes_fold` steps. `nodes_fold` and `nodes_fold_kernel` change
+their public layout, so their keys, the `dkg_aggregator` key, the nodes-tree anchor, and the DKG
+verifier change. A nodes fold of an in-flight E3 cannot continue under the new circuits; drain it
+first. `ZkRequest::NodesFoldStep` carries `inner_proofs` and `slot_indices`, which changes its
+event-log encoding. The request is local-only and shares the **unreleased
+schema-9/protocol-9/generation-2 cutover**: this change raises no counter, and there is no migration
+or supported replay between intermediate builds. Rollback uses the prior backup or a controlled
+reset/resync, never an older binary on a journal that holds the new encoding.
+
+The cutover also carries chunked C4: the final C4 verifies one limb circuit per CRT limb. The C4 and
+`c4ab_fold` keys, the C4 branch of the VK tree, the nodes-tree anchor and the DKG verifier change,
+final C4 proofs gain a trailing key-tree public field, and each pair gains nine required limb
+artifacts. Stored C4 proofs from in-flight E3s can be neither folded, link-checked nor verified by
+peers, so drain them first.
 
 ## BFV profile cutover
 

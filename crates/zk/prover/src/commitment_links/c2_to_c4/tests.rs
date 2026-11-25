@@ -27,7 +27,8 @@ fn c2_signals(share_commits: &[[u8; 32]]) -> Vec<u8> {
     v
 }
 
-/// C4 signals: [expected_commitments row-major (party, mod)..., aggregated_commitment].
+/// Final C4 signals: [expected_commitments row-major (party, mod)..., aggregated_commitment] +
+/// [key_tree].
 fn c4_signals(rows: &[Vec<[u8; 32]>], aggregated: [u8; 32]) -> Vec<u8> {
     let mut v = Vec::new();
     for row in rows {
@@ -36,6 +37,7 @@ fn c4_signals(rows: &[Vec<[u8; 32]>], aggregated: [u8; 32]) -> Vec<u8> {
         }
     }
     v.extend_from_slice(&aggregated);
+    v.extend_from_slice(&make_field(KEY_TREE));
     v
 }
 
@@ -72,7 +74,7 @@ fn extract_skips_secret_commitment() {
 /// 3 parties (N=3), 2 moduli (L=2), 2 honest parties (H=2).
 /// C2 from party X=1, C4 for recipient R=1.
 /// C2_X: [p0m0,p0m1, p1m0,p1m1, p2m0,p2m1]
-/// C4_R=1: rows for party 0 and party 1 = [[p0m0,p0m1],[p1m0,p1m1]] + agg
+/// C4_R=1: rows for party 0 and party 1 = [[p0m0,p0m1],[p1m0,p1m1]] + agg + key tree
 /// check_consistency(src=1, tgt=1): C2 slot R=1 = [p1m0,p1m1] must equal C4 row X=1 = [p1m0,p1m1]
 #[test]
 fn consistency_passes_precise_l_way_check() {
@@ -164,6 +166,8 @@ fn consistency_does_not_match_aggregated_output() {
     let c4 = c4_signals(&[vec![make_field(5)]], make_field(99));
 
     assert!(!link.check_consistency(&source_values, &c4, 0, 0));
+    // The row one past the roster is the aggregated output: both outputs must follow a row.
+    assert!(!link.check_consistency(&source_values, &c4, 1, 0));
 }
 
 #[test]

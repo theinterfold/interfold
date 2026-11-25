@@ -8,7 +8,8 @@
 
 pub mod c2_chain;
 pub mod c3_chonk;
-pub mod c6_accumulator;
+pub mod c4_chain;
+pub mod c6_chonk;
 pub mod chain_keys;
 pub mod chonk_stack;
 pub mod helpers;
