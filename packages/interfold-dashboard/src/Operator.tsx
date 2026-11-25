@@ -1377,8 +1377,8 @@ export type IdentityService = {
   domain: string
   scope: string
   faceMatch: boolean
-  /** 0 non-salted, 1 salted; null keeps the ZKPassport default. */
-  nullifierType: number | null
+  /** 0 non-salted, 1 salted. */
+  nullifierType: number
   proofValidity: bigint
   maxValidity: bigint
 }
@@ -1387,24 +1387,16 @@ const REGISTER_IDENTITY_KEY = 'registerIdentity'
 const REFRESH_AFTER_IDENTITY_KEY = 'refreshAfterIdentity'
 
 function identityService(verifier: VerifierConfig | null, previewFaceMatch: boolean): IdentityService {
-  return verifier
-    ? {
-        domain: verifier.domain,
-        scope: verifier.scope,
-        // The SDK requires strict FaceMatch for a salted identifier.
-        faceMatch: verifier.faceMatchRequired || verifier.nullifierType === 1,
-        nullifierType: verifier.nullifierType,
-        proofValidity: verifier.proofValidity,
-        maxValidity: verifier.maxValidity,
-      }
-    : {
-        domain: PLANNED_IDENTITY.domain,
-        scope: PLANNED_IDENTITY.scope,
-        faceMatch: previewFaceMatch,
-        nullifierType: null,
-        proofValidity: PLANNED_IDENTITY.proofValidity,
-        maxValidity: PLANNED_IDENTITY.maxValidity,
-      }
+  const settings = verifier ?? { ...PLANNED_IDENTITY, faceMatchRequired: previewFaceMatch }
+  return {
+    domain: settings.domain,
+    scope: settings.scope,
+    // The SDK requires strict FaceMatch for a salted identifier.
+    faceMatch: settings.faceMatchRequired || settings.nullifierType === 1,
+    nullifierType: settings.nullifierType,
+    proofValidity: settings.proofValidity,
+    maxValidity: settings.maxValidity,
+  }
 }
 
 // Until governance publishes an identity policy, the panel stays hidden: a proof made before the
@@ -1539,9 +1531,7 @@ function IdentityPanel({
         devMode: false,
         // The verifier accepts only chip proofs, so the app refuses other documents before it proves.
         allowedVerificationMethods: [ICAO_CHIP],
-        ...(service.nullifierType === null
-          ? {}
-          : { uniqueIdentifierType: service.nullifierType === 1 ? sdk.NullifierType.SALTED : sdk.NullifierType.NON_SALTED }),
+        uniqueIdentifierType: service.nullifierType === 1 ? sdk.NullifierType.SALTED : sdk.NullifierType.NON_SALTED,
       })
       let query = builder
         .gte('expiry_date', new Date(Number(validUntil) * 1000))

@@ -6,11 +6,11 @@
 import { expect } from "chai";
 
 import { deployOwnerIdentityRegistry } from "../../scripts/protocol/identityRegistry";
+import { expectedCredential } from "../../scripts/upgrade/identityProofFork";
 import type { OwnerIdentityRegistry } from "../../types";
 import {
   ICAO_CHIP,
   IDENTITY_TAG,
-  credentialEnd,
   publicInputLayout,
   readPublicInputs,
   zkPassportVersion,
@@ -22,9 +22,11 @@ const { loadFixture, time } = networkHelpers;
 const VERSION = zkPassportVersion(0, 20, 0);
 const OTHER_VERSION = zkPassportVersion(0, 19, 0);
 const VERSION_0_23 = zkPassportVersion(0, 23, 0);
-// ZKPassport's verification methods that do not read the document's chip.
+// ZKPassport's verification methods other than an ICAO chip.
 const NON_CHIP_METHODS = {
   UIDAI_AADHAAR: 101,
+  JPKI: 102,
+  ISO_MDOC: 103,
   ATTESTED_CAPTURE_IOS: 200,
   ATTESTED_CAPTURE_ANDROID: 201,
 } as const;
@@ -390,7 +392,7 @@ describe("ZKPassportIdentityVerifier", function () {
     }
   });
 
-  it("reads every version's public inputs and ends its credential as the zkpassport module does", async function () {
+  it("agrees with the zkpassport module and the proof replay on every ZKPassport version", async function () {
     const ctx = await loadFixture(setup);
     const factory = await ethers.getContractFactory(
       "ZKPassportIdentityVerifier",
@@ -442,23 +444,56 @@ describe("ZKPassportIdentityVerifier", function () {
         "ZKPassportIdentityVerifier",
         args,
       );
+      const proof = {
+        version,
+        params: {
+          proofVerificationData: {
+            publicInputs: publicInputs(proofDate, inputs),
+          },
+        },
+      };
       for (const validUntil of [
         proofDate + DAY,
         proofDate + 2 * MAX_VALIDITY,
       ]) {
         await proveFor(ctx, ctx.owner.address, validUntil);
-        const [, expiresAt] = await verifier.verify.staticCall(
+        const [identityId, expiresAt] = await verifier.verify.staticCall(
           ctx.owner.address,
           evidence(validUntil, proofDate, { version, ...inputs }),
         );
-        expect(expiresAt).to.equal(
-          credentialEnd(
-            BigInt(validUntil),
-            BigInt(proofDate),
+        expect({ identityId, expiresAt }).to.deep.equal(
+          expectedCredential(
+            await verifier.IDENTITY_NAMESPACE(),
+            { ...proof, validUntil: String(validUntil) },
             BigInt(MAX_VALIDITY),
           ),
         );
       }
+      const validUntil = proofDate + 2 * MAX_VALIDITY;
+      await expect(
+        verifier.verify.staticCall(
+          ctx.owner.address,
+          evidence(validUntil, proofDate, {
+            version,
+            ...inputs,
+            oprfKeyHash: OTHER_OPRF_KEY,
+          }),
+        ),
+      )
+        .to.be.revertedWithCustomError(verifier, "UnexpectedOPRFKey")
+        .withArgs(OTHER_OPRF_KEY);
+      await expect(
+        verifier.verify.staticCall(
+          ctx.owner.address,
+          evidence(validUntil, proofDate, {
+            version,
+            ...inputs,
+            nullifierType: NullifierType.NON_SALTED,
+          }),
+        ),
+      )
+        .to.be.revertedWithCustomError(verifier, "UnexpectedNullifierType")
+        .withArgs(NullifierType.NON_SALTED);
     }
   });
 
@@ -482,7 +517,7 @@ describe("ZKPassportIdentityVerifier", function () {
     };
 
     for (const method of Object.values(NON_CHIP_METHODS)) {
-      it(`rejects verification method ${method}, which does not read the document's chip`, async function () {
+      it(`rejects verification method ${method}, which is not an ICAO chip`, async function () {
         const ctx = await loadFixture(setup023);
         const proofDate = await time.latest();
         const validUntil = proofDate + 30 * DAY;

@@ -111,7 +111,7 @@ test('from ZKPassport 0.23.0 only chip proofs pass, and a version the verifier d
   assert.throws(
     () =>
       buildProofBundle({ success, params: { ...chip, version: zkPassportVersion(0, 24, 0) }, owner: OWNER, chainId: 1, faceMatch: true }),
-    /does not read ZKPassport version/,
+    /does not read ZKPassport 0\.24\.0 proofs/,
   )
 })
 

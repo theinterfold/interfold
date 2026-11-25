@@ -10,7 +10,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { proxyAdminInterface } from "../../scripts/protocol/constants";
-import { deployOwnerIdentityRegistry } from "../../scripts/protocol/identityRegistry";
+import {
+  deployOwnerIdentityRegistry,
+  deployZKPassportIdentityVerifier,
+} from "../../scripts/protocol/identityRegistry";
 import type { ProtocolConfigFile } from "../../scripts/protocol/types";
 import {
   EXECUTION_MARGIN,
@@ -191,6 +194,11 @@ describe("identity gate rollout", function () {
     expect(() =>
       identityGateSettings(config({ zkPassportVersion: ethersLib.ZeroHash })),
     ).to.throw(/zkPassportVersion is unset/);
+    expect(() =>
+      identityGateSettings(
+        config({ zkPassportVersion: zkPassportVersion(0, 24, 0) }),
+      ),
+    ).to.throw(/does not know the public-input layout/);
     expect(() => identityGateSettings(config({ nullifierType: 1 }))).to.throw(
       /OPRF key hash/,
     );
@@ -262,18 +270,20 @@ describe("identity gate rollout", function () {
       "MockZKPassportRootVerifier",
       [await helper.getAddress(), ethersLib.ZeroHash],
     );
-    const settings = identityGateSettings(config({}));
-    const verifier = await ethers.deployContract("ZKPassportIdentityVerifier", [
-      await rootVerifier.getAddress(),
-      settings.zkPassportVersion,
-      settings.domain,
-      settings.scope,
-      settings.nullifierType,
-      settings.oprfKeyHash,
-      settings.faceMatchRequired,
-      settings.proofValidity,
-      settings.maxValidity,
-    ]);
+    // Mixed case: the verifier hashes the domain and scope exactly as given.
+    const settings = identityGateSettings(
+      config({
+        domain: "Dashboard.TheInterfold.com",
+        scope: "Interfold-Bond-Owner",
+      }),
+    );
+    const verifier = await ethers.getContractAt(
+      "ZKPassportIdentityVerifier",
+      await deployZKPassportIdentityVerifier(ethers, {
+        ...settings,
+        zkPassportRootVerifier: await rootVerifier.getAddress(),
+      }),
+    );
     expect(await verifier.IDENTITY_NAMESPACE()).to.equal(
       identityNamespace(settings.domain, settings.scope),
     );

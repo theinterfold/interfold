@@ -174,8 +174,8 @@ contract ZKPassportIdentityVerifier is IIdentityVerifier {
         uint256 end = publicInputs.length;
         if (HAS_VERIFICATION_METHOD) {
             // A camera capture of the data page is not signed by the issuer and gives the same
-            // document a second identifier, and an Aadhaar proof is not a chip document. Either
-            // would let one person verify a second owner.
+            // document a second identifier. Aadhaar, JPKI and mDoc credentials are other documents
+            // of the same person. Either would let one person verify a second owner.
             uint256 method = uint256(publicInputs[end - 1]);
             if (method != ICAO_CHIP)
                 revert UnsupportedVerificationMethod(method);

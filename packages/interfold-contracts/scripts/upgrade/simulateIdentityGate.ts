@@ -37,7 +37,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { credentialEnd, zkPassportVersion } from "../../zkpassport";
+import { zkPassportVersion } from "../../zkpassport";
 import type { ProtocolConfigFile } from "../protocol/types";
 import {
   executeIdentityBatch,
@@ -45,7 +45,11 @@ import {
   sendAs,
   startFork,
 } from "./identityFork";
-import { expectedIdentityId, readProofBundle } from "./identityProofFork";
+import {
+  bundleSettings,
+  expectedCredential,
+  readProofBundle,
+} from "./identityProofFork";
 
 const PORT = Number(process.env.ANVIL_PORT ?? 18545);
 const RPC = `http://127.0.0.1:${PORT}`;
@@ -183,15 +187,7 @@ async function main() {
     path.join(protocolDir, "example.protocol.config.json"),
   );
   const identity = bundle
-    ? {
-        ...example.identity,
-        zkPassportVersion: bundle.version,
-        domain: bundle.domain,
-        scope: bundle.scope,
-        nullifierType: bundle.nullifierType,
-        oprfKeyHash: bundle.oprfKeyHash,
-        faceMatchRequired: bundle.faceMatch,
-      }
+    ? { ...example.identity, ...bundleSettings(bundle) }
     : { ...example.identity, zkPassportVersion: DEFAULT_VERSION };
   // The tools run against copies, so the fork never writes the real mainnet plan or record.
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "identity-gate-"));
@@ -301,20 +297,19 @@ async function main() {
         ["function IDENTITY_NAMESPACE() view returns (bytes32)"],
         provider,
       ).IDENTITY_NAMESPACE();
-      const expectedId = expectedIdentityId(namespace, bundle);
-      if (registered !== expectedId) {
-        throw new Error(
-          `Registered identifier ${registered} differs from the proof's ${expectedId}`,
-        );
-      }
-      const expectedExpiry = credentialEnd(
-        BigInt(bundle.validUntil),
-        BigInt(bundle.proofDate),
+      const expected = expectedCredential(
+        namespace,
+        bundle,
         BigInt(identity.maxValidity),
       );
-      if (expiresAt !== expectedExpiry) {
+      if (registered !== expected.identityId) {
         throw new Error(
-          `Registered expiry ${expiresAt} differs from the proof's ${expectedExpiry}`,
+          `Registered identifier ${registered} differs from the proof's ${expected.identityId}`,
+        );
+      }
+      if (expiresAt !== expected.expiresAt) {
+        throw new Error(
+          `Registered expiry ${expiresAt} differs from the proof's ${expected.expiresAt}`,
         );
       }
       identityId = registered;

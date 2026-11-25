@@ -269,9 +269,8 @@ const identityProps = {
   onDownloadSafe: () => {},
 }
 
-test('date fields round-trip in UTC and reject impossible dates', () => {
+test('date fields read as UTC midnight and reject impossible dates', () => {
   assert.equal(parseDateInput('2027-12-01'), BigInt(Date.UTC(2027, 11, 1) / 1000))
-  assert.equal(dateInput(parseDateInput('2027-12-01')!), '2027-12-01')
   assert.equal(parseDateInput('2026-02-31'), null)
   assert.equal(parseDateInput('01/12/2027'), null)
   assert.equal(parseDateInput('0099-01-01'), BigInt(Date.parse('0099-01-01T00:00:00Z') / 1000))

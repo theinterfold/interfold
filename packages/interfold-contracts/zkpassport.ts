@@ -25,6 +25,7 @@ export const PLANNED_IDENTITY = {
   rootVerifier: config.identity.zkPassportRootVerifier,
   domain: config.identity.domain,
   scope: config.identity.scope,
+  nullifierType: config.identity.nullifierType,
   faceMatchRequired: config.identity.faceMatchRequired,
   proofValidity: BigInt(config.identity.proofValidity),
   maxValidity: BigInt(config.identity.maxValidity),
@@ -92,7 +93,7 @@ export function readPublicInputs(version: string, inputs: readonly string[]) {
   const layout = publicInputLayout(version);
   if (!layout) {
     throw new Error(
-      `The identity verifier does not read ZKPassport version ${version}`,
+      `The identity verifier does not read ZKPassport ${versionName(version)} proofs`,
     );
   }
   const fromEnd = (position: number) => inputs[inputs.length - position];
@@ -107,6 +108,13 @@ export function readPublicInputs(version: string, inputs: readonly string[]) {
         ? ICAO_CHIP
         : Number(BigInt(fromEnd(layout.verificationMethodFromEnd))),
   };
+}
+
+/** A version word as major.minor.patch, or as given when it is not ZKPassport's encoding. */
+function versionName(version: string): string {
+  const word = BigInt(version);
+  if ((word & ((1n << 208n) - 1n)) !== 0n) return version;
+  return [240n, 224n, 208n].map((shift) => (word >> shift) & 0xffffn).join(".");
 }
 
 /** The credential end that ZKPassportIdentityVerifier sets. */

@@ -33,8 +33,10 @@ import {
 } from "../../zkpassport";
 import { arg, connect } from "../protocol/cli";
 import { resolvePath } from "../protocol/files";
-import { deployOwnerIdentityRegistry } from "../protocol/identityRegistry";
-import { deployedAddress } from "../protocol/values";
+import {
+  deployOwnerIdentityRegistry,
+  deployZKPassportIdentityVerifier,
+} from "../protocol/identityRegistry";
 
 export function readProofBundle(file: string): ProofBundle {
   const bundle = JSON.parse(fs.readFileSync(file, "utf8")) as ProofBundle;
@@ -44,24 +46,40 @@ export function readProofBundle(file: string): ProofBundle {
   return bundle;
 }
 
+/** The verifier settings that the proof was made for. */
+export function bundleSettings(bundle: ProofBundle) {
+  return {
+    zkPassportVersion: bundle.version,
+    domain: bundle.domain,
+    scope: bundle.scope,
+    nullifierType: bundle.nullifierType,
+    oprfKeyHash: bundle.oprfKeyHash,
+    faceMatchRequired: bundle.faceMatch,
+  };
+}
+
 /**
- * The identifier that a verifier with this identifier namespace derives for the proof, if
- * ZKPassport's unique identifier is the proof's scoped nullifier.
+ * The credential that a verifier with this identifier namespace and maximum validity records for
+ * the proof, if ZKPassport's unique identifier is the proof's scoped nullifier.
  */
-export function expectedIdentityId(
+export function expectedCredential(
   namespace: string,
-  bundle: ProofBundle,
-): string {
-  const { scopedNullifier } = readPublicInputs(
+  bundle: Pick<ProofBundle, "validUntil" | "params"> & { version: string },
+  maxValidity: bigint,
+): { identityId: string; expiresAt: bigint } {
+  const { proofDate, scopedNullifier } = readPublicInputs(
     bundle.version,
     bundle.params.proofVerificationData.publicInputs,
   );
-  return ethersLib.keccak256(
-    ethersLib.AbiCoder.defaultAbiCoder().encode(
-      ["bytes32", "bytes32"],
-      [namespace, scopedNullifier],
+  return {
+    identityId: ethersLib.keccak256(
+      ethersLib.AbiCoder.defaultAbiCoder().encode(
+        ["bytes32", "bytes32"],
+        [namespace, scopedNullifier],
+      ),
     ),
-  );
+    expiresAt: credentialEnd(BigInt(bundle.validUntil), proofDate, maxValidity),
+  };
 }
 
 async function requireAnvilMainnetFork(ethers: any): Promise<void> {
@@ -128,25 +146,21 @@ async function register(
   proofValidity: bigint,
   maxValidity: bigint,
 ): Promise<void> {
-  const verifier = await (
-    await ethers.getContractFactory("ZKPassportIdentityVerifier")
-  ).deploy(
-    PLANNED_IDENTITY.rootVerifier,
-    bundle.version,
-    bundle.domain,
-    bundle.scope,
-    bundle.nullifierType,
-    bundle.oprfKeyHash,
-    bundle.faceMatch,
-    proofValidity,
-    maxValidity,
+  const verifierAddress = await deployZKPassportIdentityVerifier(ethers, {
+    zkPassportRootVerifier: PLANNED_IDENTITY.rootVerifier,
+    ...bundleSettings(bundle),
+    proofValidity: proofValidity.toString(),
+    maxValidity: maxValidity.toString(),
+  });
+  const verifier = await ethers.getContractAt(
+    "ZKPassportIdentityVerifier",
+    verifierAddress,
   );
-  await verifier.waitForDeployment();
   const registry = (
     await deployOwnerIdentityRegistry(
       ethers,
       await deployer.getAddress(),
-      await deployedAddress(verifier),
+      verifierAddress,
     )
   ).registry as unknown as OwnerIdentityRegistry;
 
@@ -169,22 +183,18 @@ async function register(
   const receipt = await tx.wait();
   if (receipt?.status !== 1) throw new Error("Registration reverted");
   const [identityId, expiresAt] = await registry.identityOf(bundle.owner);
-  const expectedId = expectedIdentityId(
+  const expected = expectedCredential(
     await verifier.IDENTITY_NAMESPACE(),
     bundle,
-  );
-  const expectedExpiry = credentialEnd(
-    BigInt(bundle.validUntil),
-    BigInt(bundle.proofDate),
     maxValidity,
   );
-  if (identityId !== expectedId) {
+  if (identityId !== expected.identityId) {
     throw new Error(
-      `Identifier ${identityId} differs from the scoped nullifier's ${expectedId}`,
+      `Identifier ${identityId} differs from the scoped nullifier's ${expected.identityId}`,
     );
   }
-  if (BigInt(expiresAt) !== expectedExpiry) {
-    throw new Error(`Expiry ${expiresAt} differs from ${expectedExpiry}`);
+  if (BigInt(expiresAt) !== expected.expiresAt) {
+    throw new Error(`Expiry ${expiresAt} differs from ${expected.expiresAt}`);
   }
   const block = await ethers.provider.getBlock(receipt.blockNumber);
   if (!block || !(await registry.isVerifiedAt(bundle.owner, block.timestamp))) {
