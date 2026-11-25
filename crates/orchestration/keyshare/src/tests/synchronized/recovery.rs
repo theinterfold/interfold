@@ -1003,9 +1003,15 @@ async fn synchronized_disk_reopen_restores_actor_work_and_releases_rejected_slot
 }
 
 #[actix::test]
-#[ignore = "requires pinned nargo/bb, solc 0.8.28, Anvil, pnpm and built contract artifacts; restored setup through real registry publication"]
+#[ignore = "requires pinned nargo/bb, solc 0.8.28, Anvil, pnpm and built contract artifacts; restored setup through DKG and plaintext publication"]
 async fn synchronized_disk_reopen_uses_real_proofs_and_restored_private_inputs() -> Result<()> {
-    let (directory, prover) = real_prover(&CircuitName::SYNCHRONIZED_DKG)?;
+    let mut circuits = CircuitName::SYNCHRONIZED_DKG.to_vec();
+    circuits.extend([
+        CircuitName::ThresholdShareDecryption,
+        CircuitName::DecryptedSharesAggregation,
+        CircuitName::DecryptionAggregator,
+    ]);
+    let (directory, prover) = real_prover(&circuits)?;
     if let Err(error) = exercise(Some(&prover)).await {
         let evidence = directory.keep();
         return Err(error.context(format!(

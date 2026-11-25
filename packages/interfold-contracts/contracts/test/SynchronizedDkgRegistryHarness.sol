@@ -48,7 +48,7 @@ contract SynchronizedDkgRegistryHarness is CiphernodeRegistryOwnable {
 /// @dev Mock only the lifecycle callback; publication/consent/storage use the real registry.
 contract SynchronizedDkgControllerHarness {
     error CallbackRejected();
-    mapping(uint256 => E3) private _requests;
+    mapping(uint256 => E3) internal _requests;
     mapping(uint256 => bytes32) public e3CryptoConfigIds;
     mapping(uint256 => address) public registries;
     bool public reject;
@@ -70,7 +70,7 @@ contract SynchronizedDkgControllerHarness {
 
     function getE3Stage(
         uint256 e3Id
-    ) external view returns (IInterfold.E3Stage) {
+    ) public view virtual returns (IInterfold.E3Stage) {
         return
             _requests[e3Id].committeePublicKey == bytes32(0)
                 ? IInterfold.E3Stage.Requested

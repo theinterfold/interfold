@@ -122,11 +122,17 @@ pins and the confirmed request before submitting the local intent. The existing 
 starts at `CiphertextReady`, independently of collector readiness. The decryption deadline is
 inclusive; a missing owner after expiry follows `DecryptionTimeout`.
 
-Synchronized request admission remains disabled. The fixed-set and one-use policies await protocol
-review. Collector failover and request-bound publication still need a joint runtime qualification.
-Secure Minimum also needs the
-[secure DKG-to-registry route](https://github.com/theinterfold/interfold/issues/2549) before its
-end-to-end qualification in [#2461](https://github.com/theinterfold/interfold/issues/2461).
+`pnpm rust:test:sync-dkg:recovery` rehearses the disabled insecure Minimum route from real signed
+registry publication to the keyshare/collector actors and a mined writer transaction. The Anvil
+controller seeds the finalized committee and emits a ciphertext reference. The production log reader
+and DA coordinator retrieve the object from a local HTTP fixture and deliver the opening to both
+designated keyshare mailboxes. After demotion the collector reopens its commit log, sequence index
+and plaintext checkpoints and rechecks the pinned rows. The writer effect calls the production
+`InterfoldLifecycle.verifyPlaintext` and request-bound registry wrapper. This exercises orderly
+restart below admission, not Avail bridge finality, production request admission or gossip delivery.
+The fixed-set and one-use policies await protocol review. Secure Minimum needs the
+[secure DKG-to-registry route](https://github.com/theinterfold/interfold/issues/2549) before the
+secure end-to-end qualification in [#2461](https://github.com/theinterfold/interfold/issues/2461).
 
 C7 admission binds the exact selected C6 commitments, ordered party IDs, ciphertext index, and
 plaintext. A C7 result replayed before `EffectsEnabled` is held in memory and used only if it binds

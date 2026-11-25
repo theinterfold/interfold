@@ -51,12 +51,15 @@ prepared("SynchronizedDkgPublication real proof", function () {
     sources["SynchronizedHonk.sol"] = { content: source };
     const contracts = compileSynchronized(sources);
     // Retain this exact temporary verifier for the Rust recovered-setup/registry campaign.
-    fs.writeFileSync(
-      path.join(path.dirname(fixturePath!), "SynchronizedHonk.json"),
-      JSON.stringify(
-        Object.fromEntries(
-          Object.entries(contracts["SynchronizedHonk.sol"]).map(
-            ([name, value]) => {
+    const saveVerifier = (
+      file: string,
+      compiledSource: (typeof contracts)[string],
+    ) =>
+      fs.writeFileSync(
+        path.join(path.dirname(fixturePath!), file),
+        JSON.stringify(
+          Object.fromEntries(
+            Object.entries(compiledSource).map(([name, value]) => {
               const compiled = value as {
                 abi: unknown;
                 evm: {
@@ -74,11 +77,22 @@ prepared("SynchronizedDkgPublication real proof", function () {
                   linkReferences: compiled.evm.bytecode.linkReferences,
                 },
               ];
-            },
+            }),
           ),
         ),
-      ),
-    );
+      );
+    saveVerifier("SynchronizedHonk.json", contracts["SynchronizedHonk.sol"]);
+    if (fixture.decryption_vk) {
+      const name = "DecryptionHonk.sol";
+      const content = fs.readFileSync(
+        path.join(path.dirname(fixturePath!), name),
+        "utf8",
+      );
+      saveVerifier(
+        "DecryptionHonk.json",
+        compileSynchronized({ [name]: { content } })[name],
+      );
+    }
     const [signer] = await ethers.getSigners();
     const deploy = deployCompiled(contracts, signer);
     const honk = await deploy("SynchronizedHonk.sol", "DkgAggregatorVerifier");

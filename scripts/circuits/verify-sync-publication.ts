@@ -10,6 +10,9 @@ export function verifySynchronizedPublication(root: string, fixture: string): nu
   const prepared = JSON.parse(readFileSync(fixture, 'utf8'))
   const source = join(dirname(fixture), 'SynchronizedHonk.sol')
   renderSynchronizedHonk(root, prepared.vk, 'dkg_aggregator', source)
+  if (prepared.decryption_vk) {
+    renderSynchronizedHonk(root, prepared.decryption_vk, 'decryption_aggregator', join(dirname(fixture), 'DecryptionHonk.sol'))
+  }
   const result = spawnSync(
     'pnpm',
     [
