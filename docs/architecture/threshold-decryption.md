@@ -96,21 +96,27 @@ the designated committee ID; the coordinator, arrival order, and retry correlati
 this choice. A second position or different publication is not a retry. Terminal history retires the
 plan even if key authority remains for hydration.
 
-Only the first matching opening observed live with effects enabled may reserve private noise.
-Projection replay restores the opening and its original cause, **not** permission to create another
-allocation. A restart with no allocation fails closed, even if the node crashed before the first
-write. The original live actor retains one pending seed until the allocation flush is acknowledged:
-a pre-insert failure retries those same bytes, and a visible but unflushed insert is flushed again.
-Reservation, proving and release use the latest block timestamp and the same inclusive chain
-deadline. The private Minimum worker consumes only a **previously flushed** allocation. It uses the
-saved summed SK and C4 directed keys to derive the native weighted share, checks the C4 openings,
-and flushes the exact share before proving it. On retry it compares bytes before proving or reusing
-a signed proof. Both paths verify C6 against the profile-specific VK, the confirmed row and the full
-native polynomial. Native work and proving use the shared node/E3 task group; retirement is checked
-again before signing and release. Keyshare flushes the signed bundle before broadcast.
+Only the designated keyshare that receives the first matching opening live with effects enabled may
+make its initial allocation. If it misses that delivery, replay cannot grant it a second chance. If
+its deadline read fails, the same actor can retry: it draws no seed until the window is confirmed
+open. It then retains one pending seed until the allocation flush is acknowledged. A pre-insert
+failure retries those same bytes; a visible but unflushed insert is flushed again. A replacement
+actor with no saved allocation fails closed in either window. This can cost the request a designated
+share even when other parties are online. Projection replay restores the bytes and their original
+cause, not permission to substitute an owner or draw fresh noise. Reservation, proving and release
+use the latest block timestamp and the same inclusive chain deadline. The private Minimum worker
+consumes only a **previously flushed** allocation. It uses the saved summed SK and C4 directed keys
+to derive the native weighted share, checks the C4 openings, and flushes the exact share before
+proving it. On retry it compares bytes before proving or reusing a signed proof. Both paths verify
+C6 against the profile-specific VK, the confirmed row and the full native polynomial. Native work
+and proving use the shared node/E3 task group; retirement is checked again before signing and
+release. Keyshare flushes the signed bundle before broadcast.
 
 Synchronized request admission remains disabled. The fixed-set and one-use policies await protocol
-review.
+review. Collector failover and request-bound publication still need a joint runtime qualification.
+Secure Minimum also needs the
+[secure DKG-to-registry route](https://github.com/theinterfold/interfold/issues/2549) before its
+end-to-end qualification in [#2461](https://github.com/theinterfold/interfold/issues/2461).
 
 C7 admission binds the exact selected C6 commitments, ordered party IDs, ciphertext index, and
 plaintext. A C7 result replayed before `EffectsEnabled` is held in memory and used only if it binds

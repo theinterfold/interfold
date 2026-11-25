@@ -68,10 +68,11 @@ The threshold-share soft checkpoint can advance when every missing dealer lacked
 key-collection closure. Verification still needs H−1 external shares, and collection remains open
 until completion or the canonical DKG deadline.
 
-Successful randomized contributions are reused after restart. Secret material is wrapped in local
-encrypted storage; do not treat the exported state types as safe plaintext diagnostics. Detailed
-dimensions, roster transitions, proof batches, and recovery limits are in
-[DKG](../../../docs/architecture/dkg.md) and
+Successful randomized contributions are reused after restart. On the disabled fixed-set route, a
+designated keyshare that misses the live opening or restarts before saving its allocation cannot
+contribute from replay. Secret material is wrapped in local encrypted storage; do not treat the
+exported state types as safe plaintext diagnostics. Detailed dimensions, roster transitions, proof
+batches, and recovery limits are in [DKG](../../../docs/architecture/dkg.md) and
 [threshold decryption](../../../docs/architecture/threshold-decryption.md).
 
 ## Tests
