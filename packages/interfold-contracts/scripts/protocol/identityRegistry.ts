@@ -3,9 +3,22 @@
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
+import { ethers as ethersLib } from "ethers";
+
+import { IDENTITY_TAG } from "../../zkpassport";
 import { deployProxy } from "./proxies";
 import type { IdentityGateConfig } from "./types";
 import { deployedAddress } from "./values";
+
+/** The identifier namespace of a verifier with this domain and scope. */
+export function identityNamespace(domain: string, scope: string): string {
+  return ethersLib.keccak256(
+    ethersLib.AbiCoder.defaultAbiCoder().encode(
+      ["string", "string", "string"],
+      [IDENTITY_TAG, domain, scope],
+    ),
+  );
+}
 
 /** Deploys a ZKPassportIdentityVerifier with `settings`; returns its address. */
 export async function deployZKPassportIdentityVerifier(

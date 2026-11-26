@@ -31,11 +31,7 @@ import {
   BondingRegistry__factory as BondingRegistryFactory,
   OwnerIdentityRegistry__factory as OwnerIdentityRegistryFactory,
 } from "../../types";
-import {
-  IDENTITY_TAG,
-  capacityWindowEnd,
-  publicInputLayout,
-} from "../../zkpassport";
+import { capacityWindowEnd, publicInputLayout } from "../../zkpassport";
 import { assertAragonGovernancePreconditions } from "../protocol/actions";
 import { arg, connect, hasFlag, networkName } from "../protocol/cli";
 import { proxyAdminInterface } from "../protocol/constants";
@@ -50,6 +46,7 @@ import {
 import {
   deployOwnerIdentityRegistry,
   deployZKPassportIdentityVerifier,
+  identityNamespace,
 } from "../protocol/identityRegistry";
 import {
   aragonAdminSafeBatch,
@@ -188,16 +185,6 @@ function assertBatchSize(operators: number): void {
 
 const isoTime = (timestamp: bigint) =>
   new Date(Number(timestamp) * 1000).toISOString();
-
-/** The identifier namespace of a verifier with this domain and scope. */
-export function identityNamespace(domain: string, scope: string): string {
-  return ethersLib.keccak256(
-    ethersLib.AbiCoder.defaultAbiCoder().encode(
-      ["string", "string", "string"],
-      [IDENTITY_TAG, domain, scope],
-    ),
-  );
-}
 
 /** ERC-7201 slot of BondingRegistry's identity storage (`interfold.storage.BondingIdentity`). */
 export const IDENTITY_STORAGE_SLOT =

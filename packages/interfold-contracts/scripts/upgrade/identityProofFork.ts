@@ -25,7 +25,6 @@ import { pathToFileURL } from "node:url";
 
 import type { OwnerIdentityRegistry } from "../../types";
 import {
-  IDENTITY_TAG,
   PLANNED_IDENTITY,
   PROOF_BUNDLE_KIND,
   type ProofBundle,
@@ -37,6 +36,7 @@ import { resolvePath } from "../protocol/files";
 import {
   deployOwnerIdentityRegistry,
   deployZKPassportIdentityVerifier,
+  identityNamespace,
 } from "../protocol/identityRegistry";
 
 export function readProofBundle(file: string): ProofBundle {
@@ -62,8 +62,8 @@ export function bundleSettings(bundle: ProofBundle) {
 /**
  * The credential that a verifier for the proof's domain and scope, with this maximum validity,
  * records for the proof, if ZKPassport's unique identifier is the proof's scoped nullifier. The
- * namespace is derived here, not read from a verifier, so a comparison with a verifier's result
- * also checks the verifier's derivation.
+ * namespace comes from the domain and the scope, not from a verifier, so a comparison with a
+ * verifier's result also checks the verifier's derivation.
  */
 export function expectedCredential(
   bundle: Pick<ProofBundle, "domain" | "scope" | "validUntil" | "params"> & {
@@ -71,21 +71,16 @@ export function expectedCredential(
   },
   maxValidity: bigint,
 ): { identityId: string; expiresAt: bigint } {
-  const coder = ethersLib.AbiCoder.defaultAbiCoder();
   const { proofDate, scopedNullifier } = readPublicInputs(
     bundle.version,
     bundle.params.proofVerificationData.publicInputs,
   );
-  // ZKPassportIdentityVerifier.IDENTITY_NAMESPACE
-  const namespace = ethersLib.keccak256(
-    coder.encode(
-      ["string", "string", "string"],
-      [IDENTITY_TAG, bundle.domain, bundle.scope],
-    ),
-  );
   return {
     identityId: ethersLib.keccak256(
-      coder.encode(["bytes32", "bytes32"], [namespace, scopedNullifier]),
+      ethersLib.AbiCoder.defaultAbiCoder().encode(
+        ["bytes32", "bytes32"],
+        [identityNamespace(bundle.domain, bundle.scope), scopedNullifier],
+      ),
     ),
     expiresAt: credentialEnd(BigInt(bundle.validUntil), proofDate, maxValidity),
   };

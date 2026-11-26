@@ -13,6 +13,7 @@ import { proxyAdminInterface } from "../../scripts/protocol/constants";
 import {
   deployOwnerIdentityRegistry,
   deployZKPassportIdentityVerifier,
+  identityNamespace,
 } from "../../scripts/protocol/identityRegistry";
 import type { ProtocolConfigFile } from "../../scripts/protocol/types";
 import {
@@ -24,7 +25,6 @@ import {
   changedIdentifierSettings,
   enforceDeadline,
   identityGateSettings,
-  identityNamespace,
   identityPolicyOf,
   lateRegistrations,
   sameVerifierSettings,
