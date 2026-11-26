@@ -70,12 +70,12 @@ canonical builder (`pnpm build:circuits`).
 
 ## Protocol, gas, replay, and report
 
-`protocol` runs the `e3-tests` integration target's ignored `benchmark_trbfv_actor` entry in the
-release profile with full proof aggregation. `gas` adds the existing Hardhat verifier replay tool.
-`run` includes these stages unless `--leaf-only` or `--witness-only` is set. The driver copies no
-protocol workflow and implements no EVM: it sets export paths and concurrency controls, then reads
-structured JSON exports. The integration child receives the runner's validated canonical BB path
-through `E3_CUSTOM_BB`, never a PATH lookup; run metadata records that path and version.
+For SS, `protocol` runs the `e3-tests` integration target's ignored `benchmark_trbfv_actor` entry in
+the release profile with full proof aggregation. `gas` adds the existing Hardhat verifier replay
+tool. `run` includes these stages unless `--leaf-only` or `--witness-only` is set. The driver copies
+no protocol workflow and implements no EVM: it sets export paths and concurrency controls, then
+reads structured JSON exports. The integration child receives the runner's validated canonical BB
+path through `E3_CUSTOM_BB`, never a PATH lookup; run metadata records that path and version.
 
 Install workspace dependencies with `pnpm install --frozen-lockfile`. Select a complete archived
 node pair before gas collection. Run benchmarks serially: they change shared Noir selectors.
@@ -109,6 +109,66 @@ records without relabeling, and never overwrites saved output.
 Each run writes a new directory under `circuits/benchmarks/runs/` (or `--output`): raw per-case
 records, `benchmark_run_meta.json`, `report.md`, protocol exports, and process logs. The runner
 refuses to reuse a non-empty directory.
+
+## Synchronized Minimum
+
+Use a source-built
+[candidate export](../../../scripts/circuits/README.md#synchronized-decryption-candidates) and the
+matching committed manifest. `run` needs its `candidate/` directory; the local request also needs
+`dkg-candidate/` in the same export. The runner stages verified bytes privately and does not
+activate a preset. Install the workspace dependencies, compile the contract package, and use pinned
+bb, solc 0.8.28 and Anvil. For example, with `profile=sync-secure-8192` or `sync-insecure-64`:
+
+```bash
+pnpm -C packages/interfold-contracts exec hardhat compile
+python3 scripts/circuits/guard-proof-rss.py pnpm bench:circuits run \
+  --mode "$profile" --committee minimum --candidate "$export" --output "$runs/graph"
+pnpm bench:circuits replay --input "$runs/graph" --candidate "$export" --output "$runs/replay"
+python3 scripts/circuits/guard-proof-rss.py pnpm bench:circuits request \
+  --mode "$profile" --committee minimum --candidate "$export" --output "$runs/request"
+```
+
+- **`run` / `gas`:** one native `19 + 18` ciphertext; recursive C6 for each of `[0,2]`, recursive C7
+  over those two verified rows, then the EVM outer. The standalone contract call checks the saved
+  proof against the selected child pins and public sample expectations. `--circuit` includes its
+  prerequisites; `--leaf-only` stops after C7; `--witness-only` stops at the two C6 witnesses.
+- **`request` / `protocol`:** the regular `committee:new` task submits to a private, temporary Anvil
+  deployment. Its controller admits the selected candidate on this chain. The mined request freezes
+  the DKG and decryption wrappers before ticket submission; the decryption default then rotates. The
+  signed recovery scenario uses that E3, its registry and finalized committee through key chunks,
+  ciphertext publication, aggregator failover and the mined plaintext. Production admission stays
+  disabled. The application compute verifier and HTTP DA object service are test fixtures.
+- **Timing:** `request_receipt.json` records the host time from the CLI's `request(...)` dispatch to
+  receiving the plaintext transaction receipt. It also records the longer time from CLI invocation,
+  which includes capacity and fee preflights. Local deployment and circuit builds precede both
+  clocks. Anvil advances past the ticket and input windows. Disk reopen, late setup and failover are
+  part of the timed workload; this is not a measurement of a fault-free production network.
+- **Gas and memory:** the standalone verifier estimate includes transaction intrinsic gas. The
+  request records full receipt gas for request, signed DKG publication (excluding key chunks),
+  ciphertext and plaintext separately. The guard prints sampled process-tree peak RSS and command
+  wall time; run the profiles serially. `report --input <run>` uses saved data only.
+
+For the
+[SS comparison](../../../circuits/benchmarks/synchronized-decryption.md#optimized-minimum-comparison--2026-11-26),
+hydrate the matching SS archive first. Use `mode=insecure` for `insecure-64/minimum` or
+`mode=secure` for `secure-8192/minimum` and a fresh output directory for each command:
+
+```bash
+python3 scripts/circuits/guard-proof-rss.py pnpm bench:circuits run --mode "$mode" --committee minimum \
+  --circuit threshold/share_decryption --circuit threshold/decrypted_shares_aggregation \
+  --leaf-only --output "$runs/ss-$mode-leaves"
+python3 scripts/circuits/guard-proof-rss.py pnpm bench:circuits gas --mode "$mode" --committee minimum \
+  --multithread-jobs 1 --output "$runs/ss-$mode-gas"
+python3 scripts/circuits/guard-proof-rss.py pnpm bench:circuits request --mode "$mode" --committee minimum \
+  --multithread-jobs 1 --output "$runs/ss-$mode-request"
+```
+
+SS `request` runs three full nodes and a local libp2p bootstrap peer on a private Anvil deployment.
+The nodes submit tickets, sign and prove DKG, publish the key, fetch one encrypted `19 + 18` result
+over HTTP, and submit the decryption proof. The request freezes the real SS verifiers before the
+future decryption default rotates. The host observes the last key-chunk and plaintext receipts over
+RPC. All SS nodes remain online; the timed SyncDec request includes failover and reopen. Standalone
+verifier estimates replay the mined calls after the timing interval.
 
 ## Focused checks
 

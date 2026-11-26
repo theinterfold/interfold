@@ -102,26 +102,37 @@ impl Setup {
         interfold: Address,
         profile: BfvProfile,
     ) -> Result<Self> {
+        let id = E3id::new(
+            ((alloy::primitives::U256::from_be_slice(interfold.as_slice()) << 96usize)
+                | alloy::primitives::U256::from(245603))
+            .to_string(),
+            31337,
+        );
+        let mut signers: Vec<_> = (0..3).map(|_| PrivateKeySigner::random()).collect();
+        signers.sort_by_key(|signer| signer.address());
+        Self::for_request(ciphers, interfold, profile, id, signers).await
+    }
+
+    async fn for_request(
+        ciphers: Vec<Arc<Cipher>>,
+        interfold: Address,
+        profile: BfvProfile,
+        id: E3id,
+        signers: Vec<PrivateKeySigner>,
+    ) -> Result<Self> {
         ensure!(ciphers.len() == 3);
         let cipher = ciphers[0].clone();
         let config = Configs::for_profile(profile, COMMITTEE)?;
         let mut rngs: Vec<_> = (0..3)
             .map(|owner| rand_chacha::ChaCha20Rng::seed_from_u64(245603 + owner))
             .collect();
-        let mut signers: Vec<_> = (0..3).map(|_| PrivateKeySigner::random()).collect();
-        signers.sort_by_key(|signer| signer.address());
         let committee: Vec<_> = signers
             .iter()
             .map(|signer| signer.address().to_string())
             .collect();
         let selected: Vec<_> = (0..3)
             .map(|owner| CiphernodeSelected {
-                e3_id: E3id::new(
-                    ((alloy::primitives::U256::from_be_slice(interfold.as_slice()) << 96usize)
-                        | alloy::primitives::U256::from(245603))
-                    .to_string(),
-                    31337,
-                ),
+                e3_id: id.clone(),
                 party_id: owner,
                 threshold_m: 1,
                 threshold_n: 3,

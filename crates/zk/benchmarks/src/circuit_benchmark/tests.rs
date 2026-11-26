@@ -30,6 +30,88 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
 }
 
 #[test]
+fn synchronized_selection_requires_minimum_and_verified_children() {
+    for (operation, args, valid) in [
+        (
+            "list",
+            vec!["--circuit", "threshold/decrypted_shares_aggregation"],
+            true,
+        ),
+        (
+            "list",
+            vec![
+                "--circuit",
+                "threshold/decrypted_shares_aggregation",
+                "--witness-only",
+            ],
+            false,
+        ),
+        ("list", vec!["--committee", "micro"], false),
+        ("request", vec!["--witness-only"], false),
+    ] {
+        let options = Options::parse_from(
+            [
+                "bench",
+                operation,
+                "--dry-run",
+                "--mode",
+                "sync-secure-8192",
+            ]
+            .into_iter()
+            .chain(args),
+        );
+        assert_eq!(execute(&root(), &options).is_ok(), valid);
+    }
+}
+
+#[test]
+fn ss_request_selects_only_complete_minimum_runs() {
+    for (args, valid) in [
+        (vec!["--committee", "minimum"], true),
+        (vec!["--committee", "micro"], false),
+        (vec!["--leaf-only"], false),
+        (vec!["--candidate", "/unused"], false),
+    ] {
+        let options = Options::parse_from(
+            ["bench", "request", "--dry-run", "--mode", "secure"]
+                .into_iter()
+                .chain(args),
+        );
+        assert_eq!(execute(&root(), &options).is_ok(), valid);
+    }
+}
+
+#[test]
+fn synchronized_replay_preserves_wrong_profile_failure_without_running_tools() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("summary.json");
+    let output = temp.path().join("replay");
+    write_json(
+        &input,
+        &serde_json::json!({"benchmark_config": {"mode":"sync-secure-8192"}}),
+    )
+    .unwrap();
+    let options = Options::parse_from([
+        "bench",
+        "replay",
+        "--input",
+        input.to_str().unwrap(),
+        "--output",
+        output.to_str().unwrap(),
+        "--candidate",
+        "no-artifacts",
+        "--mode",
+        "sync-insecure-64",
+    ]);
+    let error = execute(temp.path(), &options).unwrap_err();
+    assert!(error.to_string().contains("replay selection differs"));
+    let gas = protocol::read_json(&output.join("crisp_verify_gas.json")).unwrap();
+    assert_eq!(gas["complete"], false);
+    assert!(gas["verify_gas"]["dec"].is_null());
+    assert!(!output.join("evm-replay.log").exists());
+}
+
+#[test]
 fn chunk_and_limb_cases_always_run_in_the_default_variant() {
     use e3_zk_config::{CircuitName, CircuitVariant};
     for chunk in [
@@ -174,6 +256,7 @@ fn report_reads_both_schemas_without_relabeling_metrics_or_confusing_ude_legs() 
         metadata: serde_json::json!({"shared_preparations":[{"id":"ude","preparation":{"metric":"production_encryption_and_preparation_wall","time_seconds":0.25,"success":true}}]}),
         integration: serde_json::Value::Null,
         gas: serde_json::json!({"verify_gas":{"user":123}}),
+        request: serde_json::Value::Null,
         files: vec![],
     };
     let rendered = report::render(&data).unwrap();
@@ -225,6 +308,7 @@ fn report_excludes_failed_schema_two_phase_durations() {
         metadata: serde_json::Value::Null,
         integration: serde_json::Value::Null,
         gas: serde_json::Value::Null,
+        request: serde_json::Value::Null,
         files: vec![],
     };
     let rendered = report::render(&data).unwrap();

@@ -7,6 +7,7 @@ mod protocol;
 pub(crate) mod records;
 mod report;
 pub(crate) mod selection;
+mod synchronized;
 
 #[cfg(test)]
 mod tests;
@@ -27,7 +28,7 @@ use std::{
     about = "Benchmark production Rust witness preparation, Noir execution, and proof backends."
 )]
 pub(crate) struct Options {
-    /// Operation: run, protocol, gas, replay, report, or list.
+    /// Operation: run, protocol, gas, request (local Minimum), replay, report, or list.
     #[arg(default_value = "run")]
     pub command: String,
     /// Saved run directory for report, or saved summary/run directory for replay.
@@ -51,6 +52,9 @@ pub(crate) struct Options {
     /// Artifact root containing preset/committee/variant directories.
     #[arg(long)]
     pub artifacts: Option<PathBuf>,
+    /// Synchronized Minimum export with candidate/ (also dkg-candidate/ for a local request).
+    #[arg(long)]
+    pub candidate: Option<PathBuf>,
     /// New or empty output directory. Existing results are never overwritten.
     #[arg(long)]
     pub output: Option<PathBuf>,
@@ -153,7 +157,7 @@ pub(crate) fn main() -> Result<()> {
 pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
     if !matches!(
         options.command.as_str(),
-        "run" | "protocol" | "gas" | "replay" | "report" | "list"
+        "run" | "protocol" | "gas" | "request" | "replay" | "report" | "list"
     ) {
         bail!("Unknown benchmark operation: {}", options.command);
     }
@@ -193,13 +197,17 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
                 .context("replay requires --input <summary-or-run>")?,
         );
         let output = new_output(root, options)?;
-        let result = protocol::replay(
-            root,
-            &output,
-            &input,
-            options.mode.as_deref(),
-            options.committee.as_deref(),
-        );
+        let result = if options.candidate.is_some() {
+            synchronized::replay(root, &output, &input, options)
+        } else {
+            protocol::replay(
+                root,
+                &output,
+                &input,
+                options.mode.as_deref(),
+                options.committee.as_deref(),
+            )
+        };
         render_saved(&output)?;
         println!("Replay output: {}", output.display());
         return result;
@@ -211,10 +219,16 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
         .unwrap_or_else(|| root.join("circuits/benchmarks/config.json"));
     let config: selection::Config = serde_json::from_slice(&fs::read(config_path)?)?;
     let mode = options.mode.as_deref().unwrap_or(&config.mode);
+    if matches!(mode, "sync-insecure-64" | "sync-secure-8192") {
+        return synchronized::execute(root, options, mode.parse()?);
+    }
+    if options.candidate.is_some() {
+        bail!("--candidate requires a synchronized Minimum profile");
+    }
     let preset = match mode {
         "insecure" => BfvPreset::InsecureThreshold64,
         "secure" => BfvPreset::SecureThreshold8192,
-        _ => bail!("Mode must be insecure or secure"),
+        _ => bail!("Mode must be insecure, secure, sync-insecure-64, or sync-secure-8192"),
     };
     let active_path = root.join("circuits/bin/.active-preset.json");
     let active: serde_json::Value = match fs::read(active_path) {
@@ -243,6 +257,20 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
         bail!("Unsupported build pair: {preset_name}/{committee_name}");
     }
     let variant = selection::variant(&options.variant)?;
+    if options.command == "request"
+        && (committee != CiphernodesCommitteeSize::Minimum
+            || !options.circuit.is_empty()
+            || options.leaf_only
+            || options.witness_only
+            || options.bench_compile
+            || options.bench_vk
+            || options.skip_gates
+            || options.export_toml
+            || options.artifacts.is_some()
+            || options.variant != "recursive")
+    {
+        bail!("SS request benchmarks the complete Minimum lifecycle with the canonical SS archive; circuit and build options apply to run");
+    }
     let cases = if matches!(options.command.as_str(), "run" | "list") {
         config.select(mode, &options.circuit)?
     } else {
@@ -349,6 +377,12 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
         jobs: options.multithread_jobs,
         bb_binary: Some(prover.bb_binary().clone()),
     };
+    if options.command == "request" {
+        let result = protocol::request(root, &output, &protocol_config);
+        render_saved(&output)?;
+        println!("CLI request output: {}", output.display());
+        return result;
+    }
     if matches!(options.command.as_str(), "protocol" | "gas") {
         let result = protocol::collect(
             root,

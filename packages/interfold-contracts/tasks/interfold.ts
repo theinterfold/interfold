@@ -19,7 +19,12 @@ import { task } from "hardhat/config";
 import { ArgumentType } from "hardhat/types/arguments";
 import path from "path";
 
-import { BFV_PRESETS, type BfvProfile, bfvConfiguration } from "../bfv.js";
+import {
+  BFV_PRESETS,
+  BFV_PROFILES,
+  type BfvProfile,
+  bfvConfiguration,
+} from "../bfv.js";
 import { ACTIVE_BFV_PRESET, readDeploymentArgs } from "../scripts/utils";
 import { assertCommitteeOwnerCapacity } from "./committeeCapacity";
 import { assembleUniqueCommitteePublicKey } from "./committeePublicKey";
@@ -259,13 +264,29 @@ export const requestCommittee = task(
           "Invalid committee size - expected 0 (Minimum), 1 (Micro), 2 (Small), or 3 (Large).",
         );
       }
-      const { paramSet, configId: expectedCryptoConfigId } = bfvConfiguration(
-        profile as BfvProfile,
-        committeeSize,
-      );
-
       const connection = await hre.network.connect();
       const { ethers } = connection;
+      const benchmark = hre.globalOptions.network === "benchmark";
+      const localCandidate =
+        benchmark &&
+        (profile === "sync-insecure-64" || profile === "sync-secure-8192");
+      if (
+        localCandidate &&
+        (committeeSize !== 0 ||
+          (await ethers.provider.getNetwork()).chainId !== 31337n)
+      )
+        throw new Error(
+          "Synchronized benchmark requests require isolated local Minimum",
+        );
+      const definition = BFV_PROFILES[profile as BfvProfile];
+      const { paramSet, configId: expectedCryptoConfigId } = localCandidate
+        ? {
+            paramSet: definition.paramSet,
+            configId: definition.configurations.find(
+              (c) => c.committee === "minimum",
+            )!.cryptoConfigId,
+          }
+        : bfvConfiguration(profile as BfvProfile, committeeSize);
 
       const { deployAndSaveMockStableToken } = await import(
         "../scripts/deployAndSave/mockStableToken"
@@ -383,6 +404,7 @@ export const requestCommittee = task(
       await approveTx.wait();
       console.log("USDC approved");
 
+      if (benchmark) console.log(`REQUEST_SUBMITTED_MS=${Date.now()}`);
       const tx = await interfoldContract.request(requestParams);
 
       console.log("Requesting committee... ", tx.hash);
@@ -411,6 +433,24 @@ export const requestCommittee = task(
       }
 
       const e3Id = requestedEvent.args.e3Id;
+      if (localCandidate) {
+        const e3 = requestedEvent.args.e3;
+        if (
+          requestedEvent.args.cryptoConfigId !== expectedCryptoConfigId ||
+          e3.decryptionVerifier !==
+            readDeploymentArgs("SynchronizedDecryptionVerifier", "benchmark")
+              ?.address ||
+          e3.pkVerifier !==
+            readDeploymentArgs(
+              "SynchronizedDkgPublicationVerifier",
+              "benchmark",
+            )?.address
+        )
+          throw new Error(
+            "Mined request did not freeze the selected candidate verifiers",
+          );
+      }
+      if (benchmark) console.log(`REQUEST_TX=${receipt.hash}`);
 
       await fulfillConfiguredLocalRandomness(hre, e3Id, receipt.blockNumber);
 

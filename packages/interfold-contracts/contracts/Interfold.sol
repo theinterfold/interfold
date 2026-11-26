@@ -306,15 +306,7 @@ contract Interfold is
         );
 
         uint256 quotedFee = getE3Quote(requestParams);
-        InterfoldLifecycle.validateQuoteLimit(
-            address(feeToken),
-            address(requestParams.expectedFeeToken),
-            requestParams.paramSet,
-            uint8(requestParams.committeeSize),
-            requestParams.expectedCryptoConfigId,
-            requestParams.maxFee,
-            quotedFee
-        );
+        _validateRequestQuote(requestParams, quotedFee);
 
         if (uint96(nexte3Id) == type(uint96).max) revert E3IdSpaceExhausted();
         e3Id = nexte3Id++;
@@ -420,6 +412,21 @@ contract Interfold is
 
         emit E3Requested(e3Id, e3, requestParams.expectedCryptoConfigId);
         emit E3StageChanged(e3Id, E3Stage.None, E3Stage.Requested);
+    }
+
+    function _validateRequestQuote(
+        E3RequestParams calldata params,
+        uint256 fee
+    ) internal view virtual {
+        InterfoldLifecycle.validateQuoteLimit(
+            address(feeToken),
+            address(params.expectedFeeToken),
+            params.paramSet,
+            uint8(params.committeeSize),
+            params.expectedCryptoConfigId,
+            params.maxFee,
+            fee
+        );
     }
 
     /// @inheritdoc IInterfold

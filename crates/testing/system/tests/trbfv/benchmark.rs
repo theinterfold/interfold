@@ -14,6 +14,9 @@
 //! `BENCHMARK_PUBKEY_FLOW_TIMEOUT_SECS` / `BENCHMARK_PLAINTEXT_FLOW_TIMEOUT_SECS` (longer harness
 //! waits for slow or shared hosts; protocol deadlines stay frozen).
 
+mod request;
+pub use request::run as run_cli_request;
+
 use super::nodes::DKG_FOLD_ATTESTATION_VERIFIER;
 use super::run_and_check;
 use super::runner::Observations;

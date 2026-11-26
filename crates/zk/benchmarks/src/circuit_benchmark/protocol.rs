@@ -223,10 +223,16 @@ pub(crate) fn validate_active(root: &Path, cfg: &Configuration) -> Result<serde_
     }
     let active = read_json(&root.join("circuits/bin/.active-preset.json"))?;
     if active["preset"] != cfg.preset || active["committee"] != committee {
-        bail!("Protocol/gas requires active {}/{committee}; select its existing artifacts with pnpm build:circuits --preset {} --committee {committee} --hydrate-bin-only", cfg.preset, cfg.preset);
+        bail!("SS integration requires active {}/{committee}; select its existing artifacts with pnpm build:circuits --preset {} --committee {committee} --hydrate-bin-only", cfg.preset, cfg.preset);
     }
     let dist = root.join("dist/circuits");
     let stamp = artifacts::validate_pair(&dist, &cfg.preset, &committee)?;
+    if active["sourceHash"] != stamp["sourceHash"] {
+        bail!(
+            "Active circuits and archived {}/{committee} have different source hashes",
+            cfg.preset
+        );
+    }
     let manifest = read_json(&dist.join("checksums.json"))?;
     if manifest["algorithm"] != "sha256" {
         bail!("Artifact manifest must use sha256");
@@ -246,11 +252,7 @@ pub(crate) fn validate_active(root: &Path, cfg: &Configuration) -> Result<serde_
     Ok(stamp)
 }
 
-pub(crate) fn integration_command(
-    root: &Path,
-    output: &Path,
-    cfg: &Configuration,
-) -> Result<Command> {
+fn system_command(root: &Path, cfg: &Configuration, test: &str) -> Result<Command> {
     let bb = cfg
         .bb_binary
         .as_deref()
@@ -265,7 +267,7 @@ pub(crate) fn integration_command(
             "e3-tests",
             "--test",
             "integration",
-            "benchmark_trbfv_actor",
+            test,
             "--",
             "--ignored",
             "--exact",
@@ -276,7 +278,17 @@ pub(crate) fn integration_command(
         .env("BENCHMARK_MODE", &cfg.mode)
         .env("E3_CUSTOM_BB", bb)
         .env("CIPHERNODE_SKIP_PROOF_AGGREGATION", "false")
-        .env("BENCHMARK_MULTITHREAD_JOBS", cfg.jobs.to_string())
+        .env("BENCHMARK_MULTITHREAD_JOBS", cfg.jobs.to_string());
+    Ok(command)
+}
+
+pub(crate) fn integration_command(
+    root: &Path,
+    output: &Path,
+    cfg: &Configuration,
+) -> Result<Command> {
+    let mut command = system_command(root, cfg, "benchmark_trbfv_actor")?;
+    command
         .env(
             "BENCHMARK_FOLDED_OUTPUT",
             output.join("folded_artifacts.json"),
@@ -286,6 +298,28 @@ pub(crate) fn integration_command(
             output.join("integration_summary.json"),
         );
     Ok(command)
+}
+
+pub(super) fn request(root: &Path, output: &Path, cfg: &Configuration) -> Result<()> {
+    validate_active(root, cfg)?;
+    let path = output.join("request_receipt.json");
+    run_logged(
+        system_command(root, cfg, "benchmark_ss_cli_request")?
+            .env("E3_BENCHMARK_REQUEST_OUTPUT", &path)
+            .env(
+                "RUST_MIN_STACK",
+                std::env::var_os("RUST_MIN_STACK").unwrap_or_else(|| "16777216".into()),
+            ),
+        &output.join("request.log"),
+    )?;
+    let result = read_json(&path)?;
+    anyhow::ensure!(
+        result["profile"] == format!("ss-{}", cfg.preset)
+            && result["plaintext"] == 37
+            && result["committee"] == "minimum",
+        "missing SS Minimum request outcome"
+    );
+    Ok(())
 }
 
 pub(crate) fn evm_command(

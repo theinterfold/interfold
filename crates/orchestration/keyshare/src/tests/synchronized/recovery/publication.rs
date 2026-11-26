@@ -512,24 +512,26 @@ pub(super) async fn qualify(
             "public_inputs": public.fields().iter().map(hex).collect::<Vec<_>>(),
         }))?,
     )?;
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .canonicalize()?;
-    // Use the same executable as native proving, resolved before the child changes directory.
-    let bb = prover.bb_binary();
-    let bb = if bb.parent().is_some_and(|path| !path.as_os_str().is_empty()) {
-        bb.canonicalize()?
-    } else {
-        bb.to_path_buf()
-    };
-    let mut command = Command::new("pnpm");
-    command
-        .arg("test:sync-dkg:contract")
-        .arg(fixture)
-        .env("E3_CUSTOM_BB", bb)
-        .current_dir(root);
-    let output = run(&mut command)?;
-    print!("{}", String::from_utf8_lossy(&output.stdout));
+    if chain.cli.is_none() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()?;
+        // Use the same executable as native proving, resolved before the child changes directory.
+        let bb = prover.bb_binary();
+        let bb = if bb.parent().is_some_and(|path| !path.as_os_str().is_empty()) {
+            bb.canonicalize()?
+        } else {
+            bb.to_path_buf()
+        };
+        let mut command = Command::new("pnpm");
+        command
+            .arg("test:sync-dkg:contract")
+            .arg(fixture)
+            .env("E3_CUSTOM_BB", bb)
+            .current_dir(root);
+        let output = run(&mut command)?;
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+    }
     chain
         .qualify(
             recovered,
