@@ -292,16 +292,7 @@ async function main() {
         plan.identityRegistry,
         bundle.owner,
       );
-      const namespace: string = await new ethers.Contract(
-        plan.identityVerifier,
-        ["function IDENTITY_NAMESPACE() view returns (bytes32)"],
-        provider,
-      ).IDENTITY_NAMESPACE();
-      const expected = expectedCredential(
-        namespace,
-        bundle,
-        BigInt(identity.maxValidity),
-      );
+      const expected = expectedCredential(bundle, BigInt(identity.maxValidity));
       if (registered !== expected.identityId) {
         throw new Error(
           `Registered identifier ${registered} differs from the proof's ${expected.identityId}`,

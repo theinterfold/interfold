@@ -25,6 +25,7 @@ import { pathToFileURL } from "node:url";
 
 import type { OwnerIdentityRegistry } from "../../types";
 import {
+  IDENTITY_TAG,
   PLANNED_IDENTITY,
   PROOF_BUNDLE_KIND,
   type ProofBundle,
@@ -59,24 +60,32 @@ export function bundleSettings(bundle: ProofBundle) {
 }
 
 /**
- * The credential that a verifier with this identifier namespace and maximum validity records for
- * the proof, if ZKPassport's unique identifier is the proof's scoped nullifier.
+ * The credential that a verifier for the proof's domain and scope, with this maximum validity,
+ * records for the proof, if ZKPassport's unique identifier is the proof's scoped nullifier. The
+ * namespace is derived here, not read from a verifier, so a comparison with a verifier's result
+ * also checks the verifier's derivation.
  */
 export function expectedCredential(
-  namespace: string,
-  bundle: Pick<ProofBundle, "validUntil" | "params"> & { version: string },
+  bundle: Pick<ProofBundle, "domain" | "scope" | "validUntil" | "params"> & {
+    version: string;
+  },
   maxValidity: bigint,
 ): { identityId: string; expiresAt: bigint } {
+  const coder = ethersLib.AbiCoder.defaultAbiCoder();
   const { proofDate, scopedNullifier } = readPublicInputs(
     bundle.version,
     bundle.params.proofVerificationData.publicInputs,
   );
+  // ZKPassportIdentityVerifier.IDENTITY_NAMESPACE
+  const namespace = ethersLib.keccak256(
+    coder.encode(
+      ["string", "string", "string"],
+      [IDENTITY_TAG, bundle.domain, bundle.scope],
+    ),
+  );
   return {
     identityId: ethersLib.keccak256(
-      ethersLib.AbiCoder.defaultAbiCoder().encode(
-        ["bytes32", "bytes32"],
-        [namespace, scopedNullifier],
-      ),
+      coder.encode(["bytes32", "bytes32"], [namespace, scopedNullifier]),
     ),
     expiresAt: credentialEnd(BigInt(bundle.validUntil), proofDate, maxValidity),
   };
@@ -183,11 +192,7 @@ async function register(
   const receipt = await tx.wait();
   if (receipt?.status !== 1) throw new Error("Registration reverted");
   const [identityId, expiresAt] = await registry.identityOf(bundle.owner);
-  const expected = expectedCredential(
-    await verifier.IDENTITY_NAMESPACE(),
-    bundle,
-    maxValidity,
-  );
+  const expected = expectedCredential(bundle, maxValidity);
   if (identityId !== expected.identityId) {
     throw new Error(
       `Identifier ${identityId} differs from the scoped nullifier's ${expected.identityId}`,
@@ -231,8 +236,13 @@ async function revertName(
       reason?: string;
       shortMessage?: string;
     };
+    // A revert without data leaves "0x", and parseError throws on data shorter than a selector.
     // ethers decodes Error(string) and Panic(uint256) too; keep their reason.
-    const parsed = failure.data ? iface.parseError(failure.data) : null;
+    const data =
+      failure.data && ethersLib.dataLength(failure.data) >= 4
+        ? failure.data
+        : undefined;
+    const parsed = data ? iface.parseError(data) : null;
     const decoded =
       parsed && (parsed.name === "Error" || parsed.name === "Panic")
         ? `${parsed.name}(${parsed.args[0]})`
@@ -240,7 +250,7 @@ async function revertName(
     return (
       decoded ??
       failure.reason ??
-      (failure.data ? `revert data ${failure.data.slice(0, 74)}` : undefined) ??
+      (data ? `revert data ${data.slice(0, 74)}` : undefined) ??
       failure.shortMessage ??
       String(error)
     );

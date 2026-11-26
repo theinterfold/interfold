@@ -463,8 +463,12 @@ describe("ZKPassportIdentityVerifier", function () {
         );
         expect({ identityId, expiresAt }).to.deep.equal(
           expectedCredential(
-            await verifier.IDENTITY_NAMESPACE(),
-            { ...proof, validUntil: String(validUntil) },
+            {
+              ...proof,
+              domain: DOMAIN,
+              scope: SCOPE,
+              validUntil: String(validUntil),
+            },
             BigInt(MAX_VALIDITY),
           ),
         );

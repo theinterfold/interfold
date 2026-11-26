@@ -27,7 +27,7 @@
     "oprfKeyHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
     "faceMatchRequired": true,
     "proofValidity": "604800",
-    "maxValidity": "315619200"
+    "maxValidity": "31536000"
   },
   "feeToken": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
   "feeTokenDecimals": 18,

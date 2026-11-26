@@ -15,6 +15,7 @@ import { claimPlan, summarizeRewards, type CommitteeSeat, type SeatStatus } from
 import {
   boundChainName,
   buildProofBundle,
+  dateInput,
   identityStatusText,
   parseDateInput,
   type OwnerAccount,
@@ -28,7 +29,6 @@ const OWNER = '0x2222222222222222222222222222222222222222' as Address
 const PROPOSED = '0x3333333333333333333333333333333333333333' as Address
 const OTHER = '0x4444444444444444444444444444444444444444' as Address
 const UNIT = 10n ** 18n
-const dateInput = (ts: bigint) => new Date(Number(ts) * 1000).toISOString().slice(0, 10)
 
 const config: BondingConfig = {
   ciphernodeBondToken: OTHER,
@@ -255,8 +255,6 @@ const identityProps = {
   service,
   validUntilInput: '2027-12-01',
   onValidUntil: () => {},
-  previewFaceMatch: true,
-  onPreviewFaceMatch: () => {},
   request: { phase: 'idle' } as const,
   canRegister: true,
   busy: null,
@@ -269,8 +267,9 @@ const identityProps = {
   onDownloadSafe: () => {},
 }
 
-test('date fields read as UTC midnight and reject impossible dates', () => {
+test('date fields round-trip in UTC and reject impossible dates', () => {
   assert.equal(parseDateInput('2027-12-01'), BigInt(Date.UTC(2027, 11, 1) / 1000))
+  assert.equal(dateInput(parseDateInput('2027-12-01')!), '2027-12-01')
   assert.equal(parseDateInput('2026-02-31'), null)
   assert.equal(parseDateInput('01/12/2027'), null)
   assert.equal(parseDateInput('0099-01-01'), BigInt(Date.parse('0099-01-01T00:00:00Z') / 1000))
@@ -308,7 +307,8 @@ test('before a deployment the panel makes a proof to download', () => {
   )
   assert.match(preview, /No identity registry on/)
   assert.match(preview, /planned settings/)
-  assert.match(preview, /Require FaceMatch/)
+  // The preview asks for FaceMatch as the planned verifier does.
+  assert.match(preview, /asks for a face scan/)
 
   const ready = renderToStaticMarkup(
     <IdentityView

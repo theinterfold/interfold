@@ -33,6 +33,7 @@ import {
 import {
   boundChainName,
   buildProofBundle,
+  dateInput,
   fetchIdentityPolicy,
   fetchOwnerAccount,
   fetchVerifierConfig,
@@ -1386,8 +1387,8 @@ export type IdentityService = {
 const REGISTER_IDENTITY_KEY = 'registerIdentity'
 const REFRESH_AFTER_IDENTITY_KEY = 'refreshAfterIdentity'
 
-function identityService(verifier: VerifierConfig | null, previewFaceMatch: boolean): IdentityService {
-  const settings = verifier ?? { ...PLANNED_IDENTITY, faceMatchRequired: previewFaceMatch }
+function identityService(verifier: VerifierConfig | null): IdentityService {
+  const settings = verifier ?? PLANNED_IDENTITY
   return {
     domain: settings.domain,
     scope: settings.scope,
@@ -1432,9 +1433,7 @@ function IdentityPanel({
   const [account, setAccount] = useState<{ owner: Address; registry: Address | null; value: OwnerAccount } | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
   const [request, setRequest] = useState<IdentityRequest>({ phase: 'idle' })
-  // No default: a proof can only show an expiry date that the document reaches.
-  const [validUntilInput, setValidUntilInput] = useState('')
-  const [previewFaceMatch, setPreviewFaceMatch] = useState<boolean>(PLANNED_IDENTITY.faceMatchRequired)
+  const [validUntilInput, setValidUntilInput] = useState<string | null>(null)
   const cancelRequest = useRef<(() => void) | null>(null)
   // Each request gets a token. A callback of an older request changes nothing.
   const requestToken = useRef(0)
@@ -1491,7 +1490,7 @@ function IdentityPanel({
     return () => clearInterval(id)
   }, [])
 
-  const service = identityService(verifier, previewFaceMatch)
+  const service = identityService(verifier)
   const loaded = account?.owner === owner && account.registry === (policy?.registry ?? null) ? account.value : null
   const current =
     loaded && clock > loaded.now
@@ -1508,10 +1507,12 @@ function IdentityPanel({
   // A published registry without a verifier, or with a verifier that is not ZKPassport's, keeps its
   // credentials, but this page cannot register with it.
   const registrationClosed = Boolean(policy) && verifier === null
+  // Until the owner types a date, the field offers the longest credential that the verifier allows.
+  const validUntilValue = validUntilInput ?? (current ? dateInput(current.now + service.maxValidity) : '')
 
   const create = async () => {
     const chain = boundChainName(CHAIN.id)
-    const validUntil = parseDateInput(validUntilInput)
+    const validUntil = parseDateInput(validUntilValue)
     if (!chain || validUntil === null) return
     cancelRequest.current?.()
     const token = ++requestToken.current
@@ -1576,10 +1577,8 @@ function IdentityPanel({
       account={current}
       loadFailed={loadFailed}
       service={service}
-      validUntilInput={validUntilInput}
+      validUntilInput={validUntilValue}
       onValidUntil={setValidUntilInput}
-      previewFaceMatch={previewFaceMatch}
-      onPreviewFaceMatch={setPreviewFaceMatch}
       request={request}
       registrationClosed={registrationClosed}
       canRegister={sameAddress(wallet, owner)}
@@ -1664,8 +1663,6 @@ export function IdentityView({
   service,
   validUntilInput,
   onValidUntil,
-  previewFaceMatch,
-  onPreviewFaceMatch,
   request,
   registrationClosed = false,
   canRegister,
@@ -1688,8 +1685,6 @@ export function IdentityView({
   service: IdentityService
   validUntilInput: string
   onValidUntil: (value: string) => void
-  previewFaceMatch: boolean
-  onPreviewFaceMatch: (value: boolean) => void
   request: IdentityRequest
   /** The policy names a registry that has no verifier. */
   registrationClosed?: boolean
@@ -1807,14 +1802,14 @@ export function IdentityView({
                 this owner and to {NETWORK_NAME}.
               </p>
               <Field
-                label='Document expiry date (UTC)'
+                label='Document valid until (UTC date)'
                 value={validUntilInput}
                 onChange={onValidUntil}
                 placeholder='YYYY-MM-DD'
                 invalid={validUntilInput.trim() !== '' && validUntil === null}
-                hint={`Enter the expiry date printed on the document, or an earlier date. The credential lasts until this date, so the owner renews only when the document expires (at most ${formatDuration(
+                hint={`The document must be valid at least until this date. If it expires sooner, enter its expiry date. This date is public. The credential ends on this date, or ${formatDuration(
                   service.maxValidity,
-                )} after the proof).`}
+                )} after the proof if that is earlier.`}
               />
               {capacityApplies && plannedEnd !== null && windowEnd !== null && plannedEnd < windowEnd && (
                 <Note kind='warn'>
@@ -1827,14 +1822,7 @@ export function IdentityView({
                   Pick a date after the current expiry ({fmtDay(currentExpiry)}). A renewal cannot shorten the credential.
                 </Note>
               )}
-              {preview ? (
-                <label className='opcheck'>
-                  <input type='checkbox' checked={previewFaceMatch} onChange={(e) => onPreviewFaceMatch(e.target.checked)} />
-                  <span>Require FaceMatch (a live face scan against the chip photo)</span>
-                </label>
-              ) : (
-                service.faceMatch && <Note>The app also asks for a face scan (FaceMatch).</Note>
-              )}
+              {service.faceMatch && <Note>The app also asks for a face scan (FaceMatch).</Note>}
 
               {request.phase === 'waiting' ? (
                 <div className='opidentity__request'>
@@ -2047,6 +2035,8 @@ function parseAmount(input: string, decimals: number): bigint | null {
 function formatDuration(seconds: bigint): string {
   const s = Number(seconds)
   if (s <= 0) return 'none'
+  const year = 365 * 86400
+  if (s % year === 0) return s === year ? '1 year' : `${s / year} years`
   if (s % 86400 === 0) return `${s / 86400}d`
   if (s % 3600 === 0) return `${s / 3600}h`
   if (s % 60 === 0) return `${s / 60}m`

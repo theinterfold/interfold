@@ -313,6 +313,11 @@ export function fmtDay(ts: bigint): string {
   return new Date(Number(ts) * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
 }
 
+/** A Unix timestamp as the value of a date field: YYYY-MM-DD in UTC. */
+export function dateInput(ts: bigint): string {
+  return new Date(Number(ts) * 1000).toISOString().slice(0, 10)
+}
+
 /** A YYYY-MM-DD date field as the Unix timestamp of its UTC midnight, or null. */
 export function parseDateInput(value: string): bigint | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim())
