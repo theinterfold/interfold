@@ -7,7 +7,7 @@ services:
       context: ..
       dockerfile: dappnode/Dockerfile
       args:
-        UPSTREAM_VERSION: 0.19.1
+        UPSTREAM_VERSION: 0.20.0
         DAPPNODE_NETWORK: mainnet
     restart: unless-stopped
     # Allow the node's 60-second durability barrier to finish before Docker sends SIGKILL.
