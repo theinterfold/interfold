@@ -1,0 +1,218 @@
+---
+title: 'Bond-Owner Identity'
+description:
+  'Verify the bond owner of a ciphernode with an identity document and the ZKPassport app, and renew
+  or replace the credential.'
+---
+
+import { Callout, Steps } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
+
+# Bond-Owner Identity
+
+This page explains the identity check for bond owners and how to pass it. It is for the bond owner
+of a ciphernode. At the end, the bond owner has a credential in the identity registry, and you know
+when to renew it.
+
+## Why the check exists
+
+A committee takes at most one operator from each bond owner. This rule counts addresses, and one
+person can control many addresses. See
+[Committee limits for each bond owner](/operate/registration#committee-limits-for-each-bond-owner).
+
+The identity check connects each bond owner to one identity document. One document can back only one
+bond owner. Thus it is more difficult for one person or a small group to control a committee.
+
+The check proves one document, not one person. A person with two valid documents can verify two bond
+owners. The check also does not stop a person who lends a document to another person.
+
+## When the check applies
+
+Governance turns on the check in two steps:
+
+1. Governance publishes the identity registry with the check off. The operator guide of the hosted
+   dashboard then shows the **Bond-owner identity** panel. Bond owners can verify, but committee
+   selection does not change.
+2. Later, governance makes the check required. Then sortition counts an operator only when its bond
+   owner had a current credential at the snapshot before the request.
+
+The **Identity required** row of the panel shows `Not yet`, or the date from which the check is
+required. When the network has no identity registry, the panel does not show.
+
+When the check is required, the operator of an unverified bond owner stays registered and active. It
+keeps its bond and its tickets, and it completes the E3s of its current committees. It does not get
+a seat in a new committee. Ciphernode releases from v0.20.0 apply the check when they select
+candidates.
+
+## What the check shows
+
+The ZKPassport app reads the chip of the document on the phone. The data of the document stays on
+the phone. The app sends a proof.
+
+The proof shows these facts:
+
+- The document is valid at least until the date in **Document valid until**.
+- The proof is bound to the bond-owner address and to the network.
+- When FaceMatch is required, a live face scan agreed with the photo in the chip.
+
+The registration makes these values public on the chain: the identifier of the document, the
+bond-owner address, the date in **Document valid until**, and the date when the credential ends. The
+identity registry keeps no name, nationality, birth date, document number, or photo.
+
+A credential lasts at most one year, so the panel fills in the date one year after today. Thus the
+public date does not show the expiry date of the document. You enter the expiry date only when the
+document expires sooner. To keep that date private, enter an earlier date. The credential then ends
+on the earlier date.
+
+ZKPassport calculates the identifier from the chip data, and from the domain and the scope of the
+Interfold verifier. Other services get a different identifier for the same document. A party that
+has the full chip data, for example the issuing state, can calculate the identifier and connect it
+to the person.
+
+## What you need
+
+- A passport, national ID card, or residence permit with a chip. ZKPassport supports most documents
+  that comply with ICAO 9303. See the [ZKPassport FAQ](https://docs.zkpassport.id/faq).
+- A phone with NFC and the [ZKPassport app](https://zkpassport.id).
+- For FaceMatch, a phone that passes Google Play Integrity on Android or app attestation on Apple
+  devices. On a phone that fails this check, the app does not make a FaceMatch proof.
+- The bond-owner wallet in the browser. For a Safe, the Safe Transaction Builder.
+
+The verifier accepts only proofs that read the chip of the document. It rejects Aadhaar, Japanese My
+Number card, and mobile driving license proofs. It also rejects photos of the data page. Each of
+these sources gives a person another identifier, so one person could verify a second bond owner.
+
+## Verify the bond owner
+
+<Steps>
+
+### Open the identity panel
+
+Open [Run a ciphernode](https://dashboard.theinterfold.com/#operator) in the hosted dashboard.
+
+Connect a wallet.
+
+In **Operator key (the ciphernode address)**, enter the operator address. The **Bond-owner
+identity** panel shows below the setup steps when the operator has a bond owner.
+
+### Check the date
+
+**Document valid until (UTC date)** shows the date one year after today. The credential ends on this
+date. A credential cannot last longer.
+
+If the document expires before this date, enter the expiry date that is printed on the document, or
+an earlier date. Use the format `YYYY-MM-DD`. With a later date, the app cannot make the proof.
+
+### Create the request
+
+Click **Create ZKPassport request**. The panel shows a QR code.
+
+### Make the proof in the app
+
+Scan the QR code with the ZKPassport app.
+
+In the app, examine the site and the bound address. Then approve the request.
+
+Scan the chip of the document.
+
+If the app asks for a face scan, do the face scan.
+
+The app makes the proof in up to one minute. Then the panel shows **Proof ready**, the bound
+address, and the dates of the credential.
+
+### Register the identity
+
+For a bond owner with a browser wallet, connect the bond-owner wallet. Then click **Register the
+identity**.
+
+For a Safe, click **Download the Safe transaction**. Load the file in the Safe Transaction Builder,
+and execute it before the time that the panel shows. The registration costs about 1.3 million gas.
+
+Register before the date in **Register before**. After that date, the proof is too old, and you must
+create a new request.
+
+### Count the owner now
+
+Do this step only when the check is required and the operator is registered. Each node refreshes its
+own status when a new 30-day window starts. Until then, the operator does not count toward request
+capacity.
+
+To count the operator now, click **Count the owner now** after the registration. For a registered
+operator, the Safe transaction already includes this refresh.
+
+</Steps>
+
+The **Credential** row of the panel then shows `Verified until` and the end date.
+
+## Renew the credential
+
+A credential lasts at most one year after the proof. It ends earlier when you entered an earlier
+date. Thus a bond owner verifies again about once a year.
+
+When the check is required, request capacity uses fixed 30-day windows. A bond owner counts in a
+window only when its credential lasts until the end of that window. Renew at least 30 days before
+the credential ends. If you renew later, the owner can stop counting before the credential ends. It
+counts again after the renewal and the next status refresh.
+
+Renew with the same document while it is valid. A renewal cannot end before the current credential.
+Use the same procedure. For a verified owner, the panel title is **Renew the credential**.
+
+## Replace a document
+
+Verify the new document with the same procedure, for example after you get a new passport or after
+you lose a document. The new document gets a new identifier. The identity registry accepts the new
+credential when it does not end before the current credential.
+
+If the new document ends before the current credential, the registry rejects it with
+`IdentityExpiryReduced`. Then governance must revoke the current credential first.
+
+The identifier of an earlier document stays reserved for this bond owner. Another bond owner cannot
+register it, also after a replacement, an expiry, or a revocation. When FaceMatch is required, it is
+difficult for another person to make a proof with a stolen document.
+
+## Change the bond owner
+
+The credential belongs to the bond-owner address, not to the operator. When the check is required
+and the bond owner changes, the operator counts again only when the new owner has a credential. The
+admission cooldown also starts again. See
+[Change the bond owner](/operate/registration#change-the-bond-owner).
+
+## Troubleshooting
+
+| Message or error                                                                                             | Cause                                                                                                           | Action                                                                                     |
+| ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `This proof did not read the document's chip. Scan the chip of a passport or ID card in the ZKPassport app.` | The app used a source other than the chip, for example a photo of the data page.                                | Create a new request, and scan the chip.                                                   |
+| `The proof is too old to register. Create a new request.`                                                    | The proof is older than the proof validity of the verifier, or the date in **Document valid until** has passed. | Create a new request with a date in the future.                                            |
+| `This proof ends before the current credential. A renewal cannot shorten it.`                                | The new credential would end before the current credential.                                                     | Enter a later date. If the document ends earlier, ask governance to revoke the credential. |
+| `This proof is bound to another owner or network. Create a new request.`                                     | The proof names a different address or network.                                                                 | Open the panel of the correct operator on the correct network. Then create a new request.  |
+| `The request was rejected in the ZKPassport app.`                                                            | The request was declined in the app.                                                                            | Create a new request.                                                                      |
+| `IdentityInUse`                                                                                              | Another bond owner registered this document first.                                                              | Verify with a different document.                                                          |
+| `UnsupportedVerificationMethod`                                                                              | The proof did not read the chip of the document.                                                                | Create a new request, and scan the chip.                                                   |
+| The app cannot make the proof                                                                                | The document expires before the date in **Document valid until**.                                               | Create a new request with the expiry date of the document, or an earlier date.             |
+| The app does not find the chip                                                                               | The phone is not in contact with the chip, or the cover of the passport blocks it.                              | Keep the phone on the document and move it slowly. Open the passport at the photo page.    |
+
+For more help with the app, see the [ZKPassport FAQ](https://docs.zkpassport.id/faq).
+
+<Callout type='info'>
+  When governance closes registration, for example during a ZKPassport version change, the panel
+  shows that it cannot register now. Credentials that the registry already issued stay valid.
+</Callout>
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard
+    title='Tickets & Sortition'
+    href='/operate/tickets-and-sortition'
+    icon='ticket'
+    tag='Operate'
+  >
+    How the node scores its tickets and how the committee is selected.
+  </LinkCard>
+  <LinkCard title='Registration & Bonding' href='/operate/registration' icon='key' tag='Set up'>
+    Authorize a bond owner, bond FOLD, register the operator, and buy tickets.
+  </LinkCard>
+  <LinkCard title='Node Dashboard' href='/operate/dashboard' icon='dashboard' tag='Operate'>
+    The local node dashboard and the hosted dashboard.
+  </LinkCard>
+</LinkCards>

@@ -7,5 +7,8 @@
   },
   "transferability": {
     "title": "FOLD Transferability"
+  },
+  "identity": {
+    "title": "Operator Identity"
   }
 }
