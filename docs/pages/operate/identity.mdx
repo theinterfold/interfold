@@ -51,17 +51,18 @@ the phone. The app sends a proof.
 
 The proof shows these facts:
 
-- The document is valid until at least the date that the bond owner enters.
+- The document is valid at least until the date in **Document valid until**.
 - The proof is bound to the bond-owner address and to the network.
 - When FaceMatch is required, a live face scan agreed with the photo in the chip.
 
 The registration makes these values public on the chain: the identifier of the document, the
-bond-owner address, the date that the bond owner entered, and the date when the credential ends. The
+bond-owner address, the date in **Document valid until**, and the date when the credential ends. The
 identity registry keeps no name, nationality, birth date, document number, or photo.
 
-The entered date is usually the expiry date of the document. To keep the exact expiry date private,
-enter an earlier date. Then the credential ends on that earlier date, or earlier when the maximum
-duration of the verifier ends first.
+A credential lasts at most one year, so the panel fills in the date one year after today. Thus the
+public date does not show the expiry date of the document. You enter the expiry date only when the
+document expires sooner. To keep that date private, enter an earlier date. The credential then ends
+on the earlier date.
 
 ZKPassport calculates the identifier from the chip data, and from the domain and the scope of the
 Interfold verifier. Other services get a different identifier for the same document. A party that
@@ -94,13 +95,13 @@ Connect a wallet.
 In **Operator key (the ciphernode address)**, enter the operator address. The **Bond-owner
 identity** panel shows below the setup steps when the operator has a bond owner.
 
-### Enter the document expiry date
+### Check the date
 
-In **Document expiry date (UTC)**, enter the expiry date that is printed on the document. Use the
-format `YYYY-MM-DD`.
+**Document valid until (UTC date)** shows the date one year after today. The credential ends on this
+date. A credential cannot last longer.
 
-The credential ends on this date. The verifier also sets a maximum duration after the proof date.
-The hint of the field shows this maximum.
+If the document expires before this date, enter the expiry date that is printed on the document, or
+an earlier date. Use the format `YYYY-MM-DD`. With a later date, the app cannot make the proof.
 
 ### Create the request
 
@@ -145,16 +146,15 @@ The **Credential** row of the panel then shows `Verified until` and the end date
 
 ## Renew the credential
 
-The credential ends on the document expiry date that you entered. If the maximum duration after the
-proof date ends earlier, the credential ends then.
+A credential lasts at most one year after the proof. It ends earlier when you entered an earlier
+date. Thus a bond owner verifies again about once a year.
 
 When the check is required, request capacity uses fixed 30-day windows. A bond owner counts in a
 window only when its credential lasts until the end of that window. Renew at least 30 days before
 the credential ends. If you renew later, the owner can stop counting before the credential ends. It
 counts again after the renewal and the next status refresh.
 
-A renewal cannot end before the current credential. Thus you usually renew with a new document. If
-the maximum duration ended the credential before the document expires, renew with the same document.
+Renew with the same document while it is valid. A renewal cannot end before the current credential.
 Use the same procedure. For a verified owner, the panel title is **Renew the credential**.
 
 ## Replace a document
@@ -179,16 +179,17 @@ admission cooldown also starts again. See
 
 ## Troubleshooting
 
-| Message or error                                                                                             | Cause                                                                                       | Action                                                                                     |
-| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `This proof did not read the document's chip. Scan the chip of a passport or ID card in the ZKPassport app.` | The app used a source other than the chip, for example a photo of the data page.            | Create a new request, and scan the chip.                                                   |
-| `The proof is too old to register. Create a new request.`                                                    | The proof is older than the proof validity of the verifier, or the entered date has passed. | Create a new request with a date in the future.                                            |
-| `This proof ends before the current credential. A renewal cannot shorten it.`                                | The new credential would end before the current credential.                                 | Enter a later date. If the document ends earlier, ask governance to revoke the credential. |
-| `This proof is bound to another owner or network. Create a new request.`                                     | The proof names a different address or network.                                             | Open the panel of the correct operator on the correct network. Then create a new request.  |
-| `The request was rejected in the ZKPassport app.`                                                            | The request was declined in the app.                                                        | Create a new request.                                                                      |
-| `IdentityInUse`                                                                                              | Another bond owner registered this document first.                                          | Verify with a different document.                                                          |
-| `UnsupportedVerificationMethod`                                                                              | The proof did not read the chip of the document.                                            | Create a new request, and scan the chip.                                                   |
-| The app does not find the chip                                                                               | The phone is not in contact with the chip, or the cover of the passport blocks it.          | Keep the phone on the document and move it slowly. Open the passport at the photo page.    |
+| Message or error                                                                                             | Cause                                                                                                           | Action                                                                                     |
+| ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `This proof did not read the document's chip. Scan the chip of a passport or ID card in the ZKPassport app.` | The app used a source other than the chip, for example a photo of the data page.                                | Create a new request, and scan the chip.                                                   |
+| `The proof is too old to register. Create a new request.`                                                    | The proof is older than the proof validity of the verifier, or the date in **Document valid until** has passed. | Create a new request with a date in the future.                                            |
+| `This proof ends before the current credential. A renewal cannot shorten it.`                                | The new credential would end before the current credential.                                                     | Enter a later date. If the document ends earlier, ask governance to revoke the credential. |
+| `This proof is bound to another owner or network. Create a new request.`                                     | The proof names a different address or network.                                                                 | Open the panel of the correct operator on the correct network. Then create a new request.  |
+| `The request was rejected in the ZKPassport app.`                                                            | The request was declined in the app.                                                                            | Create a new request.                                                                      |
+| `IdentityInUse`                                                                                              | Another bond owner registered this document first.                                                              | Verify with a different document.                                                          |
+| `UnsupportedVerificationMethod`                                                                              | The proof did not read the chip of the document.                                                                | Create a new request, and scan the chip.                                                   |
+| The app cannot make the proof                                                                                | The document expires before the date in **Document valid until**.                                               | Create a new request with the expiry date of the document, or an earlier date.             |
+| The app does not find the chip                                                                               | The phone is not in contact with the chip, or the cover of the passport blocks it.                              | Keep the phone on the document and move it slowly. Open the passport at the photo page.    |
 
 For more help with the app, see the [ZKPassport FAQ](https://docs.zkpassport.id/faq).
 

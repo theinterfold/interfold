@@ -35,11 +35,12 @@ get a seat in a new committee.
 ### What does the Interfold learn about me?
 
 The ZKPassport app reads the document on your phone, and the data of the document stays on the
-phone. The registration makes an identifier of the document, the bond-owner address, and the expiry
-date that you enter public on the chain. To keep the exact expiry date private, enter an earlier
-date. The identity registry keeps no name, nationality, birth date, document number, or photo. Other
-services get a different identifier for the same document. The issuing state has the full chip data,
-so it can calculate the identifier and connect it to you.
+phone. The registration makes an identifier of the document, the bond-owner address, and a
+valid-until date public on the chain. The dashboard sets this date to one year after today, so the
+expiry date of your document stays private. If the document expires sooner, you enter its expiry
+date or an earlier date. The identity registry keeps no name, nationality, birth date, document
+number, or photo. Other services get a different identifier for the same document. The issuing state
+has the full chip data, so it can calculate the identifier and connect it to you.
 
 ### Which documents can I use?
 
@@ -49,9 +50,9 @@ Japanese My Number card, mobile driving licenses, or photos of the data page do 
 
 ### How often do I verify?
 
-The credential lasts until the expiry date that you enter, up to a maximum that the verifier sets.
-Renew at least 30 days before the credential ends. Usually you renew with your new document. If the
-maximum ended the credential before the document expires, renew with the same document.
+A credential lasts at most one year. Verify again each year, at least 30 days before the credential
+ends. Use the same document while it is valid. If the document expires sooner, the credential ends
+on its expiry date. Then verify with your new document.
 
 ### Can one person run several ciphernodes?
 
