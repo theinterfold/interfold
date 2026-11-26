@@ -9,7 +9,7 @@
 use alloy::{
     contract::{CallBuilder, CallDecoder},
     network::Ethereum,
-    primitives::Address,
+    primitives::{Address, U256},
     providers::{PendingTransactionBuilder, Provider},
 };
 use e3_evm_transactions::nonce::{broadcast_refused, next_free_nonce};
@@ -30,9 +30,21 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(60);
 /// reverts. Unused gas is refunded, so the headroom costs only when it is used.
 const GAS_HEADROOM_DIVISOR: u64 = 4;
 
-/// The gas limit for an estimate: the estimate plus a quarter.
-fn gas_limit(estimate: u64) -> u64 {
-    estimate.saturating_add(estimate / GAS_HEADROOM_DIVISOR)
+/// The most gas one transaction may use (EIP-7825, active on Ethereum and Sepolia).
+const MAX_TRANSACTION_GAS: u64 = 1 << 24;
+
+/// The gas limit for an estimate: the estimate plus a quarter, but no more than the network allows
+/// for one transaction or the sender can pay at the fee cap (`affordable`). It is never below the
+/// estimate, so a send that worked without headroom still goes out the same way.
+fn gas_limit(estimate: u64, affordable: u64) -> u64 {
+    let padded = estimate.saturating_add(estimate / GAS_HEADROOM_DIVISOR);
+    padded.min(MAX_TRANSACTION_GAS.min(affordable).max(estimate))
+}
+
+/// The gas units `balance` pays at `max_fee_per_gas` after the transferred `value`.
+fn affordable_gas(balance: U256, value: U256, max_fee_per_gas: u128) -> u64 {
+    let units = balance.saturating_sub(value) / U256::from(max_fee_per_gas.max(1));
+    u64::try_from(units).unwrap_or(u64::MAX)
 }
 
 type Reservations = BTreeMap<(u64, Address), BTreeMap<u64, Instant>>;
@@ -61,9 +73,9 @@ fn account_reservations(
 /// the lock is released, so several transactions of one account can wait for inclusion at the same
 /// time.
 ///
-/// It sets the gas limit (the node's estimate with headroom), the EIP-1559 fees, and the chain ID
-/// of `call` from the node before it reserves the nonce, so values that the caller set on `call`
-/// are replaced.
+/// It sets the gas limit (the node's estimate with headroom, see [`gas_limit`]), the EIP-1559 fees,
+/// and the chain ID of `call` from the node before it reserves the nonce, so values that the caller
+/// set on `call` are replaced.
 pub async fn send_with_next_nonce<P, D>(
     call: CallBuilder<P, D>,
     from: Address,
@@ -80,6 +92,9 @@ where
         let gas = call.estimate_gas().await?;
         let fees = call.provider.estimate_eip1559_fees().await?;
         let chain_id = call.provider.get_chain_id().await?;
+        let balance = call.provider.get_balance(from).await?;
+        let value = call.as_ref().value.unwrap_or_default();
+        let affordable = affordable_gas(balance, value, fees.max_fee_per_gas);
         let pending = call.provider.get_transaction_count(from).pending().await?;
         let account = account_reservations(&mut sent, chain_id, from);
         let nonce = next_free_nonce(account, pending, Instant::now());
@@ -87,7 +102,7 @@ where
         // can hold the transaction, and the reservation keeps later sends off its nonce.
         account.insert(nonce, Instant::now());
         let call = call
-            .gas(gas_limit(gas))
+            .gas(gas_limit(gas, affordable))
             .max_fee_per_gas(fees.max_fee_per_gas)
             .max_priority_fee_per_gas(fees.max_priority_fee_per_gas)
             .chain_id(chain_id)
@@ -131,7 +146,27 @@ mod tests {
 
     #[test]
     fn adds_a_quarter_to_the_gas_estimate_without_overflow() {
-        assert_eq!(gas_limit(329_878), 412_347);
-        assert_eq!(gas_limit(u64::MAX), u64::MAX);
+        assert_eq!(gas_limit(329_878, u64::MAX), 412_347);
+        assert_eq!(gas_limit(u64::MAX, u64::MAX), u64::MAX);
+    }
+
+    /// EIP-7825: 14M + 25% would exceed the 2^24 cap; the headroom stops at the cap.
+    #[test]
+    fn keeps_the_headroom_under_the_transaction_gas_cap() {
+        assert_eq!(gas_limit(14_000_000, u64::MAX), MAX_TRANSACTION_GAS);
+        assert_eq!(gas_limit(17_000_000, u64::MAX), 17_000_000);
+    }
+
+    /// A sender that pays the estimate but not the headroom still sends, with what it can pay.
+    #[test]
+    fn keeps_the_headroom_within_the_balance() {
+        assert_eq!(gas_limit(100_000, 110_000), 110_000);
+        assert_eq!(gas_limit(100_000, 90_000), 100_000);
+        assert_eq!(
+            affordable_gas(U256::from(1_000_000u64), U256::from(100_000u64), 10),
+            90_000
+        );
+        assert_eq!(affordable_gas(U256::from(5u64), U256::from(10u64), 10), 0);
+        assert_eq!(affordable_gas(U256::MAX, U256::ZERO, 0), u64::MAX);
     }
 }
