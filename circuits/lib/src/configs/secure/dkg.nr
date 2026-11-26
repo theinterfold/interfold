@@ -18,6 +18,7 @@ pub global QIS: [Field; L] = [2305843009214758913, 2305843009214988289];
 pub global PLAINTEXT_MODULUS: Field = 576460752317792257;
 pub global Q_MOD_T: Field = 3169161947774985;
 pub global Q_MOD_T_CENTERED: Field = 3169161947774985;
+pub global DKG_ERROR_BOUND: Field = 20;
 
 /************************************
 -------------------------------------
@@ -28,6 +29,22 @@ pk (CIRCUIT 0)
 // pk - bit parameters
 
 pub global PK_BIT_PK: u32 = 61;
+
+/************************************
+-------------------------------------
+share_computation chunk grid (l-BFV)
+-------------------------------------
+************************************/
+
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = 512;
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = N / SHARE_COMPUTATION_CHUNK_SIZE;
+pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = if SHARE_COMPUTATION_N_CHUNKS < 4 {
+    SHARE_COMPUTATION_N_CHUNKS
+} else {
+    4
+};
+pub global SHARE_COMPUTATION_N_BATCHES: u32 =
+    SHARE_COMPUTATION_N_CHUNKS / SHARE_COMPUTATION_CHUNKS_PER_BATCH;
 
 /************************************
 -------------------------------------

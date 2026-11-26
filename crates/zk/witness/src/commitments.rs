@@ -435,6 +435,17 @@ pub fn compute_pk_aggregation_commitment(
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
 }
 
+/// Commit to a single `pk1` row under `DS_PK_AGGREGATION`.
+///
+/// Temporary subset of the l-BFV commitments; superseded by the full module in the node-logic slices.
+pub fn compute_pk_aggregation_pk1_commitment(pk1: &CrtPolynomial, bit_pk: u32) -> BigInt {
+    let payload = flatten(Vec::new(), &pk1.limbs, bit_pk);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    let commitment_field = compute_commitments(payload, DS_PK_AGGREGATION, io)[0];
+    let commitment_bytes = commitment_field.into_bigint().to_bytes_le();
+    BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
+}
+
 /// Compute aggregation commitment.
 ///
 /// This matches the Noir `compute_recursive_aggregation_commitment` function exactly.

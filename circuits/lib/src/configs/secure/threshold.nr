@@ -7,7 +7,11 @@
 use crate::core::threshold::decrypted_shares_aggregation::Configs as DecryptedSharesAggregationConfigs;
 use crate::core::threshold::pk_aggregation::Configs as PkAggregationConfigs;
 use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;
+use crate::core::threshold::rlk_aggregation::Configs as RlkAggregationConfigs;
+use crate::core::threshold::rlk_generation::Configs as RlkGenerationConfigs;
 use crate::core::threshold::share_decryption::Configs as ShareDecryptionConfigs;
+use crate::core::threshold::user_data_encryption_chunk::Ct0ChunkConfigs as UserDataEncryptionCt0ChunkConfigs;
+use crate::core::threshold::user_data_encryption_chunk::Ct1ChunkConfigs as UserDataEncryptionCt1ChunkConfigs;
 use crate::core::threshold::user_data_encryption_ct0::Configs as UserDataEncryptionCt0Configs;
 use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
 use crate::math::polynomial::Polynomial;
@@ -17,6 +21,10 @@ use crate::math::polynomial::Polynomial;
 /// The InsecureThreshold64 preset has been generated manually.
 pub global PARAMS_SEARCH_N: Field = 45;
 pub global PARAMS_SEARCH_Z: Field = 100000;
+pub global PARAMS_LAMBDA: u32 = 45;
+pub global PARAMS_TWO_POW_LAMBDA_PLUS_ONE: Field = 70368744177664;
+pub global PARAMS_MULT_DEPTH: u32 = 0;
+pub global PARAMS_SMUDGING_B_ENC: Field = 230584300921369395200;
 
 pub global CRP: [Polynomial<N>; L] = [
     Polynomial::new([
@@ -24637,6 +24645,17 @@ pub global PK_GENERATION_R_BOUNDS: [Field; L] = [4096, 4096, 4096];
 
 pub global PK_GENERATION_B_ENC: Field = 518814677073081139200;
 
+// The smudging bound split for the l-BFV C2b leaves: `B + e` and `B - e` are each
+// `high * 2^SPLIT_BITS + low`, and their sum is `2B = TWICE_BOUND_HIGH * 2^SPLIT_BITS + TWICE_BOUND_LOW`.
+pub global PK_GENERATION_E_SM_SPLIT_BITS: u32 = 73;
+pub global PK_GENERATION_BIT_E_SM_HIGH: u32 = 73;
+pub global PK_GENERATION_BIT_E_SM_SPLIT_QUOTIENT: u32 = 74;
+pub global PK_GENERATION_E_SM_TWICE_BOUND_HIGH: Field = 6333186975989932865637;
+pub global PK_GENERATION_E_SM_TWICE_BOUND_LOW: Field = 1955354871813212471296;
+pub global PK_GENERATION_E_SM_RADIX_MOD_Q: [Field; L] =
+    [576460516899880961, 576460523341938689, 576460533541863425];
+pub global PK_GENERATION_E_SM_BOUND_MOD_Q: [Field; L] =
+    [305895031149209114, 238299757891710181, 316982288834312004];
 pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
     QIS,
     PK_GENERATION_EEK_BOUND,
@@ -24646,6 +24665,56 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
     PK_GENERATION_E_SM_QUOTIENT_BOUNDS,
     PK_GENERATION_R_BOUNDS,
 );
+
+/************************************
+-------------------------------------
+lbfv_pk_generation (l-BFV PUBLIC KEY ROW)
+-------------------------------------
+************************************/
+
+pub global LBFV_PK_GENERATION_BIT_R: u32 = 13;
+pub global LBFV_PK_GENERATION_R_BOUNDS: [Field; L] = [4096, 4096, 4096];
+
+/************************************
+-------------------------------------
+l-BFV relinearization key circuits
+-------------------------------------
+************************************/
+
+pub global GADGET_DIM: u32 = L;
+// C1 uses the repeated CRP path because this preset does not enable l-BFV.
+pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP; GADGET_DIM];
+// No l-BFV rows on this preset; the l-BFV circuits are never built for it.
+pub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [0, 0, 0];
+pub global LBFV_URS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [0, 0, 0];
+
+pub global RLK_GENERATION_BIT_R: u32 = PK_GENERATION_BIT_SK;
+pub global RLK_GENERATION_BIT_SK: u32 = PK_GENERATION_BIT_SK;
+pub global RLK_GENERATION_BIT_E0: u32 = PK_GENERATION_BIT_EEK;
+pub global RLK_GENERATION_BIT_E2: u32 = PK_GENERATION_BIT_EEK;
+pub global RLK_GENERATION_BIT_RD0: u32 = LBFV_PK_GENERATION_BIT_R;
+pub global RLK_GENERATION_BIT_RD2: u32 = LBFV_PK_GENERATION_BIT_R;
+pub global RLK_GENERATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
+
+pub global RLK_GENERATION_R_BOUND: Field = PK_GENERATION_SK_BOUND;
+pub global RLK_GENERATION_SK_BOUND: Field = PK_GENERATION_SK_BOUND;
+pub global RLK_GENERATION_E0_BOUND: Field = PK_GENERATION_EEK_BOUND;
+pub global RLK_GENERATION_E2_BOUND: Field = PK_GENERATION_EEK_BOUND;
+pub global RLK_GENERATION_RD0_BOUNDS: [Field; L] = LBFV_PK_GENERATION_R_BOUNDS;
+pub global RLK_GENERATION_RD2_BOUNDS: [Field; L] = LBFV_PK_GENERATION_R_BOUNDS;
+
+pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::new(
+    QIS,
+    RLK_GENERATION_R_BOUND,
+    RLK_GENERATION_SK_BOUND,
+    RLK_GENERATION_E0_BOUND,
+    RLK_GENERATION_E2_BOUND,
+    RLK_GENERATION_RD0_BOUNDS,
+    RLK_GENERATION_RD2_BOUNDS,
+);
+
+pub global RLK_AGGREGATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
+pub global RLK_AGGREGATION_CONFIGS: RlkAggregationConfigs<L> = RlkAggregationConfigs::new(QIS);
 
 /************************************
 -------------------------------------
@@ -24711,6 +24780,47 @@ pub global USER_DATA_ENCRYPTION_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> 
     USER_DATA_ENCRYPTION_E1_BOUND,
     USER_DATA_ENCRYPTION_U_BOUND,
     USER_DATA_ENCRYPTION_CT1_R_BOUNDS,
+);
+
+/************************************
+-------------------------------------
+user_data_encryption chunked pipeline (l-BFV)
+-------------------------------------
+************************************/
+
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_PK: u32 = 59;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_CT: u32 = 59;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_U: u32 = 1;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_E0: u32 = 69;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_E1: u32 = 5;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_K: u32 = 25;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_R1: u32 = 24;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_P1: u32 = 13;
+pub global USER_DATA_ENCRYPTION_CHUNKED_K0IS: [Field; L] =
+    [125444404229363203, 488925560082018202, 25298115753245809];
+pub global USER_DATA_ENCRYPTION_CHUNKED_PK_BOUNDS: [Field; L] =
+    [288230376158896128, 288230376158699520, 288230376158388224];
+pub global USER_DATA_ENCRYPTION_CHUNKED_E0_BOUND: Field = 518814677073081139200;
+pub global USER_DATA_ENCRYPTION_CHUNKED_E1_BOUND: Field = 20;
+pub global USER_DATA_ENCRYPTION_CHUNKED_U_BOUND: Field = 1;
+pub global USER_DATA_ENCRYPTION_CHUNKED_K1_LOW_BOUND: Field = 0;
+pub global USER_DATA_ENCRYPTION_CHUNKED_K1_UP_BOUND: Field = 16999999;
+pub global USER_DATA_ENCRYPTION_CHUNKED_R1_LOW_BOUNDS: [Field; L] = [3704390, 14423558, 751046];
+pub global USER_DATA_ENCRYPTION_CHUNKED_R1_UP_BOUNDS: [Field; L] = [4997, 4997, 4997];
+pub global USER_DATA_ENCRYPTION_CHUNKED_P1_BOUNDS: [Field; L] = [4096, 4096, 4096];
+pub global USER_DATA_ENCRYPTION_CHUNKED_CT0_CHUNK_CONFIGS: UserDataEncryptionCt0ChunkConfigs<L> = UserDataEncryptionCt0ChunkConfigs::new(
+    QIS,
+    USER_DATA_ENCRYPTION_CHUNKED_U_BOUND,
+    USER_DATA_ENCRYPTION_CHUNKED_E0_BOUND,
+    USER_DATA_ENCRYPTION_CHUNKED_K1_LOW_BOUND,
+    USER_DATA_ENCRYPTION_CHUNKED_K1_UP_BOUND,
+    USER_DATA_ENCRYPTION_CHUNKED_R1_LOW_BOUNDS,
+    USER_DATA_ENCRYPTION_CHUNKED_R1_UP_BOUNDS,
+);
+pub global USER_DATA_ENCRYPTION_CHUNKED_CT1_CHUNK_CONFIGS: UserDataEncryptionCt1ChunkConfigs<L> = UserDataEncryptionCt1ChunkConfigs::new(
+    USER_DATA_ENCRYPTION_CHUNKED_U_BOUND,
+    USER_DATA_ENCRYPTION_CHUNKED_E1_BOUND,
+    USER_DATA_ENCRYPTION_CHUNKED_P1_BOUNDS,
 );
 
 /************************************

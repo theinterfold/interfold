@@ -11,6 +11,8 @@ use crate::core::dkg::share_encryption::Configs as ShareEncryptionConfigs;
 
 pub global N: u32 = 64;
 pub global L: u32 = 2;
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = 64;
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = 1;
 pub global QIS: [Field; L] = [536869633, 536870273];
 pub global PLAINTEXT_MODULUS: Field = 268434178;
 pub global Q_MOD_T: Field = 2448009;

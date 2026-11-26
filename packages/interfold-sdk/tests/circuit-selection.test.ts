@@ -32,8 +32,14 @@ describe('SDK circuit selection', () => {
     expect(DEFAULT_E3_CONFIG.committeeSize).toBe(CommitteeSize.Minimum)
   })
 
-  it('uses current configuration IDs and the current secure registry entry', () => {
+  it('uses current configuration IDs and the current registry entries', () => {
     const fixture = JSON.parse(readFixture(new URL('../../../crates/bfv/params/tests/fixtures/bfv_profiles.json', import.meta.url), 'utf8'))
+    const registrySlots: Record<string, ParamSet> = {
+      'ss-insecure-64': ParamSet.Insecure64,
+      'ss-secure-8192': ParamSet.Secure8192,
+      'ss-secure-16384': ParamSet.Secure16384,
+      'ss-insecure-lbfv': ParamSet.InsecureLbfv,
+    }
     for (const vector of fixture.profiles) {
       const profile = vector.profile as BfvProfile
       for (const configuration of vector.configurations) {
@@ -43,7 +49,7 @@ describe('SDK circuit selection', () => {
         } else {
           const selected = bfvConfigForRequest(profile, committee)
           expect(selected.configId).toBe(configuration.cryptoConfigId)
-          expect(selected.paramSet).toBe(profile === 'ss-secure-8192' ? ParamSet.Secure8192 : ParamSet.Insecure64)
+          expect(selected.paramSet).toBe(registrySlots[profile])
         }
       }
     }
@@ -126,10 +132,15 @@ describe('SDK circuit selection', () => {
     await expect(assertSdkMinimumCircuits()).rejects.toMatchObject({ code: 'SDK_CIRCUIT_COMMITTEE_MISMATCH' })
   })
 
-  it('rechecks the selection after another build changes the stamp', async () => {
+  it('accepts a supported secure active preset after a separate circuit build', async () => {
     readFileSync.mockReturnValueOnce(JSON.stringify({ preset: 'insecure-64', committee: 'minimum' }))
     readFileSync.mockReturnValueOnce(JSON.stringify({ preset: 'secure-8192', committee: 'minimum' }))
     await assertSdkMinimumCircuits()
+    await expect(assertSdkMinimumCircuits()).resolves.toBeUndefined()
+  })
+
+  it('rejects an unsupported active preset', async () => {
+    readFileSync.mockReturnValue(JSON.stringify({ preset: 'unknown', committee: 'minimum' }))
     await expect(assertSdkMinimumCircuits()).rejects.toMatchObject({ code: 'SDK_CIRCUIT_PRESET_MISMATCH' })
   })
 })

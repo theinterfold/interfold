@@ -11,11 +11,13 @@ pub mod constants;
 pub mod crp;
 #[cfg(feature = "abi-encoding")]
 pub mod encoding;
+pub mod lbfv;
 #[cfg(feature = "abi-encoding")]
 pub mod metadata;
 pub mod presets;
 pub mod profiles;
 pub mod search;
+pub mod smudging;
 pub mod utils;
 
 pub use builder::{
@@ -33,8 +35,16 @@ pub use encoding::{
     bfv_profile_crypto_config_id, decode_bfv_params, decode_bfv_params_arc, encode_bfv_params,
     EncodingError,
 };
+pub use lbfv::{
+    is_lbfv_path, is_supported_lbfv_row_count, lbfv_crs_seed, lbfv_row_count, lbfv_urs_seed,
+    supports_lbfv, LBFV_CONSTANTS_VERSION, SECURE_16384_LBFV_CRS_SEED, SECURE_16384_LBFV_URS_SEED,
+};
 pub use presets::{
     default_param_set, BfvParamSet, BfvPreset, LambdaConfig, ParameterType, PresetError,
     PresetMetadata, PresetSearchDefaults, SecurityTier, DEFAULT_BFV_PRESET,
 };
 pub use profiles::{BfvDecryptionProtocol, BfvProfile, BfvProfileError};
+pub use smudging::{
+    calculate_smudging_bound, calculate_smudging_bound_with_model, fresh_noise_model,
+    generate_smudging_error, smudging_bound_config,
+};
