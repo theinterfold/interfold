@@ -106,6 +106,32 @@ impl<let N: u32> Polynomial<N> {
         out
     }
 
+    /// [`Polynomial::dot`] with the same value and gates, but the running sum is made a witness
+    /// every 256 terms. Otherwise the compiler holds the whole sum as one expression of `N`
+    /// products: five secure-16384 dots then need 29.7 GB to compile, against 3.2 GB here.
+    pub fn dot_materialized(self, k: [Field; N]) -> Field {
+        let mut out: Field = 0;
+        for j in 0..N {
+            out += self.coefficients[j] * k[j];
+            if (j + 1) % 256 == 0 {
+                std::as_witness(out);
+            }
+        }
+        out
+    }
+
+    /// [`Polynomial::dot`] up to degree 8192 and [`Polynomial::dot_materialized`] above it. `N` is
+    /// a compile-time constant, so only one branch is compiled: circuits shared with the trBFV path
+    /// keep their exact bytecode at secure-8192, while degree-16384 builds avoid the compile-memory
+    /// cost of one `N`-term expression (C3, C6: about 30 GB at 16384).
+    pub fn dot_for_degree(self, k: [Field; N]) -> Field {
+        if N > 8192 {
+            self.dot_materialized(k)
+        } else {
+            self.dot(k)
+        }
+    }
+
     pub fn eval(self, x: Field) -> Field {
         let mut result = self.coefficients[0];
 
