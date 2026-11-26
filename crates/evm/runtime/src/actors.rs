@@ -52,7 +52,7 @@ pub use evm_read_interface::*;
 pub use evm_router::*;
 pub use fix_historical_order::*;
 pub use interfold_sol_reader::InterfoldSolReader;
-pub use interfold_sol_writer::InterfoldSolWriter;
+pub use interfold_sol_writer::{publish_synchronized_plaintext_definition, InterfoldSolWriter};
 pub use randomness_provider_sol::RandomnessProviderSolReader;
 pub use slashing_manager_sol_reader::SlashingManagerSolReader;
 pub use slashing_manager_sol_writer::{

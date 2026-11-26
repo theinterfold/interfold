@@ -272,6 +272,35 @@ pub fn compute_ct_commitment_with_params(
     Ok(commitment)
 }
 
+/// Check the confirmed full commitment and return the c0 opening required on each C6 row.
+pub fn validate_synchronized_ciphertext(
+    bytes: &[u8],
+    params: &Arc<BfvParameters>,
+    expected: [u8; 32],
+) -> Result<[u8; 32]> {
+    let ct = Ciphertext::from_bytes(bytes, params)?;
+    anyhow::ensure!(
+        ct.level == 0 && ct.len() == 2,
+        "synchronized ciphertext requires two level-zero components"
+    );
+    anyhow::ensure!(
+        e3_zk_witness::threshold::user_data_encryption::compute_ciphertext_commitment(params, &ct)?
+            == expected,
+        "wrong published synchronized ciphertext commitment"
+    );
+    let c0 = e3_zk_witness::encoding::fhe_poly_to_crt_centered(&ct[0], params.moduli())?;
+    let digest = e3_zk_witness::commitments::ciphertext_component_commitment(
+        &c0,
+        e3_fhe_params::utils::compute_modulus_bit(params),
+    )
+    .to_bytes_be()
+    .1;
+    let mut field = [0; 32];
+    anyhow::ensure!(digest.len() <= field.len(), "invalid c0 commitment width");
+    field[32 - digest.len()..].copy_from_slice(&digest);
+    Ok(field)
+}
+
 #[cfg(test)]
 mod tests {
     use e3_fhe_params::DEFAULT_BFV_PRESET;
@@ -279,6 +308,26 @@ mod tests {
     use fhe_traits::FheDecoder;
 
     use super::*;
+
+    #[test]
+    fn synchronized_contribution_rejects_another_level_or_commitment() -> Result<()> {
+        let params = e3_fhe_params::build_pair_for_preset(BfvPreset::InsecureThreshold64)?.0;
+        let sk = SecretKey::random(&params, &mut rng());
+        let pk = public_key_on_protocol_crs(&params, &sk, &mut rng())?;
+        let pt = Plaintext::try_encode(&vec![7u64], Encoding::poly(), &params)?;
+        let mut ct = pk.try_encrypt(&pt, &mut rng())?;
+        let expected = compute_ct_commitment_with_params(&ct.to_bytes(), &params)?;
+        validate_synchronized_ciphertext(&ct.to_bytes(), &params, expected)?;
+        assert!(validate_synchronized_ciphertext(&ct.to_bytes(), &params, [0; 32]).is_err());
+        ct.switch_to_level(1)?;
+        assert!(
+            validate_synchronized_ciphertext(&ct.to_bytes(), &params, expected)
+                .unwrap_err()
+                .to_string()
+                .contains("level-zero")
+        );
+        Ok(())
+    }
 
     #[test]
     fn verifiable_encryption_rejects_noncanonical_parameter_tuple_before_key_decode() {

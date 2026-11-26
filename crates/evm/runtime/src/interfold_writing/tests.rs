@@ -202,6 +202,53 @@ fn intent(id: &E3id, keys: &CanonicalPublicKeys, value: u64) -> PlaintextAggrega
 }
 
 #[actix::test]
+async fn submit_mailbox_rechecks_synchronized_authority_before_any_chain_call() -> Result<()> {
+    let (id, contract, keys) = crate::canonical_key::synchronized_writer_fixture()?;
+    let fixture = ReplayFixture::new().await?;
+    let rpc = Asserter::new();
+    rpc.push_success(&"0x1");
+    let provider = EthProvider::new(
+        ProviderBuilder::new()
+            .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+            .connect_mocked_client(rpc.clone()),
+    )
+    .await?;
+    let mut writer = InterfoldSolWriter::new(
+        &fixture.bus,
+        provider,
+        contract,
+        keys.clone(),
+        fixture.source.eventstore_reader()?.seq(),
+    )?;
+    // Simulate already queued work after loss of the ciphertext opening. The SS branch would
+    // issue a stage preflight and settle on this reply; the synchronized branch must hold it.
+    rpc.push_success(&Bytes::from(U256::from(5).to_be_bytes::<32>().to_vec()));
+    let stale = intent(&id, &keys, 19);
+    writer.publication.record(
+        id.clone(),
+        super::handlers::SubmitPlaintext {
+            protocol: BfvDecryptionProtocol::Synchronized,
+            intent: stale,
+        },
+    );
+    writer.publication.enable_effects();
+    let command = writer.publication.start(&id).unwrap();
+    let writer = writer.start();
+    writer.send(command.clone()).await?;
+    assert_eq!(writer.send(PlaintextWork).await?, (0, 1));
+    keys.remove(&id);
+    writer.send(command.clone()).await?;
+    assert_eq!(writer.send(PlaintextWork).await?, (0, 1));
+    // Even a present SS key cannot redirect a previously admitted synchronized intent. This
+    // is a known mismatch, so release the slot rather than retrying it as missing authority.
+    keys.insert(id.clone(), key())?;
+    writer.send(command).await?;
+    assert_eq!(writer.send(PlaintextWork).await?, (0, 0));
+    assert_eq!(rpc.read_q().len(), 1, "unexpected chain call");
+    Ok(())
+}
+
+#[actix::test]
 async fn replay_retires_terminal_plaintext_work() -> Result<()> {
     for stage in [E3Stage::Complete, E3Stage::Failed] {
         for recovered_authority in [false, true] {

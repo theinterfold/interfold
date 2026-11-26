@@ -154,7 +154,9 @@ impl ThresholdKeyshare {
         &mut self,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
-        if !self.effects_enabled {
+        if !self.effects_enabled
+            || self.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized
+        {
             return Ok(());
         }
         let state = self.state.try_get()?;

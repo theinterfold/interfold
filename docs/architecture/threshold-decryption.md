@@ -80,18 +80,59 @@ Unlike SS, an unavailable designated member can prevent synchronized reconstruct
 roster members are online. A replacement set would require new matching shares and the separate
 protocol in [#2462](https://github.com/theinterfold/interfold/issues/2462).
 
-The initial synchronized design fixes `S` to the lowest T+1 canonical IDs of the **confirmed
+The initial synchronized runtime fixes `S` to the lowest T+1 canonical IDs of the **confirmed
 H-roster** for one ciphertext, before producing any shares. Aggregator failover retains `S`. This is
 the rule in the
 [isolated Minimum C6 and final verifier](proof-statements.md#synchronized-prf-and-draft-minimum-c6).
-`pnpm test:sync-decryption:contract` checks the final wrapper against the signed registry
-publication for the same request. The harness starts from a finalized committee and supplies the
-lifecycle call context; synchronized request admission, actor failover and plaintext publication
-through a live route remain pending. Activation requires durable idempotency: one native share and
-one noise draw per owner, ciphertext and designated set. Recovery and aggregator failover must reuse
-that retained share; retrying with a fresh noise draw is not a new decryption request. The C6
-witness JSON contains private openings and noise; it is not a log, transport payload or recovery
-record.
+The C6 witness contains private openings and noise; it is not a log, transport payload or recovery
+record. Its range checks do not prove sampling freshness.
+
+**Fixed-set runtime policy for review (#2460).** For a disabled insecure Minimum definition the node
+can derive a read-only C6 plan from confirmed `CiphertextReady`, the confirmed registry setup, and
+the ciphertext publication (inline or DA reference). A local DA result can supply bytes but cannot
+set either their Keccak hash or the published SAFE commitment. Check both and decode one
+two-component level-zero ciphertext before allocating private work. The node checks the signer at
+the designated committee ID; the coordinator, arrival order, and retry correlation are not inputs to
+this choice. A second position or different publication is not a retry. Terminal history retires the
+plan even if key authority remains for hydration.
+
+Only the designated keyshare that receives the first matching opening live with effects enabled may
+make its initial allocation. If it misses that delivery, replay cannot grant it a second chance. If
+its deadline read fails, the same actor can retry: it draws no seed until the window is confirmed
+open. It then retains one pending seed until the allocation flush is acknowledged. A pre-insert
+failure retries those same bytes; a visible but unflushed insert is flushed again. A replacement
+actor with no saved allocation fails closed in either window. This can cost the request a designated
+share even when other parties are online. Projection replay restores the bytes and their original
+cause, not permission to substitute an owner or draw fresh noise. Reservation, proving and release
+use the latest block timestamp and the same inclusive chain deadline. The private Minimum worker
+consumes only a **previously flushed** allocation. It uses the saved summed SK and C4 directed keys
+to derive the native weighted share, checks the C4 openings, and flushes the exact share before
+proving it. On retry it compares bytes before proving or reusing a signed proof. Both paths verify
+C6 against the profile-specific VK, the confirmed row and the full native polynomial. Native work
+and proving use the shared node/E3 task group; retirement is checked again before signing and
+release. Keyshare flushes the signed bundle before broadcast.
+
+Each collector checks the C6 body, signer, public row and full share before pinning its journal
+sequence. A standby signals readiness only after all designated rows are durable. After the chain
+and checkpoint reads, only the current active collector may record a new batch from those rows. Once
+the ordered sequence vector is flushed, demotion or restart can finish it. Native reconstruction
+sums the locally weighted shares and adds `c0` once. C7 opens those same polynomials; the outer
+proof binds their C6 statements and the plaintext. The writer checks both profile-specific child VK
+pins and the confirmed request before submitting the local intent. The existing chain failure watch
+starts at `CiphertextReady`, independently of collector readiness. The decryption deadline is
+inclusive; a missing owner after expiry follows `DecryptionTimeout`.
+
+`pnpm rust:test:sync-dkg:recovery` rehearses the disabled insecure Minimum route from real signed
+registry publication to the keyshare/collector actors and a mined writer transaction. The Anvil
+controller seeds the finalized committee and emits a ciphertext reference. The production log reader
+and DA coordinator retrieve the object from a local HTTP fixture and deliver the opening to both
+designated keyshare mailboxes. After demotion the collector reopens its commit log, sequence index
+and plaintext checkpoints and rechecks the pinned rows. The writer effect calls the production
+`InterfoldLifecycle.verifyPlaintext` and request-bound registry wrapper. This exercises orderly
+restart below admission, not Avail bridge finality, production request admission or gossip delivery.
+The fixed-set and one-use policies await protocol review. Secure Minimum needs the
+[secure DKG-to-registry route](https://github.com/theinterfold/interfold/issues/2549) before the
+secure end-to-end qualification in [#2461](https://github.com/theinterfold/interfold/issues/2461).
 
 C7 admission binds the exact selected C6 commitments, ordered party IDs, ciphertext index, and
 plaintext. A C7 result replayed before `EffectsEnabled` is held in memory and used only if it binds
@@ -116,6 +157,12 @@ range per E3, not payload queues. Read bounded pages only when that E3's authori
 unrelated E3s do not rescan it. Reject mismatches and allow corrected intents. Confirmed terminal
 stages retire pending work and reject later intents; local completion alone does not prove that the
 result landed.
+
+The writer retains the admitted protocol with the intent. An SS intent that already passed the
+domain check can still submit after local cleanup releases the key. A synchronized intent instead
+rechecks the current opening at submission. Missing authority or an ambiguous RPC outcome leaves it
+pending; a confirmed domain mismatch or a decoded proof-data rejection releases its slot for a
+subsequent corrected intent.
 
 After `EffectsEnabled`, the writer checks chain state, coalesces the first admitted local intent,
 and calls permissionless `publishPlaintextOutput`. The contract requires `CiphertextReady`,

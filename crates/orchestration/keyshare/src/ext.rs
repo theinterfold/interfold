@@ -25,6 +25,7 @@ use crate::KeyshareState;
 use std::{collections::HashMap, sync::Arc};
 
 pub struct ThresholdKeyshareExtension {
+    runtime: Option<e3_zk_prover::synchronized::fixed_set::DecryptionRuntime>,
     bus: BusHandle,
     cipher: Arc<Cipher>,
     address: String,
@@ -45,6 +46,7 @@ impl ThresholdKeyshareExtension {
         canonical_keys: crate::canonical_key::CanonicalPublicKeys,
     ) -> Box<Self> {
         Box::new(Self {
+            runtime: None,
             bus: bus.clone(),
             cipher: cipher.to_owned(),
             address: address.to_owned(),
@@ -53,6 +55,14 @@ impl ThresholdKeyshareExtension {
             signer,
             canonical_keys,
         })
+    }
+
+    pub fn with_decryption_runtime(
+        mut self: Box<Self>,
+        runtime: e3_zk_prover::synchronized::fixed_set::DecryptionRuntime,
+    ) -> Box<Self> {
+        self.runtime = Some(runtime);
+        self
     }
 }
 
@@ -136,6 +146,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                     effects_enabled: ctx.effects_enabled(),
                 })
                 .with_canonical_keys(self.canonical_keys.clone())
+                .with_decryption_runtime(self.runtime.clone())
                 .start()
                 .into(),
             ),
@@ -217,7 +228,8 @@ impl E3Extension for ThresholdKeyshareExtension {
             signer: self.signer.clone(),
             effects_enabled: false,
         })
-        .with_canonical_keys(self.canonical_keys.clone());
+        .with_canonical_keys(self.canonical_keys.clone())
+        .with_decryption_runtime(self.runtime.clone());
         // The lifecycle projection is node-wide, outside the per-E3 context scope.
         if let Some(stage) = ctx
             .repositories()

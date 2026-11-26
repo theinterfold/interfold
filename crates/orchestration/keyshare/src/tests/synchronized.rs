@@ -37,6 +37,8 @@ use num_bigint::BigInt;
 use rand::SeedableRng;
 use std::collections::BTreeMap;
 
+#[path = "synchronized/contribution.rs"]
+mod contribution;
 #[path = "synchronized/publication.rs"]
 mod publication;
 #[path = "synchronized/recovery.rs"]
@@ -1144,7 +1146,9 @@ fn real_prover(circuits: &[CircuitName]) -> Result<(tempfile::TempDir, e3_zk_pro
             CircuitName::NodeFold | CircuitName::NodesFold | CircuitName::PkAggregation => {
                 e3_zk_config::CircuitVariant::Default
             }
-            CircuitName::DkgAggregator => e3_zk_config::CircuitVariant::Evm,
+            CircuitName::DkgAggregator | CircuitName::DecryptionAggregator => {
+                e3_zk_config::CircuitVariant::Evm
+            }
             _ => e3_zk_config::CircuitVariant::Recursive,
         };
         let target = artifact_root

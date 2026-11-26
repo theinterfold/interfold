@@ -36,15 +36,49 @@ where
     F: FnMut(InterfoldEvent) -> Fut,
     Fut: std::future::Future<Output = Result<()>>,
 {
-    let aggregate = AggregateId::from_chain_id(Some(e3_id.chain_id()));
-    let mut cursor = *range.start();
-    while cursor <= *range.end() {
+    let mut pages = E3HistoryPages::new(store, e3_id, range);
+    while let Some(page) = pages.next().await? {
+        for event in page {
+            visit(event).await?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) struct E3HistoryPages<'a> {
+    store: &'a Recipient<EventStoreQueryBy<SeqAgg>>,
+    id: &'a E3id,
+    cursor: u64,
+    end: u64,
+}
+
+impl<'a> E3HistoryPages<'a> {
+    pub(crate) fn new(
+        store: &'a Recipient<EventStoreQueryBy<SeqAgg>>,
+        id: &'a E3id,
+        range: std::ops::RangeInclusive<u64>,
+    ) -> Self {
+        Self {
+            store,
+            id,
+            cursor: *range.start(),
+            end: *range.end(),
+        }
+    }
+    pub(crate) fn reached_end(&self) -> bool {
+        self.cursor > self.end
+    }
+    pub(crate) async fn next(&mut self) -> Result<Option<Vec<InterfoldEvent>>> {
+        if self.reached_end() {
+            return Ok(None);
+        }
+        let aggregate = AggregateId::from_chain_id(Some(self.id.chain_id()));
         let (recipient, response) = e3_utils::actix::channel::oneshot::<EventStoreQueryResponse>();
-        store
+        self.store
             .send(
                 EventStoreQueryBy::<SeqAgg>::new(
                     CorrelationId::new(),
-                    HashMap::from([(aggregate, cursor)]),
+                    HashMap::from([(aggregate, self.cursor)]),
                     recipient,
                 )
                 .with_limit(1024)
@@ -53,21 +87,22 @@ where
             .await?;
         let events = response.await?.into_events()?;
         if events.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
+        let mut page = Vec::new();
         for event in events {
-            if event.seq() > *range.end() {
-                return Ok(());
-            }
             ensure!(
-                event.aggregate_id() == aggregate && event.seq() == cursor,
+                event.aggregate_id() == aggregate && event.seq() == self.cursor,
                 "E3 history event-store sequence gap"
             );
-            cursor += 1;
-            if event.get_e3_id().as_ref() == Some(e3_id) {
-                visit(event).await?;
+            self.cursor += 1;
+            if event.get_e3_id().as_ref() == Some(self.id) {
+                page.push(event);
+            }
+            if self.cursor > self.end {
+                break;
             }
         }
+        Ok(Some(page))
     }
-    Ok(())
 }

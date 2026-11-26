@@ -83,6 +83,29 @@ impl CiphernodeBuilder {
             self.start_multithread(bus, addr, &effect_stages, canonical_keys, zk_backend);
         zk_backend.ensure_installed().await?;
         let signer = provider_cache.ensure_signer().await?;
+        let readers = storage
+            .chains
+            .enabled()
+            .map(|c| {
+                Ok((
+                    c.chain_id,
+                    (c.provider.clone(), c.config.contracts.interfold.address()?),
+                ))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+        let runtime = e3_zk_prover::synchronized::fixed_set::DecryptionRuntime {
+            pool: task_pool.clone(),
+            prover: e3_zk_prover::ZkProver::new(zk_backend),
+            task_scope: addr.to_owned(),
+            timing: Arc::new(move |e3| {
+                let reader = readers.get(&e3.chain_id()).cloned();
+                Box::pin(async move {
+                    let (provider, address) = reader
+                        .ok_or_else(|| anyhow::anyhow!("no decryption deadline reader for {e3}"))?;
+                    e3_evm::read_decryption_window(&provider, address, &e3).await
+                })
+            }),
+        };
 
         info!("Setting up ThresholdKeyshareExtension");
         e3_builder = e3_builder.with_recipient(
@@ -95,7 +118,8 @@ impl CiphernodeBuilder {
                 dkg_timing_reader,
                 signer.clone(),
                 canonical_keys.clone(),
-            ),
+            )
+            .with_decryption_runtime(runtime.clone()),
         );
 
         info!("Setting up ZK actors");
@@ -135,7 +159,8 @@ impl CiphernodeBuilder {
                 self.proof_aggregation_enabled,
                 canonical_keys.clone(),
                 storage.seq_eventstore.clone(),
-            ),
+            )
+            .with_decryption_runtime(runtime),
         );
 
         // ── Accusation manager ──

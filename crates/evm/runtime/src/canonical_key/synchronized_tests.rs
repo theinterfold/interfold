@@ -20,6 +20,186 @@ struct Fixture {
     bytes: ArcBytes,
 }
 
+#[actix::test]
+async fn early_peer_candidate_bounds_survive_request_discovery_without_admitting_a_peer_e3(
+) -> Result<()> {
+    use e3_event_system::EventSystem;
+    use std::time::Duration;
+    let f = Fixture::new()?;
+    let aggregate = AggregateId::new(1);
+    let system =
+        EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(e3_events::AggregateConfig::new(HashMap::from([(
+                aggregate,
+                Duration::ZERO,
+            )])));
+    let bus = system.handle()?.enable("early-share-history");
+    let (keys, mut projection) = f.projection();
+    let id = |n: u64| E3id::new(n.to_string(), 1);
+    let candidate = |n, ts: u64| {
+        bus.publish_from_remote(
+            e3_events::DecryptionshareCreated {
+                e3_id: id(n),
+                party_id: 2,
+                node: format!("peer-{ts}"),
+                decryption_share: vec![],
+                signed_decryption_proofs: vec![],
+            },
+            ts.into(),
+            None,
+            EventSource::Net,
+        )
+    };
+    let confirm = |n, ts: u64| {
+        bus.publish_from_remote(
+            E3Requested {
+                e3_id: id(n),
+                ..f.request.clone()
+            },
+            ts.into(),
+            Some(1),
+            EventSource::Evm,
+        )
+    };
+    // Overflow before restart. Neither an early share nor an index entry admits a request.
+    for n in 1..=512 {
+        candidate(2000 + 2 * n, n)?;
+        if n % 64 == 0 {
+            bus.flush_event_pipeline().await?;
+        }
+    }
+    candidate(1, 513)?;
+    candidate(1025, 514)?;
+    bus.flush_event_pipeline().await?;
+    projection
+        .recover(
+            &system.eventstore_reader()?.seq(),
+            &[aggregate],
+            HashSet::new(),
+        )
+        .await?;
+    let bounds = |n| keys.synchronized_candidates(&id(n));
+    assert_eq!(bounds(1), None);
+    assert_eq!(bounds(1025), None);
+    projection.attach(&bus).await?;
+
+    confirm(2002, 515)?; // free a memory slot before an already-spilled ID arrives again
+    for (ts, missing) in (516..).zip([257, 513, 769]) {
+        confirm(missing, ts)?;
+    }
+    candidate(1025, 519)?;
+    confirm(1025, 520)?;
+    confirm(1, 521)?;
+    bus.flush_event_pipeline().await?;
+    assert_eq!(bounds(2002), Some((1, 1)));
+    assert_eq!(bounds(1025), Some((514, 519)));
+    assert_eq!(bounds(1), Some((513, 513)));
+    for missing in [257, 513, 769] {
+        assert_eq!(bounds(missing), None);
+    }
+    candidate(257, 522)?;
+    bus.flush_event_pipeline().await?;
+    assert_eq!(bounds(257), Some((522, 522)));
+    assert!(keys.get(&id(257)).is_none());
+    Ok(())
+}
+
+#[test]
+fn synchronized_contribution_requires_confirmed_phase_and_both_ciphertext_bindings() -> Result<()> {
+    let f = Fixture::new()?;
+    let id = &f.request.e3_id;
+    let profile = f.request.params_profile;
+    let params = profile.build_pair()?.0;
+    let ct = e3_bfv_client::bfv_encrypt(
+        vec![7u64],
+        f.bytes.to_vec(),
+        params.degree(),
+        params.plaintext(),
+        params.moduli(),
+    )?;
+    let bytes = [ArcBytes::from_bytes(&ct)];
+    let commitment = e3_bfv_client::compute_ct_commitment_with_params(&ct, &params)?;
+    let hash = alloy::primitives::keccak256(&ct);
+    for direct in [false, true] {
+        let (keys, mut projection) = f.projection();
+        for fact in f.facts() {
+            projection.observe(&event(fact, EventSource::Evm, Some(1)))?;
+        }
+        let output = e3_events::CiphertextOutputPublished {
+            e3_id: id.clone(),
+            ciphertext_output: bytes.to_vec(),
+            ciphertext_commitment: commitment,
+        };
+        let fact: InterfoldEventData = if direct {
+            output.clone().into()
+        } else {
+            e3_events::CiphertextOutputReferencePublished {
+                e3_id: id.clone(),
+                content_hash: hash.0,
+                ciphertext_commitment: commitment,
+                availability_block: 4,
+                availability_leaf_index: 0,
+            }
+            .into()
+        };
+        let phase = E3StageChanged {
+            e3_id: id.clone(),
+            previous_stage: E3Stage::KeyPublished,
+            new_stage: E3Stage::CiphertextReady,
+        };
+        let plan = || keys.synchronized_decryption_definition(id, profile, &bytes);
+        if direct {
+            projection.observe(&event(fact.clone(), EventSource::Evm, Some(2)))?;
+            projection.observe(&event(phase.clone(), EventSource::Local, Some(2)))?;
+            assert!(plan()?.is_none());
+        }
+        projection.observe(&event(output.clone(), EventSource::Local, Some(2)))?;
+        projection.observe(&event(fact.clone(), EventSource::Net, Some(2)))?;
+        projection.observe(&event(fact.clone(), EventSource::Evm, None))?;
+        projection.observe(&event(phase.clone(), EventSource::Evm, Some(2)))?;
+        if !direct {
+            assert!(plan()?.is_none());
+        }
+        projection.observe(&event(fact.clone(), EventSource::Evm, Some(2)))?;
+        projection.observe(&event(fact, EventSource::Evm, Some(3)))?;
+        let fixed = plan()?.unwrap();
+        assert_eq!(fixed.designated(), &[0, 2]);
+        assert_eq!(fixed.signer(2)?, f.committee[2]);
+        assert!(fixed.signer(1).is_err());
+        for wrong in [
+            vec![],
+            vec![bytes[0].clone(); 2],
+            vec![ArcBytes::from_bytes(&[1])],
+        ] {
+            assert!(keys
+                .synchronized_decryption_definition(id, profile, &wrong)
+                .is_err());
+        }
+        assert!(keys
+            .synchronized_decryption_definition(id, BfvProfile::SsInsecure64, &bytes)
+            .is_err());
+        let mut changed = output;
+        changed.ciphertext_commitment[0] ^= 1;
+        assert!(projection
+            .observe(&event(changed, EventSource::Evm, Some(3)))
+            .is_err());
+        assert_eq!(plan()?, Some(fixed));
+        projection.hydrating_contexts.insert(id.clone());
+        projection.observe(&event(
+            E3StageChanged {
+                previous_stage: phase.new_stage,
+                new_stage: E3Stage::Complete,
+                ..phase
+            },
+            EventSource::Evm,
+            Some(4),
+        ))?;
+        assert!(plan()?.is_none());
+    }
+    Ok(())
+}
+
 #[test]
 fn publication_selection_requires_confirmed_finalization_and_is_immutable() -> Result<()> {
     let f = Fixture::new()?;
@@ -184,6 +364,16 @@ impl Fixture {
             CanonicalKeyProjection::new(keys.clone(), HashMap::from([(1, self.interfold)]));
         (keys, projection)
     }
+}
+
+pub(crate) fn synchronized_writer_fixture() -> Result<(E3id, Address, CanonicalPublicKeys)> {
+    let fixture = Fixture::new()?;
+    let (keys, mut projection) = fixture.projection();
+    for fact in fixture.facts() {
+        projection.observe(&event(fact, EventSource::Evm, Some(1)))?;
+    }
+    assert!(keys.get(&fixture.request.e3_id).is_some());
+    Ok((fixture.request.e3_id, fixture.interfold, keys))
 }
 
 #[test]

@@ -193,6 +193,96 @@ fn initial_state() -> ThresholdPlaintextAggregatorState {
     ThresholdPlaintextAggregatorState::init(1, 3, Seed([0; 32]), test_ciphertexts(), test_params())
 }
 
+#[actix::test]
+async fn synchronized_hydration_preserves_admission_and_attaches_to_the_local_e3_scope(
+) -> Result<()> {
+    use e3_zk_prover::{synchronized::fixed_set::DecryptionRuntime, BBPath, ZkBackend, ZkProver};
+    let (bus, _, _, _, _, _, _) = get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+    let id = E3id::new("42", 1);
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let mut ctx = context(&store, &id).await?;
+    let mut meta = ctx.get_dependency(META_KEY).unwrap().clone();
+    meta.params_profile = e3_fhe_params::BfvProfile::SyncDecInsecure64;
+    meta.crypto_config_id = meta
+        .params_profile
+        .crypto_config_id(e3_committee::CiphernodesCommitteeSize::Minimum)?
+        .0;
+    ctx.set_dependency(META_KEY, meta);
+    ctx.set_effects_enabled(false);
+    let (keys, opening) = crate::test_support::synchronized_opening(&id)?;
+    let candidate = share_event(&id, 0, false, 2);
+    keys.note_synchronized_candidate(&id, candidate.seq());
+    let (timing, mut calls) = tokio::sync::mpsc::unbounded_channel();
+    let extension = ThresholdPlaintextAggregatorExtension::create(
+        &bus,
+        &start_sortition(&bus),
+        false,
+        keys,
+        history_reader(&[opening.clone(), candidate])?,
+    )
+    .with_decryption_runtime(DecryptionRuntime {
+        pool: e3_task_pool::TaskPool::new(1, 1),
+        task_scope: "hydration".into(),
+        prover: ZkProver::new(&ZkBackend::new(
+            BBPath::Custom("unused".into()),
+            "unused".into(),
+            "unused".into(),
+        )),
+        timing: Arc::new(move |id| {
+            timing.send(id).unwrap();
+            Box::pin(std::future::pending())
+        }),
+    });
+    let snapshot = ctx.snapshot()?;
+    extension.hydrate(&mut ctx, &snapshot).await?;
+    assert!(ctx.get_event_recipient("plaintext").is_none());
+    let local_keyshare = ctx
+        .get_event_recipient("threshold_keyshare")
+        .unwrap()
+        .clone();
+    ctx.set_event_recipient("threshold_keyshare", None);
+    extension.attach_synchronized_recipient(&mut ctx);
+    assert!(ctx.get_event_recipient("plaintext").is_none());
+    ctx.set_event_recipient("threshold_keyshare", Some(local_keyshare));
+    extension.attach_synchronized_recipient(&mut ctx);
+    let recipient = ctx.get_event_recipient("plaintext").unwrap();
+    let slot = plaintext_repositories(&store, &id)
+        .store
+        .scope(e3_events::StoreKeys::plaintext_recovery(&id))
+        .scope("synchronized-v1")
+        .scope("started");
+    slot.write_sync(vec![18u64, 20]).await?;
+    let end = |source| {
+        event(
+            e3_events::E3RequestComplete { e3_id: id.clone() },
+            source,
+            21,
+        )
+    };
+    recipient.send(opening).await?;
+    recipient.send(end(EventSource::Net)).await?;
+    assert!(slot.read_checked::<Vec<u64>>().await?.is_some());
+    assert!(
+        matches!(
+            calls.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ),
+        "replaying the opening issued a timing read before EffectsEnabled"
+    );
+    recipient
+        .send(event(EffectsEnabled::new(), EventSource::Local, 22))
+        .await?;
+    assert_eq!(
+        actix::clock::timeout(Duration::from_secs(2), calls.recv()).await?,
+        Some(id.clone())
+    );
+    // The recipient must still process terminal cleanup while the timing read is outstanding.
+    recipient.send(end(EventSource::Evm)).await?;
+    assert!(recipient.send(end(EventSource::Evm)).await.is_err());
+    assert!(slot.read_checked::<Vec<u64>>().await?.is_none());
+    Ok(())
+}
+
 async fn await_verifying(store: &DataStore, id: &E3id) -> Result<VerifyingC6> {
     for _ in 0..200 {
         if let Some(ThresholdPlaintextAggregatorState::VerifyingC6(state)) =

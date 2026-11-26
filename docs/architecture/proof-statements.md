@@ -198,8 +198,8 @@ the same sum/decode implementation. A common outer verifier shape does not imply
 child VK pins. Both profiles use the
 [same C6 opening checks](../../circuits/lib/src/core/synchronized/threshold_decryption.nr) before
 their respective product and noise constraints. `CircuitName::DecryptionAggregator` alone does not
-distinguish this layout from SS: any future router must dispatch on the authenticated profile and
-committee before decoding the public statement or choosing keys.
+distinguish this layout from SS: dispatch on the authenticated profile and committee before decoding
+the public statement or choosing keys.
 
 ### Isolated synchronized DKG leaves (draft, not admitted)
 
@@ -304,9 +304,9 @@ admitted C4 aggregate-SK/bundle, dealer-batch and selected C1/C5 threshold-key c
 candidate outputs cannot supply their own authority. It does **not** authenticate those expected
 values or caller-supplied chain context/roster, or replace signature admission. A different
 consistently selected setup is not rejected without canonical external authority. These joins prove
-neither C4's BFV decryption equation nor publication authority. The runtime still refuses
-synchronized folding/publication; human protocol review, guarded actor/writer integration, full-node
-replay and activation of the synchronized decryption route remain open.
+neither C4's BFV decryption equation nor publication authority. Synchronized request admission
+remains disabled. See [threshold decryption](threshold-decryption.md) for the actor/writer
+qualification and its limits.
 
 The typed local definition executor reuses these proof/verification owners. Recipient results must
 match independently supplied setup/owner and C1/C4/batch anchors; publication results must also
@@ -387,11 +387,12 @@ authority. This does not synchronously cancel fanout of the already-admitted eve
 Mock-proof registry tests establish consent/rollback/storage behavior, not proof soundness. The
 prepared recovery suite also uses an actual generated verifier and a locally deployed registry, with
 native H signatures, authority readback, chain PK chunks and a reopened confirmed journal. The
-finalized selection/controller lifecycle are test harnesses below disabled request admission, and
-proofs are driven explicitly. This is not a guarded production actor/writer workflow, whole-node
-startup, reorg/hard-crash assurance, C6 or a source-bound release. Admission stays disabled. The
-domain, authority schema and deployment/rollback decisions remain unratified protocol interfaces
-requiring human cryptographic and compatibility review.
+finalized selection/controller lifecycle are test harnesses below disabled request admission. From
+that registry checkpoint the decryption actors produce signed C6s, C7 and a request-bound final
+proof, and the writer effect submits the resulting plaintext. This does not establish admitted
+whole-node startup, reorg/hard-crash assurance or a source-bound release. The domain, authority
+schema and deployment/rollback decisions remain unratified protocol interfaces requiring human
+cryptographic and compatibility review.
 
 ## Commitments, packing, and Fiat-Shamir
 

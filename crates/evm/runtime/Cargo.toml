@@ -40,6 +40,8 @@ hex = { workspace = true }
 num-bigint = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sled.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
@@ -56,7 +58,6 @@ e3-evm = { workspace = true }
 e3-sync.workspace = true
 e3-test-support = { workspace = true }
 serde_json = { workspace = true }
-tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }
 tower = { version = "0.5", features = ["util"] }

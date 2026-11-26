@@ -7,6 +7,7 @@ use e3_utils::OrderedSet;
 
 #[path = "synchronized_tests.rs"]
 mod synchronized;
+pub(crate) use synchronized::synchronized_writer_fixture;
 
 fn event(
     data: impl Into<InterfoldEventData>,

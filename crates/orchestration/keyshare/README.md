@@ -68,10 +68,11 @@ The threshold-share soft checkpoint can advance when every missing dealer lacked
 key-collection closure. Verification still needs H−1 external shares, and collection remains open
 until completion or the canonical DKG deadline.
 
-Successful randomized contributions are reused after restart. Secret material is wrapped in local
-encrypted storage; do not treat the exported state types as safe plaintext diagnostics. Detailed
-dimensions, roster transitions, proof batches, and recovery limits are in
-[DKG](../../../docs/architecture/dkg.md) and
+Successful randomized contributions are reused after restart. On the disabled fixed-set route, a
+designated keyshare that misses the live opening or restarts before saving its allocation cannot
+contribute from replay. Secret material is wrapped in local encrypted storage; do not treat the
+exported state types as safe plaintext diagnostics. Detailed dimensions, roster transitions, proof
+batches, and recovery limits are in [DKG](../../../docs/architecture/dkg.md) and
 [threshold decryption](../../../docs/architecture/threshold-decryption.md).
 
 ## Tests
@@ -88,22 +89,29 @@ preparation, while runtime admission stays disabled:
 ```sh
 E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 cargo test --locked -p e3-keyshare --lib synchronized
 E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 E3_CUSTOM_BB=$(which bb) cargo test --locked -p e3-keyshare --lib synchronized_prepared_runtime_requests_prove_with_real_crypto -- --ignored
+E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 E3_CUSTOM_BB=$(which bb) cargo test --locked -p e3-keyshare --lib synchronized_native_worker_real_c6_and_signed_reuse -- --ignored
 E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 E3_CUSTOM_BB=$(which bb) pnpm rust:test:sync-dkg:recovery
 E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 E3_CUSTOM_BB=$(which bb) pnpm rust:test:sync-dkg:qualification
 ```
 
 The proof commands require pinned nargo/bb and stage explicit variants in temporary directories,
-preserving source dependency pins. The second verifies ten real C1/C2/C3/C4 proofs. The recovery
-command verifies 37 proofs: C0–C4 across three independent actors/stores, then dealer/recipient
-joins, C5 and publication from their reopened signed artifacts, sealed keys and native PK-share
-bytes. It reopens exclusive local setup intents and consumes actor-produced H consents for a locally
-deployed registry, checks authority and PK-chunk readback, and rebuilds the shared authority from a
-reopened journal for all N handoffs. It requires Anvil, `pnpm install --frozen-lockfile`,
-`pnpm evm:build` and solc 0.8.28 on PATH; generated Honk/Solidity acceptance and substitution
-rejection are mandatory, not skipped when unavailable. It tests orderly stop/flush/cache
-eviction/reopen, exact saved work, non-prefix H `[0,2]`, self/outside-H recipients and authenticated
-replacement. Its ordinary variant and provisional negatives use synthetic signed statements, not
-valid proofs.
+preserving source dependency pins. The C1–C4 command verifies ten real proofs. The C6 worker test
+reopens the saved native shares after prover failure, proves both designated contributions and
+checks native plaintext reconstruction. Its DKG verdict is a fixture. The recovery command verifies
+the DKG proofs: C0–C4 across three independent actors/stores, then dealer/recipient joins, C5 and
+publication from their reopened signed artifacts, sealed keys and native PK-share bytes. It reopens
+exclusive local setup intents and consumes actor-produced H consents for a locally deployed
+registry, checks authority and PK-chunk readback, and rebuilds the shared authority from a reopened
+journal for all N handoffs. It continues with the reopened SKs and a mined ciphertext reference. The
+production DA coordinator reads a local HTTP object and delivers the opening to both designated
+actors. A demoted collector reopens its journal and plaintext checkpoints, verifies both C6 rows and
+finishes the same started batch. It checks the reconstructed plaintext, C7 and final proof through
+the writer's request-bound transaction and the inclusive on-chain deadline. It requires Anvil,
+`pnpm install --frozen-lockfile`, `pnpm evm:build` and solc 0.8.28 on PATH; generated Honk/Solidity
+acceptance and substitution rejection are mandatory, not skipped when unavailable. It tests orderly
+stop/flush/cache eviction/reopen, exact saved work, non-prefix H `[0,2]`, self/outside-H recipients
+and authenticated replacement. Its ordinary variant and provisional negatives use synthetic signed
+statements, not valid proofs.
 
 The qualification command selects all synchronized keyshare cases, including recovery and a
 complementary ordinary durable-log replay test. That test reopens actual commit logs through
@@ -114,11 +122,12 @@ alone does not drain buffered snapshots.
 
 These private fixtures load checkpoints through production repositories/payloads below the disabled
 extension-hydration and generation/calculation dispatch guards. Replay supplies empty historical
-EVM/network adapters; real proofs are driven explicitly, not by production proof workers. Neither
-fixture establishes whole-node startup, admitted production publication orchestration, network
-delivery, process-crash durability, secure-profile qualification or repeated-decryption assurance.
-The local registry campaign seeds its finalized committee/controller lifecycle below disabled
-admission; it does not test the production request/sortition path.
+EVM/network adapters; the DKG proof campaign drives prepared requests explicitly, and the decryption
+actors use the bounded worker and the writer effect below admission. Neither fixture establishes
+whole-node startup, admitted production publication orchestration, network delivery, process-crash
+durability, secure-profile qualification or repeated-decryption assurance. The local registry
+campaign seeds its finalized committee/controller lifecycle below disabled admission; it does not
+test the production request/sortition path.
 
 [`tests.rs`](src/tests.rs) exercises actor histories and restart/cutoff behavior;
 [`tests/admission.rs`](src/tests/admission.rs) covers forged dealer inputs. Collection, roster,

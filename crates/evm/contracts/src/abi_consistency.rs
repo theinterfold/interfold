@@ -221,6 +221,14 @@ fn declared_bindings_match_solidity() {
     );
     for (bindings, contract) in [
         (
+            crate::decryption_errors::SynchronizedDecryptionVerifier::abi::contract(),
+            "verifiers/bfv/SynchronizedDecryptionVerifier.sol/SynchronizedDecryptionVerifier.json",
+        ),
+        (
+            crate::decryption_errors::DecryptionHonk::abi::contract(),
+            "verifiers/bfv/honk/DecryptionAggregatorVerifier.sol/Errors.json",
+        ),
+        (
             IBondingRegistry::abi::contract(),
             "registry/BondingRegistry.sol/BondingRegistry.json",
         ),

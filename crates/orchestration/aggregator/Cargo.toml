@@ -28,6 +28,7 @@ e3-sortition = {  workspace = true }
 e3-zk-config = { workspace = true }
 e3-zk-witness = { workspace = true }
 e3-utils = { workspace = true }
+e3-task-pool.workspace = true
 e3-zk-prover = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }

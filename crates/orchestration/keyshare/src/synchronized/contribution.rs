@@ -1,0 +1,322 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+
+//! Private, write-once checkpoints. Only a known first authorization may create an allocation.
+
+use super::ConfirmedSynchronizedDkgSetup;
+use crate::ThresholdKeyshareRepositoryFactory;
+use alloy::primitives::{keccak256, Address, B256};
+use anyhow::{ensure, Context, Result};
+use e3_committee::CiphernodesCommitteeSize;
+use e3_crypto::{Cipher, SensitiveBytes};
+use e3_data::{DataStore, Repositories};
+use e3_events::DecryptionshareCreated;
+use e3_fhe_params::BfvProfile;
+use e3_request::canonical_key::SynchronizedDecryptionPlan;
+use e3_utils::ArcBytes;
+use e3_zk_config::synchronized::Configs;
+use e3_zk_prover::synchronized::fixed_set;
+use rand::RngCore;
+use std::sync::{Arc, Mutex};
+use zeroize::Zeroizing;
+
+mod worker;
+pub use worker::{ContributionWorker, LocalContribution};
+
+fn new_seed() -> Zeroizing<[u8; 32]> {
+    let mut seed = Zeroizing::new([0; 32]);
+    rand::rng().fill_bytes(seed.as_mut());
+    seed
+}
+
+/// Owned by the live keyshare actor, never serialized. Ambiguous writes retry the same seed.
+struct PendingSeed {
+    binding: B256,
+    seed: Zeroizing<[u8; 32]>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct LiveReservation(Arc<Mutex<Option<PendingSeed>>>);
+
+impl LiveReservation {
+    pub(crate) async fn reserve_if_authorized(
+        &self,
+        store: &ContributionStore,
+        keys: &e3_request::canonical_key::CanonicalPublicKeys,
+        observed: bool,
+    ) -> Result<()> {
+        let seed = {
+            let mut pending = self.0.lock().expect("local reservation lock");
+            if pending.is_none()
+                && observed
+                && keys.take_first_reservation(&store.plan, store.owner)
+            {
+                *pending = Some(PendingSeed {
+                    binding: store.binding,
+                    seed: new_seed(),
+                });
+            }
+            if let Some(proposal) = pending.as_ref() {
+                ensure!(
+                    proposal.binding == store.binding,
+                    "pending reservation belongs to a different plan or owner"
+                );
+            }
+            pending.as_ref().map(|p| p.seed.clone())
+        };
+        if let Some(seed) = seed {
+            store.allocation(Some(&seed)).await?;
+            self.0.lock().expect("local reservation lock").take();
+        }
+        Ok(())
+    }
+}
+
+/// Replaying the v1 sampler starts the same private stream at offset zero.
+pub struct NoiseAllocation {
+    seed: Zeroizing<[u8; 32]>,
+    profile: BfvProfile,
+    committee: CiphernodesCommitteeSize,
+}
+
+impl NoiseAllocation {
+    pub fn coefficients(&self) -> Result<Vec<num_bigint::BigInt>> {
+        e3_trbfv::synchronized::contribution_noise_v1(self.profile, self.committee, &self.seed)
+    }
+}
+
+pub enum ContributionProgress {
+    Reserved(NoiseAllocation),
+    Generated {
+        noise: NoiseAllocation,
+        share: ArcBytes,
+    },
+    Signed(DecryptionshareCreated),
+}
+
+pub struct ContributionStore {
+    store: DataStore,
+    cipher: Arc<Cipher>,
+    outgoing: e3_trbfv::synchronized::SealedPrfKeys,
+    incoming: e3_trbfv::synchronized::SealedPrfKeys,
+    plan: SynchronizedDecryptionPlan,
+    owner: u32,
+    binding: B256,
+}
+
+impl ContributionStore {
+    const SCOPE: &'static str = "synchronized-contribution-v1";
+
+    pub(crate) async fn retire(repos: &Repositories, id: &e3_events::E3id) -> Result<()> {
+        let store = repos
+            .threshold_keyshare_recovery_payloads(id)
+            .scope(Self::SCOPE);
+        for slot in ["signed", "share", "allocation"] {
+            store.scope(slot).remove_sync().await?;
+        }
+        Ok(())
+    }
+    /// Below-admission definition; the live caller must rederive the plan and `confirmed_setup`
+    /// and check effects/terminal state before releasing work.
+    pub fn for_definition(
+        repos: &Repositories,
+        plan: SynchronizedDecryptionPlan,
+        setup: &ConfirmedSynchronizedDkgSetup<'_>,
+        local_signer: Address,
+        cipher: &Arc<Cipher>,
+    ) -> Result<Self> {
+        let owner = setup.recipient();
+        ensure!(
+            plan.profile() == setup.profile()
+                && plan.committee() == setup.committee()
+                && plan.matches_setup(setup.authority())
+                && plan.signer(owner)? == local_signer,
+            "local setup or signer differs from designated request"
+        );
+        // Do not scope by ciphertext, owner, set, or correlation: a conflict for this local E3
+        // must hit the same allocation, not create another namespace.
+        let store = repos
+            .threshold_keyshare_recovery_payloads(plan.e3_id())
+            .scope(Self::SCOPE);
+        let binding = plan.local_contribution_binding_v1(owner)?;
+        Ok(Self {
+            store,
+            cipher: cipher.clone(),
+            outgoing: setup.outgoing_keys().clone(),
+            incoming: setup.incoming_keys().clone(),
+            plan,
+            owner,
+            binding,
+        })
+    }
+
+    fn header(&self, slot: &str, parent: B256) -> B256 {
+        keccak256([self.binding.as_slice(), slot.as_bytes(), parent.as_slice()].concat())
+    }
+
+    /// Read-check-flush even on redrive. An inserted value can be visible after its first
+    /// flush failed. The digest of the exact sealed predecessor binds adjacent checkpoints.
+    async fn slot(
+        &self,
+        name: &str,
+        parent: B256,
+        proposed: Option<&[u8]>,
+    ) -> Result<Option<(Zeroizing<Vec<u8>>, B256)>> {
+        let store = self.store.scope(name);
+        let header = self.header(name, parent);
+        let (value, flushed): (SensitiveBytes, bool) = match store.read_checked().await? {
+            Some(saved) => (saved, false),
+            None => {
+                let Some(bytes) = proposed else {
+                    return Ok(None);
+                };
+                let sealed =
+                    SensitiveBytes::new([header.as_slice(), bytes].concat(), &self.cipher)?;
+                if store.write_if_absent_sync(&sealed).await? {
+                    (sealed, true)
+                } else {
+                    (
+                        store
+                            .read_checked()
+                            .await?
+                            .context("concurrent contribution checkpoint disappeared")?,
+                        false,
+                    )
+                }
+            }
+        };
+        let mut plain = value.access(&self.cipher)?;
+        ensure!(
+            plain.starts_with(header.as_slice()),
+            "contribution belongs to another context or predecessor"
+        );
+        plain.drain(..32);
+        if !flushed {
+            store.flush_sync().await?;
+        }
+        Ok(Some((plain, keccak256(bincode::serialize(&value)?))))
+    }
+
+    async fn allocation(&self, proposed: Option<&[u8; 32]>) -> Result<(NoiseAllocation, B256)> {
+        let existing = self.slot("allocation", B256::ZERO, None).await?;
+        let (bytes, parent) = if let Some(value) = existing {
+            value
+        } else {
+            let seed = proposed.context("missing noise allocation")?;
+            for slot in ["share", "signed"] {
+                ensure!(
+                    self.store
+                        .scope(slot)
+                        .read_checked::<SensitiveBytes>()
+                        .await?
+                        .is_none(),
+                    "missing allocation for existing contribution"
+                );
+            }
+            self.slot("allocation", B256::ZERO, Some(seed.as_slice()))
+                .await?
+                .context("missing recorded allocation")?
+        };
+        ensure!(bytes.len() == 32, "invalid C6 noise allocation");
+        Ok((
+            NoiseAllocation {
+                seed: Zeroizing::new(bytes.as_slice().try_into()?),
+                profile: self.plan.profile(),
+                committee: self.plan.committee(),
+            },
+            parent,
+        ))
+    }
+
+    #[cfg(test)]
+    pub async fn reserve(&self) -> Result<ContributionProgress> {
+        self.allocation(Some(&new_seed())).await?;
+        self.resume().await
+    }
+
+    /// After restart or an ambiguous dispatch, absence is not evidence of a first authorization.
+    pub async fn resume(&self) -> Result<ContributionProgress> {
+        let (noise, parent) = self.allocation(None).await?;
+        let Some((share, parent)) = self.slot("share", parent, None).await? else {
+            ensure!(
+                self.store
+                    .scope("signed")
+                    .read_checked::<SensitiveBytes>()
+                    .await?
+                    .is_none(),
+                "signed contribution is missing its share"
+            );
+            return Ok(ContributionProgress::Reserved(noise));
+        };
+        let share = ArcBytes::from_bytes(&share);
+        let Some((bytes, _)) = self.slot("signed", parent, None).await? else {
+            return Ok(ContributionProgress::Generated { noise, share });
+        };
+        let bundle = e3_utils::deserialize_exact(&bytes)?;
+        self.validate_bundle(&bundle, &share)?;
+        Ok(ContributionProgress::Signed(bundle))
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn record_generated(&self, share: &ArcBytes) -> Result<()> {
+        let (_, parent) = self.allocation(None).await?;
+        self.record_generated_at(share, parent).await
+    }
+
+    async fn record_generated_at(&self, share: &ArcBytes, parent: B256) -> Result<()> {
+        if self
+            .store
+            .scope("signed")
+            .read_checked::<SensitiveBytes>()
+            .await?
+            .is_some()
+        {
+            ensure!(
+                self.slot("share", parent, None).await?.is_some(),
+                "signed contribution is missing its share"
+            );
+        }
+        let cfg = Configs::for_profile(self.plan.profile(), self.plan.committee())?;
+        e3_trbfv::helpers::try_poly_pb_from_bytes(share, &cfg.threshold)?;
+        let (saved, _) = self
+            .slot("share", parent, Some(share))
+            .await?
+            .context("missing generated share")?;
+        ensure!(
+            saved.as_slice() == &share[..],
+            "different native share already recorded"
+        );
+        Ok(())
+    }
+
+    pub async fn record_signed(&self, bundle: &DecryptionshareCreated) -> Result<()> {
+        let (_, parent) = self.allocation(None).await?;
+        let (share, parent) = self
+            .slot("share", parent, None)
+            .await?
+            .context("missing native share")?;
+        self.validate_bundle(bundle, &ArcBytes::from_bytes(&share))?;
+        let bytes = bincode::serialize(bundle)?;
+        let (saved, _) = self
+            .slot("signed", parent, Some(&bytes))
+            .await?
+            .context("missing signed bundle")?;
+        ensure!(
+            saved.as_slice() == bytes,
+            "different signed contribution already recorded"
+        );
+        Ok(())
+    }
+
+    fn validate_bundle(&self, bundle: &DecryptionshareCreated, share: &ArcBytes) -> Result<()> {
+        ensure!(
+            bundle.party_id == u64::from(self.owner)
+                && bundle.decryption_share.as_slice() == std::slice::from_ref(share),
+            "signed contribution differs from local owner, phase, or native share"
+        );
+        fixed_set::authenticate(&self.plan, bundle)
+    }
+
+    fn validate_proof_row(&self, proof: &e3_events::Proof, share: &ArcBytes) -> Result<()> {
+        fixed_set::validate_row(&self.plan, self.owner, proof, share)
+    }
+}
