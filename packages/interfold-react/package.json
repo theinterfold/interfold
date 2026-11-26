@@ -1,6 +1,6 @@
 {
   "name": "@interfold/react",
-  "version": "0.20.0-dev.3",
+  "version": "0.20.0",
   "description": "React hooks and utilities for Interfold SDK",
   "type": "module",
   "private": false,
