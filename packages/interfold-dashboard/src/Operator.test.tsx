@@ -22,6 +22,7 @@ import {
   type VerifierConfig,
 } from './lib/identity'
 import { pad, toHex, type Hex } from 'viem'
+import { zkPassportVersion } from '@interfold/contracts/zkpassport'
 
 const OPERATOR = '0x1111111111111111111111111111111111111111' as Address
 const OWNER = '0x2222222222222222222222222222222222222222' as Address
@@ -184,7 +185,7 @@ test('the claim covers the claimable seats of the connected recipient, and the s
 const DAY = 86_400n
 const NOW = 1_790_000_000n
 const word = (value: bigint): Hex => pad(toHex(value), { size: 32 })
-const VERSION = word(0x14n << 232n)
+const VERSION = zkPassportVersion(0, 20, 0)
 
 const service: IdentityService = {
   domain: 'dashboard.theinterfold.com',
@@ -254,8 +255,6 @@ const identityProps = {
   service,
   validUntilInput: '2027-12-01',
   onValidUntil: () => {},
-  previewFaceMatch: true,
-  onPreviewFaceMatch: () => {},
   request: { phase: 'idle' } as const,
   canRegister: true,
   busy: null,
@@ -308,7 +307,8 @@ test('before a deployment the panel makes a proof to download', () => {
   )
   assert.match(preview, /No identity registry on/)
   assert.match(preview, /planned settings/)
-  assert.match(preview, /Require FaceMatch/)
+  // The preview asks for FaceMatch as the planned verifier does.
+  assert.match(preview, /asks for a face scan/)
 
   const ready = renderToStaticMarkup(
     <IdentityView
@@ -353,7 +353,7 @@ test('a proof registers from the owner, or as a Safe transaction', () => {
   assert.match(safeBatch, /The batch also refreshes the operator/)
 
   // The verifier accepts one ZKPassport version.
-  const otherVersion = { phase: 'ready', bundle: bundle(word(0x15n << 232n)) } as const
+  const otherVersion = { phase: 'ready', bundle: bundle(zkPassportVersion(0, 21, 0)) } as const
   const mismatch = renderToStaticMarkup(<IdentityView {...identityProps} request={otherVersion} />)
   assert.match(mismatch, /another ZKPassport version/)
   assert.match(mismatch, /<button class="btn btn--primary" disabled="">Register the identity/)

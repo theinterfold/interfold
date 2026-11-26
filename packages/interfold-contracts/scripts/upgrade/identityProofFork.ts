@@ -16,72 +16,74 @@
 // The `mainnet` network reads RPC_URL and PRIVATE_KEY, so it reaches the fork; the script refuses
 // any chain that is not an Anvil mainnet fork.
 //
-// Options: --proof-validity <seconds> (default 7 days), --max-validity <seconds> (default 365 days).
+// Options: --proof-validity <seconds> and --max-validity <seconds>, by default the example protocol
+// config's.
 import { ethers as ethersLib } from "ethers";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { OwnerIdentityRegistry } from "../../types";
+import {
+  PLANNED_IDENTITY,
+  PROOF_BUNDLE_KIND,
+  type ProofBundle,
+  credentialEnd,
+  readPublicInputs,
+} from "../../zkpassport";
 import { arg, connect } from "../protocol/cli";
 import { resolvePath } from "../protocol/files";
-import { deployOwnerIdentityRegistry } from "../protocol/identityRegistry";
-import { deployedAddress } from "../protocol/values";
-
-const ZKPASSPORT_ROOT_VERIFIER = "0x1D000001000EFD9a6371f4d90bB8920D5431c0D8";
-const IDENTITY_TAG = "interfold.identity.zkpassport.v1";
-
-/** The fields of the dashboard's proof download that the replay reads. */
-export interface ProofBundle {
-  kind: string;
-  chainId: number;
-  owner: string;
-  domain: string;
-  scope: string;
-  faceMatch: boolean;
-  validUntil: string;
-  proofDate: string;
-  nullifierType: number;
-  oprfKeyHash: string;
-  version: string;
-  evidence: string;
-  params: { proofVerificationData: { publicInputs: string[] } };
-}
+import {
+  deployOwnerIdentityRegistry,
+  deployZKPassportIdentityVerifier,
+  identityNamespace,
+} from "../protocol/identityRegistry";
 
 export function readProofBundle(file: string): ProofBundle {
   const bundle = JSON.parse(fs.readFileSync(file, "utf8")) as ProofBundle;
-  if (bundle.kind !== "interfold.identity.zkpassport-proof") {
+  if (bundle.kind !== PROOF_BUNDLE_KIND) {
     throw new Error(`${file} is not a proof download of the identity panel`);
   }
   return bundle;
 }
 
-/** The identifier that ZKPassportIdentityVerifier derives for the proof's scoped nullifier. */
-export function expectedIdentityId(bundle: ProofBundle): string {
-  const coder = ethersLib.AbiCoder.defaultAbiCoder();
-  const inputs = bundle.params.proofVerificationData.publicInputs;
-  const namespace = ethersLib.keccak256(
-    coder.encode(
-      ["string", "string", "string"],
-      [IDENTITY_TAG, bundle.domain, bundle.scope],
-    ),
-  );
-  return ethersLib.keccak256(
-    coder.encode(
-      ["bytes32", "bytes32"],
-      [namespace, inputs[inputs.length - 2]],
-    ),
-  );
+/** The verifier settings that the proof was made for. */
+export function bundleSettings(bundle: ProofBundle) {
+  return {
+    zkPassportVersion: bundle.version,
+    domain: bundle.domain,
+    scope: bundle.scope,
+    nullifierType: bundle.nullifierType,
+    oprfKeyHash: bundle.oprfKeyHash,
+    faceMatchRequired: bundle.faceMatch,
+  };
 }
 
-/** The credential end: `validUntil`, or `maxValidity` after the proof date if that is earlier. */
-export function expectedExpiresAt(
-  bundle: ProofBundle,
+/**
+ * The credential that a verifier for the proof's domain and scope, with this maximum validity,
+ * records for the proof, if ZKPassport's unique identifier is the proof's scoped nullifier. The
+ * namespace comes from the domain and the scope, not from a verifier, so a comparison with a
+ * verifier's result also checks the verifier's derivation.
+ */
+export function expectedCredential(
+  bundle: Pick<ProofBundle, "domain" | "scope" | "validUntil" | "params"> & {
+    version: string;
+  },
   maxValidity: bigint,
-): bigint {
-  const validUntil = BigInt(bundle.validUntil);
-  const cap = BigInt(bundle.proofDate) + maxValidity;
-  return validUntil < cap ? validUntil : cap;
+): { identityId: string; expiresAt: bigint } {
+  const { proofDate, scopedNullifier } = readPublicInputs(
+    bundle.version,
+    bundle.params.proofVerificationData.publicInputs,
+  );
+  return {
+    identityId: ethersLib.keccak256(
+      ethersLib.AbiCoder.defaultAbiCoder().encode(
+        ["bytes32", "bytes32"],
+        [identityNamespace(bundle.domain, bundle.scope), scopedNullifier],
+      ),
+    ),
+    expiresAt: credentialEnd(BigInt(bundle.validUntil), proofDate, maxValidity),
+  };
 }
 
 async function requireAnvilMainnetFork(ethers: any): Promise<void> {
@@ -113,8 +115,12 @@ export async function replayProof(): Promise<void> {
   if (bundle.chainId !== 1) {
     throw new Error(`The proof binds chain ${bundle.chainId}, not mainnet`);
   }
-  const proofValidity = BigInt(arg("proof-validity") ?? 7 * 86_400);
-  const maxValidity = BigInt(arg("max-validity") ?? 365 * 86_400);
+  const proofValidity = BigInt(
+    arg("proof-validity") ?? PLANNED_IDENTITY.proofValidity,
+  );
+  const maxValidity = BigInt(
+    arg("max-validity") ?? PLANNED_IDENTITY.maxValidity,
+  );
   const [deployer] = await ethers.getSigners();
   // Impersonated accounts sign through a plain provider, as in the service-migration simulation.
   const forkProvider = new ethersLib.JsonRpcProvider(
@@ -144,25 +150,21 @@ async function register(
   proofValidity: bigint,
   maxValidity: bigint,
 ): Promise<void> {
-  const verifier = await (
-    await ethers.getContractFactory("ZKPassportIdentityVerifier")
-  ).deploy(
-    ZKPASSPORT_ROOT_VERIFIER,
-    bundle.version,
-    bundle.domain,
-    bundle.scope,
-    bundle.nullifierType,
-    bundle.oprfKeyHash,
-    bundle.faceMatch,
-    proofValidity,
-    maxValidity,
+  const verifierAddress = await deployZKPassportIdentityVerifier(ethers, {
+    zkPassportRootVerifier: PLANNED_IDENTITY.rootVerifier,
+    ...bundleSettings(bundle),
+    proofValidity: proofValidity.toString(),
+    maxValidity: maxValidity.toString(),
+  });
+  const verifier = await ethers.getContractAt(
+    "ZKPassportIdentityVerifier",
+    verifierAddress,
   );
-  await verifier.waitForDeployment();
   const registry = (
     await deployOwnerIdentityRegistry(
       ethers,
       await deployer.getAddress(),
-      await deployedAddress(verifier),
+      verifierAddress,
     )
   ).registry as unknown as OwnerIdentityRegistry;
 
@@ -185,14 +187,14 @@ async function register(
   const receipt = await tx.wait();
   if (receipt?.status !== 1) throw new Error("Registration reverted");
   const [identityId, expiresAt] = await registry.identityOf(bundle.owner);
-  const expectedExpiry = expectedExpiresAt(bundle, maxValidity);
-  if (identityId !== expectedIdentityId(bundle)) {
+  const expected = expectedCredential(bundle, maxValidity);
+  if (identityId !== expected.identityId) {
     throw new Error(
-      `Identifier ${identityId} differs from the scoped nullifier's ${expectedIdentityId(bundle)}`,
+      `Identifier ${identityId} differs from the scoped nullifier's ${expected.identityId}`,
     );
   }
-  if (BigInt(expiresAt) !== expectedExpiry) {
-    throw new Error(`Expiry ${expiresAt} differs from ${expectedExpiry}`);
+  if (BigInt(expiresAt) !== expected.expiresAt) {
+    throw new Error(`Expiry ${expiresAt} differs from ${expected.expiresAt}`);
   }
   const block = await ethers.provider.getBlock(receipt.blockNumber);
   if (!block || !(await registry.isVerifiedAt(bundle.owner, block.timestamp))) {
@@ -229,8 +231,13 @@ async function revertName(
       reason?: string;
       shortMessage?: string;
     };
+    // A revert without data leaves "0x", and parseError throws on data shorter than a selector.
     // ethers decodes Error(string) and Panic(uint256) too; keep their reason.
-    const parsed = failure.data ? iface.parseError(failure.data) : null;
+    const data =
+      failure.data && ethersLib.dataLength(failure.data) >= 4
+        ? failure.data
+        : undefined;
+    const parsed = data ? iface.parseError(data) : null;
     const decoded =
       parsed && (parsed.name === "Error" || parsed.name === "Panic")
         ? `${parsed.name}(${parsed.args[0]})`
@@ -238,7 +245,7 @@ async function revertName(
     return (
       decoded ??
       failure.reason ??
-      (failure.data ? `revert data ${failure.data.slice(0, 74)}` : undefined) ??
+      (data ? `revert data ${data.slice(0, 74)}` : undefined) ??
       failure.shortMessage ??
       String(error)
     );

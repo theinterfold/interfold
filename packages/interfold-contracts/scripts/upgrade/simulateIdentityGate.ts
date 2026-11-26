@@ -37,6 +37,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { zkPassportVersion } from "../../zkpassport";
 import type { ProtocolConfigFile } from "../protocol/types";
 import {
   executeIdentityBatch,
@@ -45,8 +46,8 @@ import {
   startFork,
 } from "./identityFork";
 import {
-  expectedExpiresAt,
-  expectedIdentityId,
+  bundleSettings,
+  expectedCredential,
   readProofBundle,
 } from "./identityProofFork";
 
@@ -55,8 +56,7 @@ const RPC = `http://127.0.0.1:${PORT}`;
 // anvil's first test account; funded on every fork.
 const TEST_KEY =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-// ZKPassport 0.21.1: two bytes each for major, minor, and patch.
-const DEFAULT_VERSION = ethers.zeroPadBytes("0x000000150001", 32);
+const DEFAULT_VERSION = zkPassportVersion(0, 21, 1);
 const GATE = "scripts/upgrade/identityGate.ts";
 const CHECK = "scripts/upgrade/identityBatchCheck.ts";
 
@@ -187,15 +187,7 @@ async function main() {
     path.join(protocolDir, "example.protocol.config.json"),
   );
   const identity = bundle
-    ? {
-        ...example.identity,
-        zkPassportVersion: bundle.version,
-        domain: bundle.domain,
-        scope: bundle.scope,
-        nullifierType: bundle.nullifierType,
-        oprfKeyHash: bundle.oprfKeyHash,
-        faceMatchRequired: bundle.faceMatch,
-      }
+    ? { ...example.identity, ...bundleSettings(bundle) }
     : { ...example.identity, zkPassportVersion: DEFAULT_VERSION };
   // The tools run against copies, so the fork never writes the real mainnet plan or record.
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "identity-gate-"));
@@ -300,18 +292,15 @@ async function main() {
         plan.identityRegistry,
         bundle.owner,
       );
-      if (registered !== expectedIdentityId(bundle)) {
+      const expected = expectedCredential(bundle, BigInt(identity.maxValidity));
+      if (registered !== expected.identityId) {
         throw new Error(
-          `Registered identifier ${registered} differs from the proof's ${expectedIdentityId(bundle)}`,
+          `Registered identifier ${registered} differs from the proof's ${expected.identityId}`,
         );
       }
-      const expectedExpiry = expectedExpiresAt(
-        bundle,
-        BigInt(identity.maxValidity),
-      );
-      if (expiresAt !== expectedExpiry) {
+      if (expiresAt !== expected.expiresAt) {
         throw new Error(
-          `Registered expiry ${expiresAt} differs from the proof's ${expectedExpiry}`,
+          `Registered expiry ${expiresAt} differs from the proof's ${expected.expiresAt}`,
         );
       }
       identityId = registered;
