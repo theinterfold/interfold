@@ -166,10 +166,7 @@ For cryptographic, circuit, key, or generated-parameter changes, identify the de
 artifact combinations that remain supported. The detailed requirements and known gaps are in
 [domain references](docs/architecture/AGENTS.md); verify relevant claims against their sources.
 Human review decides the rollout; no documentation edit or optional agent review grants deployment
-or publication permission. The
-[synchronized Minimum proposal](docs/architecture/upgrades.md#synchronized-minimum-rollout-proposal-v1-pending-review)
-records the qualification evidence, proposed counters, pre-upgrade SS policy and outstanding
-reviews.
+or publication permission.
 
 Before merging a protocol-bearing change, the required reviewer must check the affected domain
 contracts against the actual diff, including persistence/replay and cross-layer compatibility where
