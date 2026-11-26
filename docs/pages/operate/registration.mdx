@@ -311,7 +311,9 @@ The acceptance moves the ownership of the active and pending FOLD of the positio
 in one transaction. The FOLD stays in the `BondingRegistry`. The operator key does not take part.
 The acceptance reverts with `BondOwnerTransferViolatesLock` when the move leaves the old owner with
 less wallet-plus-bonded FOLD than its locked FOLD balance. A change of owner starts the
-[admission cooldown](#admission-cooldown) again.
+[admission cooldown](#admission-cooldown) again. When governance requires
+[bond-owner identity](/operate/identity), the operator counts for new committees only when the new
+owner has a credential.
 
 ## Activation rules
 
@@ -363,6 +365,10 @@ Sortition counts bond owners, not operator keys. For each new E3 request:
 
 Extra operator keys under one bond owner therefore do not give more committee seats in one E3.
 [Tickets & Sortition](/operate/tickets-and-sortition) explains the scores.
+
+Governance can also require an identity credential for each bond owner. Then sortition counts an
+operator only when its bond owner has a current credential, and one identity document can back only
+one bond owner. See [Bond-Owner Identity](/operate/identity).
 
 ### Admission cooldown
 
@@ -450,6 +456,9 @@ ticket collateral (18 decimals on mainnet, 6 decimals for USDC on Sepolia).
   </LinkCard>
   <LinkCard title='Manage Tickets' href='/operate/manage-tickets' icon='coin' tag='Operate'>
     Buy and burn tickets, and keep the balance above the minimum.
+  </LinkCard>
+  <LinkCard title='Bond-Owner Identity' href='/operate/identity' icon='shield' tag='Set up'>
+    Verify the bond owner with an identity document and the ZKPassport app.
   </LinkCard>
   <LinkCard
     title='Exits, Rewards & Slashing'

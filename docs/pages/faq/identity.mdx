@@ -1,0 +1,76 @@
+---
+title: 'Operator Identity'
+description:
+  'Frequently asked questions about the identity check for ciphernode bond owners: why it exists,
+  what it shows, and what happens without it.'
+---
+
+import { LinkCard, LinkCards } from '@/components/ui'
+
+# Operator Identity
+
+This FAQ explains the identity check for the bond owners of ciphernodes. It is for operators and for
+people who want to know how the network protects its committees. For the procedure, see
+[Bond-Owner Identity](/operate/identity).
+
+### Why does the Interfold check the identity of bond owners?
+
+Each E3 uses a small committee. If enough members of one committee work together, they can decrypt
+the inputs. A committee takes at most one operator from each bond owner, but one person can control
+many addresses. The identity check connects each bond owner to one identity document. Thus it is
+more difficult for one person or a small group to control a committee.
+
+### Does every operator have to verify?
+
+Governance decides. First it publishes the identity registry with the check off, and bond owners can
+verify. Later it makes the check required. The hosted dashboard shows the current state in the
+**Identity required** row of the **Bond-owner identity** panel.
+
+### What happens if I do not verify?
+
+Before the check is required, nothing changes. After that, the operator stays registered and active.
+It keeps its bond and its tickets, and it completes the E3s of its current committees. It does not
+get a seat in a new committee.
+
+### What does the Interfold learn about me?
+
+The ZKPassport app reads the document on your phone, and the data of the document stays on the
+phone. The registration makes an identifier of the document, the bond-owner address, and the expiry
+date that you enter public on the chain. To keep the exact expiry date private, enter an earlier
+date. The identity registry keeps no name, nationality, birth date, document number, or photo. Other
+services get a different identifier for the same document. The issuing state has the full chip data,
+so it can calculate the identifier and connect it to you.
+
+### Which documents can I use?
+
+You can use a passport, national ID card, or residence permit with a chip. ZKPassport supports most
+documents that comply with ICAO 9303. You also need a phone with NFC. Proofs from Aadhaar, the
+Japanese My Number card, mobile driving licenses, or photos of the data page do not work.
+
+### How often do I verify?
+
+The credential lasts until the expiry date that you enter, up to a maximum that the verifier sets.
+Renew at least 30 days before the credential ends. Usually you renew with your new document. If the
+maximum ended the credential before the document expires, renew with the same document.
+
+### Can one person run several ciphernodes?
+
+Yes. One bond owner can fund many operators. Each committee still takes at most one operator from
+each bond owner.
+
+### Can a Safe be the bond owner?
+
+Yes. The dashboard makes a file for the Safe Transaction Builder. The Safe then sends the
+registration.
+
+### What if my document is lost or stolen?
+
+Verify your new document. The identifier of the earlier document stays reserved for your bond owner,
+so nobody else can register it. When FaceMatch is required, it is also difficult for another person
+to make a proof with your document.
+
+<LinkCards min={230}>
+  <LinkCard title='Bond-Owner Identity' href='/operate/identity' icon='shield' tag='Operate'>
+    Verify the bond owner, and renew or replace the credential.
+  </LinkCard>
+</LinkCards>
