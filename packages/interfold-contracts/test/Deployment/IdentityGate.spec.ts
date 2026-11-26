@@ -37,6 +37,7 @@ import {
 } from "../../types";
 import {
   CAPACITY_WINDOW,
+  PLANNED_IDENTITY,
   PROOF_BUNDLE_KIND,
   capacityWindowEnd,
   zkPassportVersion,
@@ -182,6 +183,28 @@ describe("identity gate rollout", function () {
         oprfKeyHash: ethersLib.id("key"),
       }),
     ).to.deep.equal(["domain", "scope", "identifier type", "OPRF key hash"]);
+  });
+
+  it("deploys mainnet with the settings that the verification page proves", function () {
+    const mainnet = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/mainnet-protocol.config.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as ProtocolConfigFile;
+    const settings = identityGateSettings(mainnet);
+    expect({
+      rootVerifier: settings.zkPassportRootVerifier,
+      domain: settings.domain,
+      scope: settings.scope,
+      nullifierType: settings.nullifierType,
+      faceMatchRequired: settings.faceMatchRequired,
+      proofValidity: BigInt(settings.proofValidity),
+      maxValidity: BigInt(settings.maxValidity),
+    }).to.deep.equal(PLANNED_IDENTITY);
   });
 
   it("refuses verifier settings that the constructor or the plan would get wrong", function () {
