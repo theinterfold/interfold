@@ -16,6 +16,7 @@ use e3_evm_transactions::nonce::{broadcast_refused, next_free_nonce};
 use eyre::Result;
 use std::{
     collections::BTreeMap,
+    future::IntoFuture,
     time::{Duration, Instant},
 };
 use tokio::sync::Mutex;
@@ -90,9 +91,12 @@ where
         // and broadcasts it. A failure before the broadcast sends nothing and reserves nothing.
         let call = call.from(from);
         let gas = call.estimate_gas().await?;
-        let fees = call.provider.estimate_eip1559_fees().await?;
-        let chain_id = call.provider.get_chain_id().await?;
-        let balance = call.provider.get_balance(from).await?;
+        // Independent reads: together they cost one round trip, so the balance adds no wait.
+        let (fees, chain_id, balance) = tokio::try_join!(
+            call.provider.estimate_eip1559_fees(),
+            call.provider.get_chain_id(),
+            call.provider.get_balance(from).into_future(),
+        )?;
         let value = call.as_ref().value.unwrap_or_default();
         let affordable = affordable_gas(balance, value, fees.max_fee_per_gas);
         let pending = call.provider.get_transaction_count(from).pending().await?;
