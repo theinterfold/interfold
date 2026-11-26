@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, isAddress, parseUnits, type Address, type Hash } from 'viem'
+import { ICAO_CHIP, PLANNED_IDENTITY, capacityWindowEnd, credentialEnd } from '@interfold/contracts/zkpassport'
 import Loader from './Loader'
 import {
   CHAIN,
@@ -30,11 +31,8 @@ import {
   publicClient,
 } from './lib/chain'
 import {
-  PREVIEW_SERVICE,
   boundChainName,
   buildProofBundle,
-  capacityWindowEnd,
-  credentialEnd,
   dateInput,
   fetchIdentityPolicy,
   fetchOwnerAccount,
@@ -1380,8 +1378,8 @@ export type IdentityService = {
   domain: string
   scope: string
   faceMatch: boolean
-  /** 0 non-salted, 1 salted; null keeps the ZKPassport default. */
-  nullifierType: number | null
+  /** 0 non-salted, 1 salted. */
+  nullifierType: number
   proofValidity: bigint
   maxValidity: bigint
 }
@@ -1389,25 +1387,17 @@ export type IdentityService = {
 const REGISTER_IDENTITY_KEY = 'registerIdentity'
 const REFRESH_AFTER_IDENTITY_KEY = 'refreshAfterIdentity'
 
-function identityService(verifier: VerifierConfig | null, previewFaceMatch: boolean): IdentityService {
-  return verifier
-    ? {
-        domain: verifier.domain,
-        scope: verifier.scope,
-        // The SDK requires strict FaceMatch for a salted identifier.
-        faceMatch: verifier.faceMatchRequired || verifier.nullifierType === 1,
-        nullifierType: verifier.nullifierType,
-        proofValidity: verifier.proofValidity,
-        maxValidity: verifier.maxValidity,
-      }
-    : {
-        domain: PREVIEW_SERVICE.domain,
-        scope: PREVIEW_SERVICE.scope,
-        faceMatch: previewFaceMatch,
-        nullifierType: null,
-        proofValidity: PREVIEW_SERVICE.proofValidity,
-        maxValidity: PREVIEW_SERVICE.maxValidity,
-      }
+function identityService(verifier: VerifierConfig | null): IdentityService {
+  const settings = verifier ?? PLANNED_IDENTITY
+  return {
+    domain: settings.domain,
+    scope: settings.scope,
+    // The SDK requires strict FaceMatch for a salted identifier.
+    faceMatch: settings.faceMatchRequired || settings.nullifierType === 1,
+    nullifierType: settings.nullifierType,
+    proofValidity: settings.proofValidity,
+    maxValidity: settings.maxValidity,
+  }
 }
 
 // Until governance publishes an identity policy, the panel stays hidden: a proof made before the
@@ -1443,9 +1433,7 @@ function IdentityPanel({
   const [account, setAccount] = useState<{ owner: Address; registry: Address | null; value: OwnerAccount } | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
   const [request, setRequest] = useState<IdentityRequest>({ phase: 'idle' })
-  // null until the owner types a date.
   const [validUntilInput, setValidUntilInput] = useState<string | null>(null)
-  const [previewFaceMatch, setPreviewFaceMatch] = useState(true)
   const cancelRequest = useRef<(() => void) | null>(null)
   // Each request gets a token. A callback of an older request changes nothing.
   const requestToken = useRef(0)
@@ -1502,7 +1490,7 @@ function IdentityPanel({
     return () => clearInterval(id)
   }, [])
 
-  const service = identityService(verifier, previewFaceMatch)
+  const service = identityService(verifier)
   const loaded = account?.owner === owner && account.registry === (policy?.registry ?? null) ? account.value : null
   const current =
     loaded && clock > loaded.now
@@ -1542,9 +1530,9 @@ function IdentityPanel({
         scope: service.scope,
         mode: 'compressed-evm',
         devMode: false,
-        ...(service.nullifierType === null
-          ? {}
-          : { uniqueIdentifierType: service.nullifierType === 1 ? sdk.NullifierType.SALTED : sdk.NullifierType.NON_SALTED }),
+        // The verifier accepts only chip proofs, so the app refuses other documents before it proves.
+        allowedVerificationMethods: [ICAO_CHIP],
+        uniqueIdentifierType: service.nullifierType === 1 ? sdk.NullifierType.SALTED : sdk.NullifierType.NON_SALTED,
       })
       let query = builder
         .gte('expiry_date', new Date(Number(validUntil) * 1000))
@@ -1591,8 +1579,6 @@ function IdentityPanel({
       service={service}
       validUntilInput={validUntilValue}
       onValidUntil={setValidUntilInput}
-      previewFaceMatch={previewFaceMatch}
-      onPreviewFaceMatch={setPreviewFaceMatch}
       request={request}
       registrationClosed={registrationClosed}
       canRegister={sameAddress(wallet, owner)}
@@ -1677,8 +1663,6 @@ export function IdentityView({
   service,
   validUntilInput,
   onValidUntil,
-  previewFaceMatch,
-  onPreviewFaceMatch,
   request,
   registrationClosed = false,
   canRegister,
@@ -1701,8 +1685,6 @@ export function IdentityView({
   service: IdentityService
   validUntilInput: string
   onValidUntil: (value: string) => void
-  previewFaceMatch: boolean
-  onPreviewFaceMatch: (value: boolean) => void
   request: IdentityRequest
   /** The policy names a registry that has no verifier. */
   registrationClosed?: boolean
@@ -1825,9 +1807,9 @@ export function IdentityView({
                 onChange={onValidUntil}
                 placeholder='YYYY-MM-DD'
                 invalid={validUntilInput.trim() !== '' && validUntil === null}
-                hint={`The document must be valid at least until this date. The credential ends on this date, or ${formatDuration(
+                hint={`The document must be valid at least until this date. If it expires sooner, enter its expiry date. This date is public. The credential ends on this date, or ${formatDuration(
                   service.maxValidity,
-                )} after the proof, if that is earlier.`}
+                )} after the proof if that is earlier.`}
               />
               {capacityApplies && plannedEnd !== null && windowEnd !== null && plannedEnd < windowEnd && (
                 <Note kind='warn'>
@@ -1840,14 +1822,7 @@ export function IdentityView({
                   Pick a date after the current expiry ({fmtDay(currentExpiry)}). A renewal cannot shorten the credential.
                 </Note>
               )}
-              {preview ? (
-                <label className='opcheck'>
-                  <input type='checkbox' checked={previewFaceMatch} onChange={(e) => onPreviewFaceMatch(e.target.checked)} />
-                  <span>Require FaceMatch (a live face scan against the chip photo)</span>
-                </label>
-              ) : (
-                service.faceMatch && <Note>The app also asks for a face scan (FaceMatch).</Note>
-              )}
+              {service.faceMatch && <Note>The app also asks for a face scan (FaceMatch).</Note>}
 
               {request.phase === 'waiting' ? (
                 <div className='opidentity__request'>
@@ -2060,6 +2035,8 @@ function parseAmount(input: string, decimals: number): bigint | null {
 function formatDuration(seconds: bigint): string {
   const s = Number(seconds)
   if (s <= 0) return 'none'
+  const year = 365 * 86400
+  if (s % year === 0) return s === year ? '1 year' : `${s / year} years`
   if (s % 86400 === 0) return `${s / 86400}d`
   if (s % 3600 === 0) return `${s / 3600}h`
   if (s % 60 === 0) return `${s / 60}m`

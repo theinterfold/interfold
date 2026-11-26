@@ -133,18 +133,19 @@ revocation makes owner capacity read zero until refreshes count the owners again
 still count (`--force` overrides). Revoking an identifier that its owner already replaced leaves
 capacity as it is. Validate the executed batch with the current policy. When ZKPassport ships a new
 version, the app proves with it and the pinned verifier rejects those proofs, so owners cannot
-register or renew. Set the new `identity.zkPassportVersion` and run
-`upgrade:identity:rotate-verifier`: it deploys a verifier from the config and writes the batch that
-sets it on the registry, which keeps every credential and reservation. It refuses a change to the
-domain, scope, identifier type, or OPRF key hash, because those derive every identifier and one
-document could then verify a second owner. Rehearse it with a fresh phone proof
-(`upgrade:identity:proof-fork`) first. To close registration at once (for example, when ZKPassport's
-verifier is in doubt), governance calls `setVerifier(0)` on the registry; credentials stay valid,
-and `rotate-verifier` opens it again. `prepare` refuses to run again for a network that has a plan,
-because a second registry makes every owner prove again (`--new-registry` overrides); until its
-batch executes, `prepare --rewrite` writes that batch again for the contracts in the plan. It also
-refuses when BondingRegistry already has an identity policy, which it reads from storage, so a
-checkout without the plan cannot replace the registry by mistake.
+register or renew. The verifier knows the public-input layouts of versions 0.20 to 0.23 only.
+`prepare` and `rotate-verifier` refuse any other version, which needs a verifier update first. Set
+the new `identity.zkPassportVersion` and run `upgrade:identity:rotate-verifier`: it deploys a
+verifier from the config and writes the batch that sets it on the registry, which keeps every
+credential and reservation. It refuses a change to the domain, scope, identifier type, or OPRF key
+hash, because those derive every identifier and one document could then verify a second owner.
+Rehearse it with a fresh phone proof (`upgrade:identity:proof-fork`) first. To close registration at
+once (for example, when ZKPassport's verifier is in doubt), governance calls `setVerifier(0)` on the
+registry; credentials stay valid, and `rotate-verifier` opens it again. `prepare` refuses to run
+again for a network that has a plan, because a second registry makes every owner prove again
+(`--new-registry` overrides); until its batch executes, `prepare --rewrite` writes that batch again
+for the contracts in the plan. It also refuses when BondingRegistry already has an identity policy,
+which it reads from storage, so a checkout without the plan cannot replace the registry by mistake.
 `upgrade:identity:validate -- --required <true|false>` reads back the implementation, the registry
 owner, implementation, proxy admin and verifier, every verifier setting and the identifier
 namespace, the latest `IdentityPolicyUpdated` against the expected policy, the `IdentityRevoked`
