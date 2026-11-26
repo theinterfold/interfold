@@ -149,8 +149,6 @@ best submission of each bond owner, and then keeps the best `N` bond owners. The
 for one seat. A bond-owner transfer after the snapshot does not give the old owner another seat.
 
 This cap is based on addresses. It does not prove that two bond owners are independent people.
-Governance can also require an identity credential for each bond owner. Then one identity document
-can back only one bond owner. See [Bond-Owner Identity](/operate/identity).
 
 More tickets give more draws, so a better best score is more likely. The chance of a seat increases
 with the ticket count, but it is not proportional to it. Each bond owner gets at most one seat, and
@@ -223,8 +221,7 @@ committee, although its DKG roster has 14 members.
 For sortition, the operator must also be eligible at the snapshot (`eligibilityAt`). This check adds
 the admission policy. Governance can set a cooldown that starts at registration and at each change
 of bond owner. Governance can also pause admissions. A pause keeps new, waiting, and owner-changed
-positions out of new committees. When governance requires [bond-owner identity](/operate/identity),
-the check also needs a current credential of the bond owner.
+positions out of new committees.
 
 ### After a governance change
 

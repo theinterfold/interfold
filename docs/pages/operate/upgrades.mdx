@@ -36,8 +36,6 @@ but the ID does not decide eligibility.
 | v0.16.0          | 4                  | 1                 | 6              | 4 and 3                       |
 | v0.17.0          | 4                  | 2                 | 6              | 4 and 3                       |
 | v0.18.0          | 4                  | 2                 | 7              | 4 and 3                       |
-| v0.19.0, v0.19.1 | 8                  | 2                 | 8              | 5 and 4                       |
-| v0.20.0          | 10                 | 2                 | 9              | 7 and 6                       |
 
 Nodes on releases v0.15.1 through v0.18.0 share `protocol_version` 4 and the same P2P wire versions,
 so they can connect to each other. A node on generation 1 can connect, but it cannot be active when
@@ -48,11 +46,9 @@ The v0.19 DKG message format requires storage schema 8 and gossip/sync wire vers
 uses protocol version 8 and node generation 2. Complete active E3 work before the
 [storage reset](#reset-node-state). The signed DKG messages cannot reuse schema 7 state.
 
-v0.20.0 uses protocol version 10 and storage schema 9. It includes the `bb` 6.0.0 toolchain. Its
-proofs and verification keys do not verify against `bb` 5.2.0 nodes or verifiers, so upgrade every
-node during the paused cutover, after active E3 work completes. Schema 9 does not read schema 8
-state, so [reset the state](#reset-node-state) before the first start. Protocol version 9 appeared
-only in prereleases.
+The `bb` 6.0.0 toolchain uses protocol version 9. Its proofs and verification keys do not verify
+against `bb` 5.2.0 nodes or verifiers, so upgrade every node together during the paused cutover,
+after active E3 work completes. No storage reset is needed.
 
 ## The on-chain release gate
 

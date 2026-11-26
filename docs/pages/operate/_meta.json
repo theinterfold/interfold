@@ -18,9 +18,6 @@
   "registration": {
     "title": "Registration & Bonding"
   },
-  "identity": {
-    "title": "Bond-Owner Identity"
-  },
   "-- Operate": {
     "type": "separator",
     "title": "Operate"
