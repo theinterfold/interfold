@@ -14,6 +14,7 @@
   },
   "include": [
     "bfv.ts",
+    "zkpassport.ts",
     "hardhat.config.ts",
     "scripts/**/*.ts",
     "ignition/modules/**/*.ts",

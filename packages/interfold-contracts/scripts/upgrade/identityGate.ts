@@ -31,6 +31,7 @@ import {
   BondingRegistry__factory as BondingRegistryFactory,
   OwnerIdentityRegistry__factory as OwnerIdentityRegistryFactory,
 } from "../../types";
+import { capacityWindowEnd, publicInputLayout } from "../../zkpassport";
 import { assertAragonGovernancePreconditions } from "../protocol/actions";
 import { arg, connect, hasFlag, networkName } from "../protocol/cli";
 import { proxyAdminInterface } from "../protocol/constants";
@@ -42,7 +43,11 @@ import {
   repoRelativePath,
   writeJson,
 } from "../protocol/files";
-import { deployOwnerIdentityRegistry } from "../protocol/identityRegistry";
+import {
+  deployOwnerIdentityRegistry,
+  deployZKPassportIdentityVerifier,
+  identityNamespace,
+} from "../protocol/identityRegistry";
 import {
   aragonAdminSafeBatch,
   aragonAdminSafeTransactions,
@@ -56,12 +61,7 @@ import type {
   ProtocolDeployment,
   SafeTransaction,
 } from "../protocol/types";
-import {
-  address,
-  deployedAddress,
-  loadConfig,
-  requireContract,
-} from "../protocol/values";
+import { address, loadConfig, requireContract } from "../protocol/values";
 import { getProxyAdmin } from "../proxy";
 import { verifyRecordedDeployments } from "../sourceVerification";
 import {
@@ -88,16 +88,8 @@ export const REFRESH_BATCH = 20;
 export const MAX_BATCH_OPERATORS = 120;
 /** The stages whose batch refreshes every operator and records the refresh list. */
 const REFRESH_STAGES = ["prepare", "enforce", "relax", "revoke"];
-/** `BondOwnerCapacityLib.IDENTITY_CAPACITY_WINDOW`. Windows start at multiples of it. */
-export const CAPACITY_WINDOW = 30n * 86_400n;
 /** Time to execute an enforce batch when `--execute-by` is not given: the Safe signs it meanwhile. */
 export const EXECUTION_MARGIN = 7n * 86_400n;
-const IDENTITY_TAG = "interfold.identity.zkpassport.v1";
-
-/** The last second of the capacity window that contains `timestamp` (`_windowEnd`). */
-export function capacityWindowEnd(timestamp: bigint): bigint {
-  return (timestamp / CAPACITY_WINDOW + 1n) * CAPACITY_WINDOW - 1n;
-}
 
 /**
  * The end of the capacity window that contains the latest execution of an enforce batch. An owner
@@ -193,16 +185,6 @@ function assertBatchSize(operators: number): void {
 
 const isoTime = (timestamp: bigint) =>
   new Date(Number(timestamp) * 1000).toISOString();
-
-/** The identifier namespace of a verifier with this domain and scope. */
-export function identityNamespace(domain: string, scope: string): string {
-  return ethersLib.keccak256(
-    ethersLib.AbiCoder.defaultAbiCoder().encode(
-      ["string", "string", "string"],
-      [IDENTITY_TAG, domain, scope],
-    ),
-  );
-}
 
 /** ERC-7201 slot of BondingRegistry's identity storage (`interfold.storage.BondingIdentity`). */
 export const IDENTITY_STORAGE_SLOT =
@@ -356,6 +338,11 @@ export function identityGateSettings(
   if (identity.zkPassportVersion === ZERO_HASH) {
     throw new Error(
       "identity.zkPassportVersion is unset; use the version that the current ZKPassport app proves",
+    );
+  }
+  if (!publicInputLayout(identity.zkPassportVersion)) {
+    throw new Error(
+      "ZKPassportIdentityVerifier does not know the public-input layout of identity.zkPassportVersion; a new ZKPassport version needs a verifier update first",
     );
   }
   if (
@@ -672,27 +659,6 @@ function neededOwners(config: ProtocolConfigFile): bigint {
   );
 }
 
-/** Deploys a ZKPassportIdentityVerifier with `settings`; returns its address. */
-async function deployVerifier(
-  ethers: any,
-  settings: IdentityGateConfig,
-): Promise<string> {
-  const factory = await ethers.getContractFactory("ZKPassportIdentityVerifier");
-  const verifier = await factory.deploy(
-    settings.zkPassportRootVerifier,
-    settings.zkPassportVersion,
-    settings.domain,
-    settings.scope,
-    settings.nullifierType,
-    settings.oprfKeyHash,
-    settings.faceMatchRequired,
-    settings.proofValidity,
-    settings.maxValidity,
-  );
-  await verifier.waitForDeployment();
-  return deployedAddress(verifier);
-}
-
 /** The settings that a deployed ZKPassportIdentityVerifier fixes. */
 async function verifierSettings(
   ethers: any,
@@ -715,7 +681,6 @@ async function verifierSettings(
   };
 }
 
-/** Write the raw batch, and the Aragon Safe batch when governance is a DAO. */
 /**
  * Write the batch of a stage and return the file that governance executes: with Aragon governance,
  * the proposer Safe's builder batch. The raw action file is then for review only.
@@ -877,7 +842,10 @@ export async function prepareIdentityGate(): Promise<void> {
   );
   assertBatchSize(operators.length);
 
-  const identityVerifier = await deployVerifier(ethers, settings);
+  const identityVerifier = await deployZKPassportIdentityVerifier(
+    ethers,
+    settings,
+  );
 
   // Governance owns the registry and its proxy admin from the start: it revokes, replaces the
   // verifier, and can add recovery through an upgrade.
@@ -1052,7 +1020,7 @@ export async function rotateVerifier(): Promise<void> {
       `The config matches the current verifier ${current}; there is nothing to rotate`,
     );
   }
-  const verifier = await deployVerifier(ethers, settings);
+  const verifier = await deployZKPassportIdentityVerifier(ethers, settings);
   const txs = [
     safeTx(
       plan.identityRegistry,
