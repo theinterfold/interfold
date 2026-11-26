@@ -134,7 +134,8 @@ hand; the check will reject pushes where they drift from what the generator woul
 
 ### What it does
 
-1. **Discovers circuits** in `circuits/bin/{dkg,threshold,chonk,recursive_aggregation}/`
+1. **Discovers circuits** in `circuits/bin/{dkg,threshold,chonk,recursive_aggregation}/` and
+   `circuits/bin/lbfv/{dkg,threshold,recursive_aggregation}/` (l-BFV presets only)
 2. **Compiles** each circuit using `nargo compile`
 3. **Generates verification keys** using `bb write_vk` (`--scheme chonk` for the `chonk` group)
 4. **Sanitizes paths** in compiled JSON (removes local filesystem paths for opsec)
@@ -143,9 +144,12 @@ hand; the check will reject pushes where they drift from what the generator woul
 
 ### Options
 
-- `--preset <name>` - Profile namespace: `insecure-64` (default), `secure-8192`, or `all` under the
-  live policy
-- `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`, `large`
+- `--preset <name>` - Parameter preset: `insecure-64` (default; degree 64, trBFV only),
+  `insecure-lbfv` (degree 128, l-BFV parameter set 6), `secure-8192`, `secure-16384` (l-BFV only),
+  or `all` under the live policy. Secure-16384 supports minimum, micro, and small; its build
+  excludes trBFV-only circuits.
+- `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`, `large` (trBFV
+  presets `insecure-64` and `secure-8192` only)
 - `--skip-utils-patch` - Skip selecting deployment preset/committee names in
   `packages/interfold-contracts/scripts/utils.ts`
 - `--group <groups>` - Circuit groups (comma-separated: dkg,threshold,chonk,recursive_aggregation)
@@ -162,11 +166,11 @@ hand; the check will reject pushes where they drift from what the generator woul
 Hydration accepts a different source hash, reports it, and records the original artifact hash in the
 active stamp. It never restamps the archive. `--skip-if-built` still requires a source match.
 
-Only a complete build with verification keys writes the `nodes_fold.vk_tree_hash` and
-`c6_fold.vk_tree_hash` anchors. A build with `--group`, `--circuit`, or `--skip-vk`, or a build with
-a failed circuit, removes both anchors from the pair and from `circuits/bin/`. An old anchor can
-hash a key that no longer matches the compiled circuits. Run a complete build before you deploy the
-BFV verifiers or aggregate proofs.
+Only a complete build with verification keys writes the `nodes_fold.vk_tree_hash`,
+`c6_fold.vk_tree_hash` and (for l-BFV pairs) `c3ab_fold_chunked.vk_tree_hash` anchors. A build with
+`--group`, `--circuit`, or `--skip-vk`, or a build with a failed circuit, removes every anchor from
+the pair and from `circuits/bin/`. An old anchor can hash a key that no longer matches the compiled
+circuits. Run a complete build before you deploy the BFV verifiers or aggregate proofs.
 
 After preparing every build-policy pair, run `pnpm generate:vk-commitments`. Partial or failed
 builds invalidate affected archive metadata, not the committed catalogue. Generation preserves old
@@ -213,10 +217,16 @@ pnpm build:circuits --preset insecure-64 --committee minimum
 pnpm build:circuits --preset insecure-64 --committee micro
 pnpm build:circuits --preset insecure-64 --committee small
 pnpm build:circuits --preset insecure-64 --committee large
+pnpm build:circuits --preset insecure-lbfv --committee minimum
+pnpm build:circuits --preset insecure-lbfv --committee micro
+pnpm build:circuits --preset insecure-lbfv --committee small
 pnpm build:circuits --preset secure-8192 --committee minimum
 pnpm build:circuits --preset secure-8192 --committee micro
 pnpm build:circuits --preset secure-8192 --committee small
 pnpm build:circuits --preset secure-8192 --committee large
+pnpm build:circuits --preset secure-16384 --committee minimum
+pnpm build:circuits --preset secure-16384 --committee micro
+pnpm build:circuits --preset secure-16384 --committee small
 pnpm store:circuits push
 
 # Pull circuits from git branch (used by releases)
@@ -268,7 +278,7 @@ Circuits are built locally and stored in a git branch:
 
 1. **Local**: Build circuits and push to branch
 
-`push` runs `prepare-vk-commitments` on the staged eight-pair tree before hashing it. If a pair
+`push` runs `prepare-vk-commitments` on the staged fourteen-pair tree before hashing it. If a pair
 disagrees with the committed catalogue, rebuild the matching artifacts.
 
 ```bash
@@ -276,6 +286,9 @@ pnpm build:circuits --preset insecure-64 --committee minimum
 pnpm build:circuits --preset insecure-64 --committee micro
 pnpm build:circuits --preset insecure-64 --committee small
 pnpm build:circuits --preset insecure-64 --committee large
+pnpm build:circuits --preset insecure-lbfv --committee minimum
+pnpm build:circuits --preset insecure-lbfv --committee micro
+pnpm build:circuits --preset insecure-lbfv --committee small
 pnpm build:circuits --preset secure-8192 --committee minimum
 pnpm build:circuits --preset secure-8192 --committee micro
 pnpm build:circuits --preset secure-8192 --committee small
@@ -290,8 +303,10 @@ pnpm store:circuits push
 The release archive must include:
 
 - `insecure-64/{minimum,micro,small,large}` for Sepolia and local rehearsals
+- `insecure-lbfv/{minimum,micro,small}` for the l-BFV rehearsals
 - `secure-8192/{minimum,micro,small,large}` for Sepolia secure-parameter tests. Mainnet committees
   use only `minimum`, `micro` and `small`
+- `secure-16384/{minimum,micro,small}` for the l-BFV V2 configurations
 
 Nodes download one archive and select the artifact directory from the E3's on-chain BFV parameter
 set and committee size.

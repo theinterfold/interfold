@@ -168,7 +168,7 @@ fn print_param_set(
             "  B_fresh               = {}",
             result.b_fresh.to_str_radix(10)
         );
-        println!("  B_C (= B_fresh)       = {}", result.b_c.to_str_radix(10));
+        println!("  B_C (+ r_k(q))        = {}", result.b_c.to_str_radix(10));
         println!();
         println!("  log₂(2·B_C)           = {:.6}", result.lhs_log2);
     }

@@ -131,15 +131,13 @@ pub fn discover(root: &Path, request: &Request) -> Result<Vec<Circuit>> {
         Ok(())
     }
     let mut circuits = Vec::new();
+    let bin = root.join("circuits/bin");
     for group in request.groups.groups() {
         let start = circuits.len();
-        walk(
-            &root.join("circuits/bin").join(group),
-            group,
-            "",
-            &request.circuits,
-            &mut circuits,
-        )?;
+        // The l-BFV circuits live in `circuits/bin/lbfv/<group>` and are discovered with their group.
+        for base in [bin.join(group), bin.join("lbfv").join(group)] {
+            walk(&base, group, "", &request.circuits, &mut circuits)?;
+        }
         circuits[start..].sort_by(|a, b| a.name.cmp(&b.name));
     }
     Ok(circuits)
@@ -165,6 +163,37 @@ fn workspace_target(root: &Path, package: &Path) -> Result<PathBuf> {
         }
     }
     Ok(package.join("target"))
+}
+
+/// The package directory of the circuit `group/name` under `bin` (`circuits/bin`): the l-BFV
+/// circuits live under `bin/lbfv`, every other circuit directly under `bin`.
+fn source_dir(bin: &Path, group: &str, name: &str) -> PathBuf {
+    let lbfv = bin.join("lbfv").join(group).join(name);
+    if lbfv.is_dir() {
+        lbfv
+    } else {
+        bin.join(group).join(name)
+    }
+}
+
+/// The circuits of `circuits` that the archive of `profile` publishes. An explicit circuit
+/// selection must be served whole.
+fn served(circuits: Vec<Circuit>, profile: BfvProfile, request: &Request) -> Result<Vec<Circuit>> {
+    if profile.protocol() == BfvDecryptionProtocol::Synchronized {
+        return Ok(circuits);
+    }
+    let preset = profile.threshold_preset();
+    let served: Vec<_> = circuits
+        .into_iter()
+        .filter(|circuit| super::policy::enabled(circuit, preset))
+        .collect();
+    if served.is_empty() {
+        bail!("No circuits enabled for {profile}");
+    }
+    if !request.circuits.is_empty() && served.len() != request.circuits.len() {
+        bail!("Circuit selection is not supported for {profile}");
+    }
+    Ok(served)
 }
 
 pub fn copy_tree(source: &Path, target: &Path, excluded: &[&str]) -> Result<()> {
@@ -219,13 +248,6 @@ fn synchronized_path(root: &Path, path: &Path) -> bool {
         .any(|domain| path.starts_with(root.join("circuits/bin").join(domain)))
 }
 
-/// Every artifact a prover requires of a pair (`crates/zk/prover/required-artifacts.json`), as
-/// `<variant>/<group>/<name>/<package>.<extension>`.
-fn required_artifacts() -> Vec<&'static str> {
-    serde_json::from_str(include_str!("../../prover/required-artifacts.json"))
-        .expect("invalid required circuit artifact inventory")
-}
-
 /// Where [`hydrate`] copies each published file of a variant in `circuits/bin`, as
 /// `(published extension, bin extension)`.
 const BIN_EXTENSIONS: [(&str, &[(&str, &str)]); 3] = [
@@ -247,7 +269,7 @@ const BIN_EXTENSIONS: [(&str, &[(&str, &str)]); 3] = [
 /// The VK-tree anchors, by the name each is published under. An anchor is placed by this name and
 /// not with a circuit [`discover`] lists: the C6 tree anchor keeps the retired `c6_fold` path, which
 /// holds no circuit.
-const ANCHORS: [&str; 2] = ["nodes_fold", "c6_fold"];
+const ANCHORS: [&str; 3] = ["nodes_fold", "c6_fold", "c3ab_fold_chunked"];
 
 /// Where the anchor `name` is published in `pair`.
 fn published_anchor(pair: &Path, name: &str) -> PathBuf {
@@ -258,8 +280,7 @@ fn published_anchor(pair: &Path, name: &str) -> PathBuf {
 
 /// Where a build or [`hydrate`] leaves the anchor `name` under `bin` (`circuits/bin`).
 fn built_anchor(bin: &Path, name: &str) -> PathBuf {
-    bin.join("recursive_aggregation")
-        .join(name)
+    source_dir(bin, "recursive_aggregation", name)
         .join("target")
         .join(format!("{name}.vk_tree_hash"))
 }
@@ -267,17 +288,23 @@ fn built_anchor(bin: &Path, name: &str) -> PathBuf {
 /// The required artifacts of a pair. A pair is complete, current or hydratable only with all of
 /// them: a tree built before the inventory gained an artifact must not pass.
 pub fn dist_markers(pair: &Path) -> Vec<PathBuf> {
-    required_artifacts()
+    let preset = pair
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .expect("artifact pair has a preset parent");
+    super::policy::required_artifacts(preset)
         .iter()
         .map(|path| pair.join(path))
         .collect()
 }
 
-/// The required artifacts where [`hydrate`] puts them in `circuits/bin`. Every variant's program
-/// is the circuit's one compiled `json`.
-pub(crate) fn bin_markers(root: &Path) -> Result<Vec<PathBuf>> {
-    required_artifacts()
-        .into_iter()
+/// The required artifacts of `preset` where [`hydrate`] puts them in `circuits/bin`. Every
+/// variant's program is the circuit's one compiled `json`.
+pub(crate) fn bin_markers(root: &Path, preset: &str) -> Result<Vec<PathBuf>> {
+    let bin = root.join("circuits/bin");
+    super::policy::required_artifacts(preset)
+        .iter()
         .map(|required| {
             let parts: Vec<&str> = required.split('/').collect();
             let [variant, group @ .., name, file] = parts.as_slice() else {
@@ -287,7 +314,7 @@ pub(crate) fn bin_markers(root: &Path) -> Result<Vec<PathBuf>> {
                 .split_once('.')
                 .with_context(|| format!("Required artifact {required} has no extension"))?;
             if extension == "vk_tree_hash" {
-                return Ok(built_anchor(&root.join("circuits/bin"), name));
+                return Ok(built_anchor(&bin, name));
             }
             let extension = if extension == "json" {
                 "json"
@@ -301,7 +328,7 @@ pub(crate) fn bin_markers(root: &Path) -> Result<Vec<PathBuf>> {
                     .map(|(_, to)| *to)
                     .with_context(|| format!("Required artifact {required} has no bin location"))?
             };
-            let package_dir = root.join("circuits/bin").join(group.join("/")).join(name);
+            let package_dir = source_dir(&bin, &group.join("/"), name);
             Ok(workspace_target(root, &package_dir)?.join(format!("{package}.{extension}")))
         })
         .collect()
@@ -375,7 +402,7 @@ pub fn bin_current(root: &Path, preset: &str, committee: &str, hash: Option<&str
             && stamp.committee == committee
             && hash.is_none_or(|hash| stamp.source_hash == hash)
     });
-    Ok(stamped && bin_markers(root)?.iter().all(|path| path.is_file()))
+    Ok(stamped && bin_markers(root, preset)?.iter().all(|path| path.is_file()))
 }
 
 /// The stamp of the preset and committee `circuits/bin` was built for, or `None` before any build.
@@ -396,12 +423,13 @@ fn active_stamp(root: &Path, preset: &str, committee: &str, hash: &str) -> Resul
 }
 
 pub fn hydrate(root: &Path, pair: &Path, request: &Request, stamp: &Stamp) -> Result<()> {
-    if request.single_profile()?.protocol() == BfvDecryptionProtocol::Synchronized
+    let hydrated = request.single_profile()?;
+    if hydrated.protocol() == BfvDecryptionProtocol::Synchronized
         || profile(&stamp.preset)?.protocol() == BfvDecryptionProtocol::Synchronized
     {
         bail!("Synchronized artifacts are incomplete and cannot be hydrated");
     }
-    let circuits = discover(root, request)?;
+    let circuits = served(discover(root, request)?, hydrated, request)?;
     clean_targets(root, &circuits)?;
     for circuit in circuits {
         let target = target_dir(root, &circuit)?;
@@ -415,6 +443,7 @@ pub fn hydrate(root: &Path, pair: &Path, request: &Request, stamp: &Stamp) -> Re
                 }
             }
         }
+        recursive_vk_json(&target, &circuit.package)?;
     }
     // `clean_targets` reaches only the targets of circuits, so an anchor at a path that holds no
     // circuit is replaced here.
@@ -530,7 +559,12 @@ pub fn variants(circuit: &Circuit) -> Vec<(&'static str, &'static str, &'static 
     if circuit.group == "chonk" {
         return vec![("default", CHONK_TARGET, "vk_recursive")];
     }
-    if circuit.group == "recursive_aggregation" {
+    if circuit.group == "recursive_aggregation"
+        && !matches!(
+            circuit.name.as_str(),
+            "sk_c2_chunk_finalize" | "esm_c2_chunk_finalize"
+        )
+    {
         // The tube and accumulate proofs carry an IPA claim that a root rollup (`c3ab_fold`,
         // `c6_chonk_root`) closes.
         if matches!(
@@ -542,7 +576,7 @@ pub fn variants(circuit: &Circuit) -> Vec<(&'static str, &'static str, &'static 
         let mut values = vec![("default", "noir-recursive-no-zk", "vk_recursive")];
         if matches!(
             circuit.name.as_str(),
-            "dkg_aggregator" | "decryption_aggregator"
+            "dkg_aggregator" | "dkg_aggregator_v2" | "decryption_aggregator"
         ) {
             values.push(("evm", "evm", "vk"));
         }
@@ -574,9 +608,15 @@ fn vk_files(extension: &str) -> [(&'static str, String); 2] {
 /// layout, the layout `build` publishes, without compiling. Fails on a missing artifact, so check
 /// [`bin_current`] first.
 pub fn stage_bin(root: &Path, pair: &Path) -> Result<()> {
+    let namespace = pair
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .context("Artifact pair has no preset parent")?;
+    let selected = profile(namespace)?;
     let request = Request {
         operation: Operation::Build,
-        preset: PresetSelection::All,
+        preset: PresetSelection::Single(selected),
         committee: CommitteeSelection::All,
         groups: GroupSelection::All,
         circuits: Vec::new(),
@@ -590,7 +630,7 @@ pub fn stage_bin(root: &Path, pair: &Path) -> Result<()> {
         hydrate_bin_only: false,
         dry_run: false,
     };
-    for circuit in discover(root, &request)? {
+    for circuit in served(discover(root, &request)?, selected, &request)? {
         let compiled = compiled_path(root, &circuit)?;
         let target = compiled.parent().context("Compiled artifact parent")?;
         for (variant, _, extension) in variants(&circuit) {
@@ -622,6 +662,10 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
     let compiled = compiled_path(root, circuit)?;
     sanitize_paths(&compiled)?;
     let target = compiled.parent().context("Compiled artifact parent")?;
+    let recursive_json = target.join(format!("{}.vk_recursive.json", circuit.package));
+    if recursive_json.exists() {
+        fs::remove_file(recursive_json)?;
+    }
     let variants = if skip_vk {
         vec![("default", "noir-recursive-no-zk", "vk_recursive")]
     } else {
@@ -651,6 +695,9 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
             fs::copy(source, dist.join(format!("{}.{file}", circuit.package)))?;
         }
     }
+    if !skip_vk {
+        recursive_vk_json(target, &circuit.package)?;
+    }
     println!("Built {}/{}", circuit.group, circuit.name);
     Ok(())
 }
@@ -672,7 +719,7 @@ pub(crate) fn write_vk(
     if verifier_target == CHONK_TARGET {
         // bb 6 derives each Chonk circuit's key against its own Mega flavor. The hiding kernel
         // ends the stack; its key is the stack's Chonk key.
-        let kind = if circuit.name.ends_with("_app") {
+        let kind = if circuit.name.contains("_chonk_app") {
             "app"
         } else if circuit.name.ends_with("_hiding_kernel") {
             "hiding"
@@ -688,6 +735,25 @@ pub(crate) fn write_vk(
         write_chonk_vk_hash(out)?;
     }
     Ok(())
+}
+
+fn recursive_vk_json(target: &Path, package: &str) -> Result<()> {
+    let vk = target.join(format!("{package}.vk_recursive"));
+    let hash = target.join(format!("{package}.vk_recursive_hash"));
+    if !vk.is_file() || !hash.is_file() {
+        return Ok(());
+    }
+    let bytes = fs::read(&vk)?;
+    let fields: Vec<_> = bytes
+        .chunks(32)
+        .map(|field| format!("0x{}", hex::encode(field)))
+        .collect();
+    write_json(
+        &target.join(format!("{package}.vk_recursive.json")),
+        &serde_json::json!({
+            "vkAsFields": fields, "vkHash": format!("0x{}", hex::encode(fs::read(hash)?))
+        }),
+    )
 }
 
 /// `write_vk --scheme chonk` writes no hash. The kernels pin each key by Barretenberg's
@@ -736,7 +802,7 @@ pub fn refresh_anchors(
         }
     }
     if complete {
-        for (name, bytes) in vk_tree::hashes(pair)? {
+        for (name, bytes) in vk_tree::anchors(pair, profile.artifacts_namespace())? {
             for path in [published_anchor(pair, name), built_anchor(&bin, name)] {
                 fs::create_dir_all(path.parent().context("Anchor parent")?)?;
                 fs::write(path, bytes)?;
@@ -808,6 +874,11 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
                 selected[1]
             );
         }
+        let circuits = served(
+            circuits,
+            selected_request.single_profile()?,
+            &selected_request,
+        )?;
         selections.push((selected, selected_request, circuits));
     }
     // A dry run only reads the selection; it needs no tools and writes nothing.
@@ -872,9 +943,10 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
                 remove_dir(&pair)?;
             }
             if !request.no_clean_targets {
-                clean_targets(root, &circuits)?;
+                clean_targets(root, &discover(root, request)?)?;
             }
             fs::create_dir_all(&pair)?;
+            refresh_anchors(root, &pair, false, selected_profile)?;
             let mut failures = Vec::new();
             for circuit in &circuits {
                 match build_circuit(root, &pair, circuit, request.skip_vk) {
@@ -901,12 +973,16 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
                 source_hash: hash.clone(),
                 built_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             };
-            write_json(&pair.join(".build-stamp.json"), &stamp)?;
-            if complete {
-                let manifest = vk_commitments::collect_pair(&output, preset_name, committee)?;
-                vk_commitments::write_pair(&pair, &manifest)?;
+            // Partial builds leave the pair unstamped, so a later complete build cannot be skipped.
+            if request.groups.is_complete() && request.circuits.is_empty() {
+                write_json(&pair.join(".build-stamp.json"), &stamp)?;
+                if complete {
+                    let manifest = vk_commitments::collect_pair(&output, preset_name, committee)?;
+                    vk_commitments::write_pair(&pair, &manifest)?;
+                }
+                active_stamp(root, preset_name, committee, &hash)?;
             }
-            active_stamp(root, preset_name, committee, &hash)
+            Ok(())
         })();
         if let Err(error) = result {
             if started {
@@ -1047,7 +1123,7 @@ mod tests {
     fn request() -> Request {
         Request {
             operation: super::super::Operation::Build,
-            preset: super::super::PresetSelection::Single(BfvProfile::SsInsecure64),
+            preset: super::super::PresetSelection::Single(BfvProfile::SsInsecureLbfv),
             committee: super::super::CommitteeSelection::Single(
                 e3_committee::CiphernodesCommitteeSize::Minimum,
             ),
@@ -1310,7 +1386,7 @@ mod tests {
         fs::create_dir_all(root.join("scripts")).unwrap();
         fs::write(
             root.join("scripts/circuits/build-pairs.json"),
-            r#"[["insecure-64","minimum"],["secure-8192","minimum"]]"#,
+            r#"[["insecure-lbfv","minimum"],["secure-8192","minimum"]]"#,
         )
         .unwrap();
         copy_tree(
@@ -1324,7 +1400,7 @@ mod tests {
         fs::copy(repo.join(utils), root.join(utils)).unwrap();
         let mut selection = configuration::prepare_selection(
             root,
-            e3_fhe_params::BfvPreset::InsecureThreshold64,
+            e3_fhe_params::BfvPreset::InsecureThreshold,
             e3_committee::CiphernodesCommitteeSize::Minimum,
             false,
         )
@@ -1333,21 +1409,27 @@ mod tests {
         selection.publish().unwrap();
         for relative in [
             "circuits/lib/src/configs/committee/active.nr",
-            "circuits/lib/src/configs/insecure/dkg.nr",
-            "circuits/lib/src/configs/insecure/threshold.nr",
+            "circuits/lib/src/configs/insecure_lbfv/dkg.nr",
+            "circuits/lib/src/configs/insecure_lbfv/threshold.nr",
         ] {
-            assert_eq!(
-                fs::read(root.join(relative)).unwrap(),
-                fs::read(repo.join(relative)).unwrap(),
-                "generated bytes for {relative}"
-            );
+            let generated =
+                configuration::declarations(&fs::read_to_string(root.join(relative)).unwrap());
+            let committed =
+                configuration::declarations(&fs::read_to_string(repo.join(relative)).unwrap());
+            for (name, declaration) in generated {
+                assert_eq!(
+                    configuration::compact(&declaration),
+                    configuration::compact(&committed[&name]),
+                    "generated {relative}::{name}"
+                );
+            }
         }
         // A repeated sync must not invoke even a version probe, or rewrite formatted files.
         fs::remove_dir_all(root.join("crates/zk/prover")).unwrap();
         let before = crate::tests::snapshot(root);
         let mut selection = configuration::prepare_selection(
             root,
-            BfvPreset::InsecureThreshold64,
+            BfvPreset::InsecureThreshold,
             e3_committee::CiphernodesCommitteeSize::Minimum,
             false,
         )
@@ -1355,9 +1437,10 @@ mod tests {
         selection.format(root).unwrap();
         selection.publish().unwrap();
         assert_eq!(crate::tests::snapshot(root), before);
-        crate::tests::write_pins(root);
+        // Restores the pins and the prover's required-artifact lists, which the source hash reads.
+        identity::tests::seed_sources(root);
 
-        let pair = root.join("dist/circuits/insecure-64/minimum");
+        let pair = root.join("dist/circuits/insecure-lbfv/minimum");
         for (group, name) in [("dkg", "pk"), ("threshold", "pk_generation")] {
             let path = root.join("circuits/bin").join(group).join(name);
             fs::create_dir_all(path.join("src")).unwrap();
@@ -1414,7 +1497,7 @@ mod tests {
         partial.no_clean = true;
         partial.no_clean_targets = true;
         super::super::execute(root, &partial).unwrap();
-        for name in ["nodes_fold", "c6_fold"] {
+        for name in ["nodes_fold", "c6_fold", "c3ab_fold_chunked"] {
             assert!(
                 !pair
                     .join(format!(
@@ -1471,17 +1554,14 @@ mod tests {
         let manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(root.join("dist/circuits/checksums.json")).unwrap())
                 .unwrap();
-        // The json, vk and vk_hash of pk and pk_generation in three variants (18), plus the 30
+        // The json, vk and vk_hash of pk and pk_generation in three variants (18), plus the 32
         // seeded anchor keys the build does not write.
-        assert_eq!(manifest["files"].as_object().unwrap().len(), 48);
-        let hash =
-            identity::source_hash(root, &request(), Some("insecure-64"), Some("minimum")).unwrap();
-        let built_stamp = read_stamp(&pair.join(".build-stamp.json"))
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            built_stamp.source_hash, hash,
-            "staged source identity differs from published sources"
+        assert_eq!(manifest["files"].as_object().unwrap().len(), 50);
+        assert!(
+            read_stamp(&pair.join(".build-stamp.json"))
+                .unwrap()
+                .is_none(),
+            "partial build stamped the pair"
         );
 
         // Cache reuse and non-release hydration need neither compiler nor BB probes. Invalid pins
@@ -1517,23 +1597,23 @@ mod tests {
         .unwrap();
         for marker in dist_markers(&pair)
             .into_iter()
-            .chain(bin_markers(root).unwrap())
+            .chain(bin_markers(root, "insecure-lbfv").unwrap())
         {
             if !marker.exists() {
                 fs::create_dir_all(marker.parent().unwrap()).unwrap();
                 fs::write(marker, "published marker").unwrap();
             }
         }
-        let hash =
-            identity::source_hash(root, &request(), Some("insecure-64"), Some("minimum")).unwrap();
+        let hash = identity::source_hash(root, &request(), Some("insecure-lbfv"), Some("minimum"))
+            .unwrap();
         let mut stamp = Stamp {
-            preset: "insecure-64".into(),
+            preset: "insecure-lbfv".into(),
             committee: "minimum".into(),
             source_hash: hash.clone(),
             built_at: "published-time".into(),
         };
         write_json(&pair.join(".build-stamp.json"), &stamp).unwrap();
-        active_stamp(root, "insecure-64", "minimum", &hash).unwrap();
+        active_stamp(root, "insecure-lbfv", "minimum", &hash).unwrap();
         let mut reuse = request();
         reuse.skip_if_built = true;
         let before = crate::tests::snapshot(root);

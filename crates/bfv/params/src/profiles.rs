@@ -40,6 +40,10 @@ pub enum BfvProfile {
     SyncDecInsecure64,
     #[serde(rename = "sync-secure-8192")]
     SyncDecSecure8192,
+    #[serde(rename = "ss-insecure-lbfv")]
+    SsInsecureLbfv,
+    #[serde(rename = "ss-secure-16384")]
+    SsSecure16384,
 }
 
 #[derive(Debug, Error)]
@@ -65,11 +69,13 @@ pub enum BfvProfileError {
 
 impl BfvProfile {
     /// Definition order is also the deterministic metadata export order.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         Self::SsInsecure64,
         Self::SsSecure8192,
         Self::SyncDecInsecure64,
         Self::SyncDecSecure8192,
+        Self::SsInsecureLbfv,
+        Self::SsSecure16384,
     ];
 
     pub fn name(self) -> &'static str {
@@ -78,12 +84,17 @@ impl BfvProfile {
             Self::SsSecure8192 => "ss-secure-8192",
             Self::SyncDecInsecure64 => "sync-insecure-64",
             Self::SyncDecSecure8192 => "sync-secure-8192",
+            Self::SsInsecureLbfv => "ss-insecure-lbfv",
+            Self::SsSecure16384 => "ss-secure-16384",
         }
     }
 
     pub fn protocol(self) -> BfvDecryptionProtocol {
         match self {
-            Self::SsInsecure64 | Self::SsSecure8192 => BfvDecryptionProtocol::SecretShared,
+            Self::SsInsecure64
+            | Self::SsSecure8192
+            | Self::SsInsecureLbfv
+            | Self::SsSecure16384 => BfvDecryptionProtocol::SecretShared,
             Self::SyncDecInsecure64 | Self::SyncDecSecure8192 => {
                 BfvDecryptionProtocol::Synchronized
             }
@@ -94,6 +105,8 @@ impl BfvProfile {
         match self {
             Self::SsInsecure64 | Self::SyncDecInsecure64 => BfvPreset::InsecureThreshold64,
             Self::SsSecure8192 | Self::SyncDecSecure8192 => BfvPreset::SecureThreshold8192,
+            Self::SsInsecureLbfv => BfvPreset::InsecureThresholdLbfv,
+            Self::SsSecure16384 => BfvPreset::SecureThreshold16384,
         }
     }
 
@@ -110,6 +123,8 @@ impl BfvProfile {
             Self::SsSecure8192 => BfvPreset::SecureDkg8192.name(),
             Self::SyncDecInsecure64 => BfvPreset::InsecureSyncDkg64.name(),
             Self::SyncDecSecure8192 => BfvPreset::SecureSyncDkg8192.name(),
+            Self::SsInsecureLbfv => BfvPreset::InsecureDkgLbfv.name(),
+            Self::SsSecure16384 => BfvPreset::SecureDkg16384.name(),
         }
     }
 
@@ -119,13 +134,18 @@ impl BfvProfile {
             Self::SsSecure8192 => BfvPreset::SecureDkg8192.into(),
             Self::SyncDecInsecure64 => BfvPreset::InsecureSyncDkg64.into(),
             Self::SyncDecSecure8192 => BfvPreset::SecureSyncDkg8192.into(),
+            Self::SsInsecureLbfv => BfvPreset::InsecureDkgLbfv.into(),
+            Self::SsSecure16384 => BfvPreset::SecureDkg16384.into(),
         }
     }
 
     /// Transport parameters are selected by protocol, not by the shared threshold tuple.
     pub fn dkg_preset(self) -> Result<BfvPreset, BfvProfileError> {
         match self {
-            Self::SsInsecure64 | Self::SsSecure8192 => self
+            Self::SsInsecure64
+            | Self::SsSecure8192
+            | Self::SsInsecureLbfv
+            | Self::SsSecure16384 => self
                 .threshold_preset()
                 .dkg_counterpart()
                 .ok_or(BfvProfileError::UnsupportedDkgPreset(self.name())),
@@ -154,7 +174,10 @@ impl BfvProfile {
         match self {
             Self::SyncDecInsecure64 => Some(insecure_64::DEGREE.min(256)),
             Self::SyncDecSecure8192 => Some(256),
-            Self::SsInsecure64 | Self::SsSecure8192 => None,
+            Self::SsInsecure64
+            | Self::SsSecure8192
+            | Self::SsInsecureLbfv
+            | Self::SsSecure16384 => None,
         }
     }
 
@@ -171,6 +194,11 @@ impl BfvProfile {
                     | CiphernodesCommitteeSize::Micro
                     | CiphernodesCommitteeSize::Small
                     | CiphernodesCommitteeSize::Large
+            ) | (
+                Self::SsInsecureLbfv | Self::SsSecure16384,
+                CiphernodesCommitteeSize::Minimum
+                    | CiphernodesCommitteeSize::Micro
+                    | CiphernodesCommitteeSize::Small
             ) | (
                 Self::SyncDecInsecure64 | Self::SyncDecSecure8192,
                 CiphernodesCommitteeSize::Minimum
@@ -201,7 +229,10 @@ impl BfvProfile {
     /// `docs/architecture/upgrades.md`.
     pub fn admission_enabled(self) -> bool {
         match self {
-            Self::SsInsecure64 | Self::SsSecure8192 => true,
+            Self::SsInsecure64
+            | Self::SsSecure8192
+            | Self::SsInsecureLbfv
+            | Self::SsSecure16384 => true,
             Self::SyncDecInsecure64 | Self::SyncDecSecure8192 => false,
         }
     }
@@ -220,6 +251,8 @@ impl BfvProfile {
             Self::SsSecure8192 => "secure-8192",
             Self::SyncDecInsecure64 => "sync-insecure-64",
             Self::SyncDecSecure8192 => "sync-secure-8192",
+            Self::SsInsecureLbfv => "insecure-lbfv",
+            Self::SsSecure16384 => "secure-16384",
         }
     }
 

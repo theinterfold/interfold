@@ -43,7 +43,7 @@ fn every_supported_identity_resolves_to_its_own_profile_only() {
             }
         }
     }
-    assert_eq!(supported, 10);
+    assert_eq!(supported, 16);
 
     let unknown = B256::repeat_byte(0x12);
     let error = BfvProfile::from_crypto_config_id(

@@ -157,6 +157,18 @@ mod tests {
         );
         assert_eq!(request.circuits, ["pk"]);
         assert!(request.no_clean && request.no_clean_targets);
+        assert_eq!(
+            parse(&["hash", "--preset", "insecure-lbfv"])
+                .unwrap()
+                .preset,
+            PresetSelection::Single(BfvProfile::SsInsecureLbfv)
+        );
+        assert_eq!(
+            parse(&["build", "--preset", "secure-16384"])
+                .unwrap()
+                .preset,
+            PresetSelection::Single(BfvProfile::SsSecure16384)
+        );
     }
 
     #[test]

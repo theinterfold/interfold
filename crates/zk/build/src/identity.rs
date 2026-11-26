@@ -38,6 +38,9 @@ const SOURCE_FILES: &[&str] = &[
     "crates/zk/build/Cargo.toml",
     "scripts/circuits/constants.ts",
     "scripts/circuits/build-pairs.json",
+    "crates/zk/prover/required-artifacts.json",
+    "crates/zk/prover/required-artifacts-trbfv.json",
+    "crates/zk/prover/required-artifacts-lbfv.json",
     "packages/interfold-contracts/scripts/protocol/constants.ts",
     "packages/interfold-contracts/bfv.ts",
     "packages/interfold-contracts/crypto-config.json",
@@ -245,7 +248,9 @@ fn hash_dir(
                 {
                     let mut text = String::from_utf8(bytes)?;
                     for (name, declaration) in configuration::declarations(&text) {
-                        if name.starts_with(prefix) {
+                        if name.starts_with(prefix)
+                            && !configuration::CHUNK_GLOBALS.contains(&name.as_str())
+                        {
                             text = text.replacen(
                                 &declaration,
                                 &format!("pub global {name}:<generated>;"),
@@ -288,6 +293,18 @@ pub fn source_hash_with_updates(
 ) -> Result<String> {
     let mut hash = Sha256::new();
     hash.update(b"interfold:zk-source:v2\0");
+    if selected_preset.is_none() {
+        for preset in crate::ARTIFACT_PRESETS {
+            hash_dir(
+                root,
+                &root.join("circuits/lib/src/configs").join(tier(preset)),
+                &mut hash,
+                "",
+                true,
+                updates,
+            )?;
+        }
+    }
     if let Some(name) = selected_preset {
         let selected = profile(name)?;
         let tier = if selected.protocol() == BfvDecryptionProtocol::Synchronized {
@@ -316,11 +333,49 @@ pub fn source_hash_with_updates(
             updates,
         )?;
     }
+    if committee.is_none() {
+        for name in crate::COMMITTEES {
+            hash_dir(
+                root,
+                &root.join("circuits/lib/src/configs/committee").join(name),
+                &mut hash,
+                "",
+                false,
+                updates,
+            )?;
+        }
+    }
+    for group in request.groups.groups() {
+        // The l-BFV circuits form their own workspaces under `circuits/bin/lbfv`.
+        for path in [
+            root.join("circuits/bin").join(group).join("Nargo.toml"),
+            root.join("circuits/bin/lbfv")
+                .join(group)
+                .join("Nargo.toml"),
+        ] {
+            if path.is_file() {
+                hash_record(
+                    &mut hash,
+                    b'f',
+                    path.strip_prefix(root)?
+                        .to_str()
+                        .context("workspace path")?,
+                    &fs::read(&path)?,
+                );
+            }
+        }
+    }
     let mut selected_request = request.clone();
     if let Some(name) = selected_preset {
         selected_request.preset = super::PresetSelection::Single(profile(name)?);
     }
     let mut circuits = artifacts::discover(root, &selected_request)?;
+    if let Some(name) = selected_preset {
+        let selected = profile(name)?;
+        if selected.protocol() == BfvDecryptionProtocol::SecretShared {
+            circuits.retain(|circuit| crate::policy::enabled(circuit, selected.threshold_preset()));
+        }
+    }
     circuits.sort_by(|left, right| left.path.cmp(&right.path));
     let mut workspaces = std::collections::BTreeSet::new();
     for circuit in circuits {
@@ -364,10 +419,12 @@ pub fn source_hash_with_updates(
                 .with_context(|| format!("Read required source file {path}"))?,
         };
         if path == "circuits/lib/src/configs/default/mod.nr" {
-            source = Regex::new(r"preset: (insecure-64|secure-8192)")?
-                .replace_all(&source, "preset: <selected>")
-                .into_owned();
-            source = Regex::new(r"super::(insecure|secure)::")?
+            source = Regex::new(
+                r"preset: (insecure-64|insecure-lbfv|insecure|secure-8192|secure-16384)\b",
+            )?
+            .replace_all(&source, "preset: <selected>")
+            .into_owned();
+            source = Regex::new(r"super::(insecure|insecure_lbfv|secure|secure_16384)::")?
                 .replace_all(&source, "super::<selected>::")
                 .into_owned();
             // Noir sorts imports lexically: `protocol` follows `insecure`, but precedes `secure`.

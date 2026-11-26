@@ -60,7 +60,7 @@ impl Configs {
         let k0is = compute_k0is(threshold_params.moduli(), threshold_params.plaintext())?;
 
         let bounds = Bounds::new(threshold_params, &k0is)?;
-        let bits = Bits::new(&bounds);
+        let bits = Bits::new(threshold_params, &bounds);
 
         Ok(Configs {
             params: threshold_params.clone(),
@@ -143,12 +143,10 @@ impl Bounds {
     }
 }
 impl Bits {
-    fn new(data: &Bounds) -> Self {
-        let max_pk_bound = data.pk_bounds.iter().max().unwrap();
-
-        let pk_bit = calculate_bit_width(max_pk_bound);
+    fn new(threshold_params: &Arc<BfvParameters>, data: &Bounds) -> Self {
+        let pk_bit = compute_modulus_bit(threshold_params);
         // We can safely assume that the ct bound is the same as the pk bound.
-        let ct_bit = calculate_bit_width(max_pk_bound);
+        let ct_bit = pk_bit;
         let u_bit = calculate_bit_width(&data.u_bound);
         let e0_bit = calculate_bit_width(&data.e0_bound);
         let e1_bit = calculate_bit_width(&data.e1_bound);
@@ -231,7 +229,7 @@ pub global {}_CT1_R_BOUNDS: [Field; L] = [{}];
 
 /************************************
 -------------------------------------
-user_data_encryption_ct0 (CIRCUIT A - CT0 ENCRYPTION)
+user_data_encryption: ct0 leg
 -------------------------------------
 ************************************/
 
@@ -247,7 +245,7 @@ pub global {}_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> = UserDataEncrypti
 
 /************************************
 -------------------------------------
-user_data_encryption_ct1 (CIRCUIT B - CT1 ENCRYPTION)
+user_data_encryption: ct1 leg
 -------------------------------------
 ************************************/
 

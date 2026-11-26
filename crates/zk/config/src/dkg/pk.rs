@@ -28,7 +28,7 @@ impl Configs {
 
         Ok(Configs {
             params: dkg_params.clone(),
-            pk_bit: compute_modulus_bit(dkg_params),
+            pk_bit: compute_dkg_modulus_bit(dkg_params),
         })
     }
 }

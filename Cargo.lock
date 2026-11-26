@@ -4732,6 +4732,8 @@ dependencies = [
  "clap",
  "e3-committee",
  "e3-fhe-params",
+ "e3-polynomial",
+ "e3-polynomial-fhe",
  "e3-safe 0.20.0-dev.3",
  "e3-zk-config",
  "e3-zk-witness",
@@ -4749,6 +4751,7 @@ dependencies = [
 name = "e3-zk-config"
 version = "0.20.0-dev.3"
 dependencies = [
+ "anyhow",
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "bincode",
@@ -5189,8 +5192,8 @@ dependencies = [
 
 [[package]]
 name = "fhe"
-version = "0.6.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.6.0#30cce84140a0fa7ce7a39e40f4882dc0fef81820"
+version = "0.7.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.7.0#a9fc7b14504625fcf66763c60207eb5b6b8c608b"
 dependencies = [
  "ark-ff 0.5.0",
  "bincode",
@@ -5217,8 +5220,8 @@ dependencies = [
 
 [[package]]
 name = "fhe-math"
-version = "0.6.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.6.0#30cce84140a0fa7ce7a39e40f4882dc0fef81820"
+version = "0.7.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.7.0#a9fc7b14504625fcf66763c60207eb5b6b8c608b"
 dependencies = [
  "ethnum",
  "fhe-traits",
@@ -5241,16 +5244,16 @@ dependencies = [
 
 [[package]]
 name = "fhe-traits"
-version = "0.6.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.6.0#30cce84140a0fa7ce7a39e40f4882dc0fef81820"
+version = "0.7.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.7.0#a9fc7b14504625fcf66763c60207eb5b6b8c608b"
 dependencies = [
  "rand 0.9.5",
 ]
 
 [[package]]
 name = "fhe-util"
-version = "0.6.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.6.0#30cce84140a0fa7ce7a39e40f4882dc0fef81820"
+version = "0.7.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.7.0#a9fc7b14504625fcf66763c60207eb5b6b8c608b"
 dependencies = [
  "num-bigint-dig",
  "num-traits",
