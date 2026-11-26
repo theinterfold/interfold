@@ -184,19 +184,26 @@ does not stop identity rental.
 `ZKPassportIdentityVerifier` checks ZKPassport proofs of chip documents (passports, national ID
 cards, residence permits) through ZKPassport's root verifier. ZKPassport checks the domain, scope,
 proof-age window, and dev mode that its caller passes, so the verifier replaces them with fixed
-values. It accepts one ZKPassport version (the public-input layout belongs to the version), one
-identifier type, and one OPRF key hash (ZKPassport's key for salted proofs, zero otherwise), because
-salted and non-salted identifiers of one document differ and a salted identifier depends on the key.
-The proof must be bound to the registering owner and `block.chainid`, show an expiry date at or
-after the evidence's `validUntil`, and include strict FaceMatch when configured. The credential ends
-at `validUntil`, or `MAX_VALIDITY` after the proof date if that is earlier. The identifier hashes
-the scoped nullifier with the domain and scope, so it belongs to one document; a second document or
-a renewed one gives a new identifier. A non-salted identifier comes from document data and the
-scope, so the issuing state, which holds that data, can compute it and link it to the person. A
-salted identifier avoids that, but it depends on ZKPassport's OPRF key. ZKPassport's admin keys
-control its verifier, helper, certificate registry, and OPRF key without delay. When ZKPassport
-retires the pinned version, registration and renewal revert until governance sets a verifier for the
-new version.
+values. It accepts one ZKPassport version, one identifier type, and one OPRF key hash (ZKPassport's
+key for salted proofs, zero otherwise), because salted and non-salted identifiers of one document
+differ and a salted identifier depends on the key. The public-input layout belongs to the version.
+The verifier knows the layouts of versions 0.20 to 0.23 and refuses any other version at deployment.
+From 0.23 a proof ends with its verification method, and the verifier accepts only chip reads
+(method 100). A camera capture of the data page gives the same document a second identifier, and
+Aadhaar, JPKI and mDoc credentials are other documents of the same person, so either would let one
+person verify a second owner. `@interfold/contracts/zkpassport` holds the same layouts and
+credential-end rule for the dashboard and the rollout scripts, and a contract test checks it against
+the verifier for every version. The proof must be bound to the registering owner and
+`block.chainid`, show an expiry date at or after the evidence's `validUntil`, and include strict
+FaceMatch when configured. The credential ends at `validUntil`, or `MAX_VALIDITY` after the proof
+date if that is earlier. The identifier hashes the scoped nullifier with the domain and scope, so it
+belongs to one document; a second document or a renewed one gives a new identifier. A non-salted
+identifier comes from document data and the scope, so the issuing state, which holds that data, can
+compute it and link it to the person. A salted identifier avoids that, but it depends on
+ZKPassport's OPRF key. ZKPassport's admin keys control its verifier, helper, certificate registry,
+and OPRF key without delay. When ZKPassport retires the pinned version, registration and renewal
+revert until governance sets a verifier for the new version. A version outside 0.20 to 0.23 needs a
+verifier code update first.
 
 ## Deactivation and exit
 
