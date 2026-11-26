@@ -333,7 +333,10 @@ pub async fn publish_committee_public_key_to_registry<
         let chunk = Bytes::copy_from_slice(&public_key_bytes[range]);
         let receipt = send_tx_with_retry(
             "publishCommitteePublicKey chunk",
-            &["CommitteeNotPublished"],
+            // The chunk goes out right after `publishCommittee` is mined. An RPC node that has not
+            // seen that block yet still reports `CommitteeNotPublished`, or `InvalidStage` for an
+            // E3 that has not reached `KeyPublished` in its view. Both clear once it catches up.
+            &["CommitteeNotPublished", "InvalidStage"],
             || {
                 let provider = provider.clone();
                 let chunk = chunk.clone();
