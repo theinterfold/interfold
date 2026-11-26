@@ -290,7 +290,7 @@ fn check_synchronized_intent(
     let unavailable = "synchronized plaintext authority is unavailable";
     let key = keys.get(&intent.e3_id).context(unavailable)?;
     anyhow::ensure!(
-        key.params_profile == e3_fhe_params::BfvProfile::SyncDecInsecure64
+        key.params_profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized
             && plaintext_has_canonical_domain(intent, &key, keys, contract).context(unavailable)?,
         RejectedSynchronizedIntent::Domain
     );

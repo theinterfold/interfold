@@ -38,7 +38,7 @@ contract SynchronizedDkgPublicationVerifier {
         if (
             verifier.code.length == 0 ||
             deployment == address(0) ||
-            configId != BfvProtocol.SYNC_INSECURE_64_MINIMUM_CONFIG_ID ||
+            !BfvProtocol.isSynchronizedMinimum(configId) ||
             treeHash == bytes32(0) ||
             c5Hash == bytes32(0) ||
             committeeH != BfvProtocol.MINIMUM_H ||

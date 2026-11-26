@@ -87,10 +87,10 @@ the rule in the
 The C6 witness contains private openings and noise; it is not a log, transport payload or recovery
 record. Its range checks do not prove sampling freshness.
 
-**Fixed-set runtime policy for review (#2460).** For a disabled insecure Minimum definition the node
-can derive a read-only C6 plan from confirmed `CiphertextReady`, the confirmed registry setup, and
-the ciphertext publication (inline or DA reference). A local DA result can supply bytes but cannot
-set either their Keccak hash or the published SAFE commitment. Check both and decode one
+**Fixed-set runtime policy for review (#2460).** For a disabled synchronized Minimum definition the
+node can derive a read-only C6 plan from confirmed `CiphertextReady`, the confirmed registry setup,
+and the ciphertext publication (inline or DA reference). A local DA result can supply bytes but
+cannot set either their Keccak hash or the published SAFE commitment. Check both and decode one
 two-component level-zero ciphertext before allocating private work. The node checks the signer at
 the designated committee ID; the coordinator, arrival order, and retry correlation are not inputs to
 this choice. A second position or different publication is not a retry. Terminal history retires the
@@ -122,17 +122,19 @@ pins and the confirmed request before submitting the local intent. The existing 
 starts at `CiphertextReady`, independently of collector readiness. The decryption deadline is
 inclusive; a missing owner after expiry follows `DecryptionTimeout`.
 
-`pnpm rust:test:sync-dkg:recovery` rehearses the disabled insecure Minimum route from real signed
-registry publication to the keyshare/collector actors and a mined writer transaction. The Anvil
+`pnpm rust:test:sync-dkg:recovery` selects insecure Minimum by default. The
+[signed qualification runner](../../scripts/circuits/README.md#synchronized-decryption-candidates)
+also selects secure Minimum and requires the signed insecure control for substitution checks. Both
+exercise signed registry publication, the keyshare/collector actors and the writer. The Anvil
 controller seeds the finalized committee and emits a ciphertext reference. The production log reader
 and DA coordinator retrieve the object from a local HTTP fixture and deliver the opening to both
 designated keyshare mailboxes. After demotion the collector reopens its commit log, sequence index
 and plaintext checkpoints and rechecks the pinned rows. The writer effect calls the production
 `InterfoldLifecycle.verifyPlaintext` and request-bound registry wrapper. This exercises orderly
 restart below admission, not Avail bridge finality, production request admission or gossip delivery.
-The fixed-set and one-use policies await protocol review. Secure Minimum needs the
-[secure DKG-to-registry route](https://github.com/theinterfold/interfold/issues/2549) before the
-secure end-to-end qualification in [#2461](https://github.com/theinterfold/interfold/issues/2461).
+The [Minimum rehearsal](../../circuits/qualification/minimum-coexistence.md) records the observed
+results. The fixed-set and one-use policies await protocol review under
+[#2461](https://github.com/theinterfold/interfold/issues/2461).
 
 C7 admission binds the exact selected C6 commitments, ordered party IDs, ciphertext index, and
 plaintext. A C7 result replayed before `EffectsEnabled` is held in memory and used only if it binds

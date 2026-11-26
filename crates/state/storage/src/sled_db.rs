@@ -11,7 +11,7 @@ use sled::{
     transaction::{ConflictableTransactionError, TransactionError},
     Tree,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct SledDb {
     db: Tree,
@@ -31,6 +31,12 @@ impl SledDb {
 
     pub fn close_all_connections() {
         clear_all_caches()
+    }
+
+    /// Release this database's cached handle after its tree owners have stopped, so the next
+    /// open reads from disk without evicting other live databases.
+    pub fn close_connection(path: &Path) {
+        crate::sled_utils::evict_cached_db(path);
     }
 
     pub fn insert(&mut self, msg: Insert) -> Result<()> {

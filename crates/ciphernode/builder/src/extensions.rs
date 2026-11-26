@@ -79,10 +79,16 @@ impl CiphernodeBuilder {
         };
 
         // ── Threshold keyshare + ZK actors ──
-        let (_multithread, task_pool) =
-            self.start_multithread(bus, addr, &effect_stages, canonical_keys, zk_backend);
-        zk_backend.ensure_installed().await?;
         let signer = provider_cache.ensure_signer().await?;
+        let (_multithread, task_pool) = self.start_multithread(
+            bus,
+            addr,
+            &effect_stages,
+            canonical_keys,
+            zk_backend,
+            signer.address(),
+        );
+        zk_backend.ensure_installed().await?;
         let readers = storage
             .chains
             .enabled()
@@ -238,6 +244,7 @@ impl CiphernodeBuilder {
         lifecycle_stages: &HashMap<E3id, E3Stage>,
         canonical_keys: &CanonicalPublicKeys,
         zk_backend: &ZkBackend,
+        local_signer: Address,
     ) -> (Addr<Multithread>, TaskPool) {
         info!("Setting up multithread actor with ZK prover");
         let task_pool = self.task_pool.clone().unwrap_or_else(|| {
@@ -255,6 +262,7 @@ impl CiphernodeBuilder {
             zk_backend,
             lifecycle_stages.clone(),
             canonical_keys.clone(),
+            local_signer,
         );
         (worker, task_pool)
     }

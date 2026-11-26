@@ -297,7 +297,7 @@ impl CanonicalPublicKeys {
         ciphertexts: &[ArcBytes],
     ) -> Result<Option<SynchronizedDecryptionPlan>> {
         ensure!(
-            profile == BfvProfile::SyncDecInsecure64,
+            profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::Synchronized,
             "no synchronized registry route for profile"
         );
         let [bytes] = ciphertexts else {

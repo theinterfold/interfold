@@ -163,33 +163,46 @@ impl CircuitName {
         Self::DkgAggregator,
     ];
 
+    pub const SYNCHRONIZED_DECRYPTION: [Self; 3] = [
+        Self::ThresholdShareDecryption,
+        Self::DecryptedSharesAggregation,
+        Self::DecryptionAggregator,
+    ];
+
     pub fn synchronized_definitions() -> impl Iterator<Item = Self> {
-        Self::SYNCHRONIZED_DKG.into_iter().chain([
-            Self::ThresholdShareDecryption,
-            Self::DecryptedSharesAggregation,
-            Self::DecryptionAggregator,
-        ])
+        Self::SYNCHRONIZED_DKG
+            .into_iter()
+            .chain(Self::SYNCHRONIZED_DECRYPTION)
+    }
+
+    /// Target for the disabled direct Minimum proof graph (no SS fold or Chonk variants).
+    pub fn synchronized_variant(self) -> Option<CircuitVariant> {
+        match self {
+            Self::DkgAggregator | Self::DecryptionAggregator => Some(CircuitVariant::Evm),
+            Self::NodeFold | Self::NodesFold | Self::PkAggregation => Some(CircuitVariant::Default),
+            role if Self::synchronized_definitions().any(|r| r == role) => {
+                Some(CircuitVariant::Recursive)
+            }
+            _ => None,
+        }
     }
 
     pub fn source_path(&self, profile: BfvProfile) -> Option<String> {
-        // Source discovery must not substitute the degree-64 definition for a secure circuit.
-        if profile == BfvProfile::SyncDecSecure8192 {
-            return match self {
-                Self::ThresholdShareDecryption | Self::DecryptedSharesAggregation => {
-                    Some(format!("synchronized_secure/{}", self.dir_path()))
-                }
-                // Same Minimum ABI and verification algorithm. Child pins and stored artifacts
-                // still belong to the secure namespace; never load an insecure VK by fallback.
-                Self::DecryptionAggregator => Some(format!("synchronized/{}", self.dir_path())),
-                _ => None,
-            };
-        }
         match profile.protocol() {
             BfvDecryptionProtocol::SecretShared => Some(self.dir_path()),
             BfvDecryptionProtocol::Synchronized
                 if Self::synchronized_definitions().any(|c| c == *self) =>
             {
-                Some(format!("synchronized/{}", self.dir_path()))
+                // Only the two outer Minimum statements are independent of the BFV pair.
+                // Their child keys and artifacts still belong to the selected profile.
+                let tree = if profile == BfvProfile::SyncDecSecure8192
+                    && !matches!(self, Self::DecryptionAggregator | Self::DkgAggregator)
+                {
+                    "synchronized_secure"
+                } else {
+                    "synchronized"
+                };
+                Some(format!("{tree}/{}", self.dir_path()))
             }
             BfvDecryptionProtocol::Synchronized => None,
         }

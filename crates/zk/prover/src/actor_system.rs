@@ -46,6 +46,7 @@ pub struct ZkActorRecovery {
     /// E3s whose DKG ended before startup, also when they failed. The replay can bring back their
     /// C0 inputs, and the verifier does not admit them.
     dkg_ended: HashSet<E3id>,
+    recipient_ended: HashSet<E3id>,
     canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
 }
 
@@ -65,6 +66,7 @@ impl ZkActorRecovery {
             recipient_records: HashMap::new(),
             pending_c0: Vec::new(),
             dkg_ended: HashSet::new(),
+            recipient_ended: HashSet::new(),
             canonical_keys: Default::default(),
         }
     }
@@ -116,8 +118,13 @@ impl ZkActorRecovery {
             aggregates,
         )
         .await?;
+        self.recipient_ended = lifecycle_stages
+            .iter()
+            .filter(|(_, stage)| stage.is_terminal())
+            .map(|(id, _)| id.clone())
+            .collect();
         self.recipient_records =
-            recipient::recover(repositories, &self.e3_metadata, &self.dkg_ended).await?;
+            recipient::recover(repositories, &self.e3_metadata, &self.recipient_ended).await?;
         self.pending_c0 = Box::pin(
             crate::actors::proof_verification::recovery::recover_pending_verifications(
                 eventstore,
@@ -177,8 +184,10 @@ pub fn setup_zk_actors(
         std::mem::take(&mut recovery.dealer),
     );
     let proof_verification = recovery.setup_proof_verification(bus, zk_actor.clone().recipient());
-    let recipient =
-        RecipientCollection::from_records(std::mem::take(&mut recovery.recipient_records));
+    let recipient = RecipientCollection::from_records(
+        std::mem::take(&mut recovery.recipient_records),
+        std::mem::take(&mut recovery.recipient_ended),
+    );
     let ZkActorRecovery {
         finalized_committees,
         dkg_fold_attestation_contexts,
@@ -197,7 +206,7 @@ pub fn setup_zk_actors(
         signer.clone(),
         proof_aggregation_enabled,
         inner_proofs,
-        canonical_keys,
+        canonical_keys.clone(),
     );
     let share_verification = ShareVerificationActor::setup(bus, finalized_committees);
     let node_proof_aggregator = NodeProofAggregator::setup(
@@ -208,6 +217,7 @@ pub fn setup_zk_actors(
         proof_aggregation_enabled,
         repositories,
         node_proofs,
+        canonical_keys,
         dealer,
         recipient,
     );

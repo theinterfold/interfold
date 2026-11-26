@@ -346,7 +346,8 @@ impl NodeProofAggregator {
             }
             _ => false,
         };
-        if terminal {
+        if terminal || (!self.dealer.ended.contains(&id) && self.canonical_keys.get(&id).is_some())
+        {
             self.dealer.ended.insert(id.clone());
             self.dealer.records.remove(&id);
             self.dealer.dirty.remove(&id);
@@ -673,7 +674,10 @@ impl NodeProofAggregator {
 
     /// Called only after admission and the exclusive record's flush acknowledgment.
     fn publish_dealer_work(&mut self, id: &E3id) -> bool {
-        if !self.dealer.effects || self.dealer.ended.contains(id) {
+        if !self.dealer.effects
+            || self.dealer.ended.contains(id)
+            || self.canonical_keys.get(id).is_some()
+        {
             return true;
         }
         if self.dealer.pending.contains_key(id) {

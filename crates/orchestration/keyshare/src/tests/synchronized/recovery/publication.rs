@@ -4,11 +4,15 @@
 //! sample. This remains below disabled hydration/worker/publication admission.
 
 use super::*;
-use e3_events::{SynchronizedDkgProofJob, SynchronizedDkgProofResponse, SynchronizedSetupAnchors};
+use e3_events::{
+    SynchronizedDkgProofJob, SynchronizedDkgProofRequest, SynchronizedDkgProofResponse,
+    SynchronizedRecipientProofReady, SynchronizedSetupAnchors,
+};
 use e3_polynomial::CrtPolynomial;
 use e3_polynomial_fhe::FromFhePolynomial as _;
 use e3_zk_config::CircuitVariant;
 use e3_zk_prover::synchronized::execution::execute_definition;
+use e3_zk_prover::synchronized::recipient::RecipientPlan;
 use e3_zk_prover::synchronized::{provenance::*, publication::*};
 use e3_zk_witness::{
     synchronized::provenance::{dealer_batch, Child},
@@ -19,6 +23,34 @@ use serde_json::json;
 use std::{fs, process::Command};
 
 pub(super) type Recovered = (ThresholdKeyshareRecoveryState, crate::ReadyForDecryption);
+
+#[derive(Clone)]
+pub(super) struct RecipientJoinWork {
+    pub plan: RecipientPlan,
+    pub request: SynchronizedDkgProofRequest,
+}
+
+impl RecipientJoinWork {
+    pub fn execute(&self, prover: &ZkProver, id: &E3id) -> Result<SynchronizedRecipientProofReady> {
+        let owner = self.request.context.party_id;
+        let SynchronizedDkgProofResponse::Recipient { proof, setup } = execute_definition(
+            prover,
+            id,
+            &self.request,
+            &format!("restored-recipient-{owner}"),
+        )?
+        else {
+            anyhow::bail!("wrong synchronized recipient response");
+        };
+        self.plan.validate_result(&self.request, &proof, &setup)?;
+        Ok(SynchronizedRecipientProofReady {
+            e3_id: id.clone(),
+            context: self.request.context.clone(),
+            proof,
+            setup,
+        })
+    }
+}
 
 pub(super) struct PlannedPublication {
     pub plan: e3_aggregator::SynchronizedPublicationPlan,
@@ -87,7 +119,7 @@ pub(super) async fn qualify(
         .map(|&id| {
             let state = &recovered[id as usize].1;
             crate::domain::dealer_identity_for_profile(
-                PROFILE,
+                config.profile,
                 e3,
                 id as u64,
                 &state.pk_share,
@@ -100,7 +132,9 @@ pub(super) async fn qualify(
         })
         .collect::<Result<Vec<_>>>()?;
     ensure!(roster.dealers == contributions);
-    let namespace = PROFILE.artifacts_dir_for_committee(COMMITTEE)?;
+    let namespace = config
+        .profile
+        .artifacts_dir_for_committee(config.committee)?;
     let mut c0 = Vec::new();
     let mut c2 = Vec::new();
     let mut c4 = Vec::new();
@@ -164,7 +198,7 @@ pub(super) async fn qualify(
     let mut outgoing = Vec::new();
     for (owner, saved) in material.iter().enumerate() {
         outgoing.push(saved.outgoing_keys.open(
-            PROFILE,
+            config.profile,
             binding,
             owner as u32,
             3,
@@ -177,7 +211,7 @@ pub(super) async fn qualify(
             .as_ref()
             .context("lost incoming keys")?
             .open(
-                PROFILE,
+                config.profile,
                 binding,
                 owner as u32,
                 ids.len(),
@@ -285,8 +319,8 @@ pub(super) async fn qualify(
         .iter()
         .map(|saved| saved.key_bundle.context("lost bundle"))
         .collect::<Result<Vec<_>>>()?;
-    let mut recipients = Vec::new();
-    let mut setups = Vec::new();
+    let mut recipients = BTreeMap::new();
+    let mut late = None;
     let dealers = ids
         .iter()
         .zip(&nodes)
@@ -319,7 +353,7 @@ pub(super) async fn qualify(
             &transport,
             &*cipher(owner).await?,
         )?;
-        let plan = e3_zk_prover::synchronized::recipient::RecipientPlan::new(inputs)?;
+        let plan = RecipientPlan::new(inputs)?;
         let leaves = [
             (0, c0[owner].clone()),
             (2, c2[owner].clone()),
@@ -349,23 +383,15 @@ pub(super) async fn qualify(
         };
         ensure!(expected.threshold_keys == keys && expected.dealer_batch == batch);
         // Exercise the typed local request contract without enabling the production profile gate.
-        let request = bincode::deserialize(&bincode::serialize(&request)?)?;
-        let SynchronizedDkgProofResponse::Recipient {
-            proof,
-            setup: result,
-        } = execute_definition(prover, e3, &request, &format!("restored-recipient-{owner}"))?
-        else {
-            anyhow::bail!("wrong synchronized recipient response");
+        let work = RecipientJoinWork {
+            plan,
+            request: bincode::deserialize(&bincode::serialize(&request)?)?,
         };
-        plan.validate_result(&request, &proof, &result)?;
-        let signed = e3_events::SynchronizedDkgProofPublished::sign(
-            e3.clone(),
-            material[owner].context.clone(),
-            e3_events::SynchronizedDkgProofRole::Recipient,
-            proof.clone(),
-            &signers[owner],
-        )?;
-        ensure!(signed.recover_address()? == selected.committee[owner].parse::<Address>()?);
+        if !ids.contains(&(owner as u32)) {
+            ensure!(late.replace(work).is_none());
+            continue;
+        }
+        let result = work.execute(prover, e3)?;
         let setup = verify_recipient(
             prover,
             &config,
@@ -378,25 +404,16 @@ pub(super) async fn qualify(
                 sk_commitment: sk[owner],
                 key_bundle: bundles[owner],
             },
-            &proof,
+            &result.proof,
             "restored-recipient",
         )?
         .context("recovered recipient setup rejected")?;
-        ensure!(result == SynchronizedSetupAnchors::from(&setup));
-        setups.push(result);
-        recipients.push(proof);
+        ensure!(result.setup == SynchronizedSetupAnchors::from(&setup));
+        recipients.insert(owner as u32, result);
     }
     let plan = e3_aggregator::SynchronizedPublicationPlan::new(
         (**selected).clone(),
-        TypedEvent::new(
-            e3_events::SynchronizedRecipientProofReady {
-                e3_id: e3.clone(),
-                context: material[0].context.clone(),
-                proof: recipients[0].clone(),
-                setup: setups[0].clone(),
-            },
-            test_ec(800),
-        ),
+        TypedEvent::new(recipients[&0].clone(), test_ec(800)),
         context.setup.interfold_address,
     )?;
     let native_request = plan.c5_request(&native_shares)?;
@@ -410,7 +427,7 @@ pub(super) async fn qualify(
                     e3.clone(),
                     material[id as usize].context.clone(),
                     e3_events::SynchronizedDkgProofRole::Recipient,
-                    recipients[id as usize].clone(),
+                    recipients[&id].proof.clone(),
                     &signers[id as usize],
                 )?,
             ))
@@ -418,10 +435,7 @@ pub(super) async fn qualify(
         .collect::<Result<BTreeMap<_, _>>>()?;
     let c5 = prove_c5(prover, &config, &data, "restored-c5")?;
     ensure!(prover.verify_fold_proof(&c5, "restored-c5", 0, &namespace)?);
-    let selected_recipients: Vec<_> = ids
-        .iter()
-        .map(|&id| recipients[id as usize].clone())
-        .collect();
+    let selected_recipients: Vec<_> = ids.iter().map(|id| recipients[id].proof.clone()).collect();
     let join = PublicationJoin {
         dealers: &ids,
         recipients: &selected_recipients,
@@ -443,7 +457,7 @@ pub(super) async fn qualify(
         peers: recipient_messages,
         intent: e3_events::SynchronizedDkgPublicationReady {
             e3_id: e3.clone(),
-            params_profile: PROFILE,
+            params_profile: config.profile,
             committee_size: COMMITTEE,
             context: request.context.clone(),
             expected: match &request.job {
@@ -473,22 +487,6 @@ pub(super) async fn qualify(
     .context("restored publication rejected")?;
     ensure!(verified.binding() == binding && verified.dealers() == ids);
     ensure!(verified.sk_commitments() == selected_sk && verified.key_bundles() == selected_bundles);
-    ensure!(verify_recipient(
-        prover,
-        &config,
-        &material[1].context,
-        e3,
-        &ExpectedSetup {
-            dealers: verified.dealers(),
-            threshold_keys: verified.threshold_keys(),
-            dealer_batch: verified.dealer_batch(),
-            sk_commitment: sk[1],
-            key_bundle: bundles[1],
-        },
-        &recipients[1],
-        "restored-outside-h-handoff"
-    )?
-    .is_some());
     let public = PublicSignals::decode(
         &config,
         CircuitName::DkgAggregator,
@@ -535,8 +533,8 @@ pub(super) async fn qualify(
     chain
         .qualify(
             recovered,
-            &setups,
             &recipients,
+            &late.context("missing outside-H work")?,
             &planned,
             &public_key,
             &publication,

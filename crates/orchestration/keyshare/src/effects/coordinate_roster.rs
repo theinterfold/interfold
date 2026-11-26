@@ -15,6 +15,9 @@ impl ThresholdKeyshare {
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
         let state = self.state.try_get()?;
+        if self.synchronized_dkg_published(&state.e3_id) {
+            return Ok(());
+        }
         let KeyshareState::AggregatingDecryptionKey(current) = &state.state else {
             return Ok(());
         };
@@ -483,7 +486,9 @@ impl ThresholdKeyshare {
             return Ok(());
         }
         let state = self.state.try_get()?;
-        if !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_)) {
+        if !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_))
+            || self.synchronized_dkg_published(&state.e3_id)
+        {
             return Ok(());
         }
         let recovery = self.recovery.try_get()?;
@@ -523,6 +528,7 @@ impl ThresholdKeyshare {
         if !self.effects_enabled
             || !self.is_aggregator
             || self.roster_proposal_pending
+            || self.synchronized_dkg_published(&state.e3_id)
             || !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_))
         {
             return Ok(());
@@ -576,6 +582,9 @@ impl ThresholdKeyshare {
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
         let state = self.state.try_get()?;
+        if self.synchronized_dkg_published(&state.e3_id) {
+            return Ok(());
+        }
         let party_ids: BTreeSet<u64> = roster
             .dealers
             .iter()

@@ -41,7 +41,13 @@ pub fn discover(root: &Path, request: &Request) -> Result<Vec<Circuit>> {
         let mut circuits = Vec::new();
         for role in CircuitName::synchronized_definitions() {
             let name = role.as_str();
-            if !request.groups.groups().contains(&role.group())
+            // A candidate hashes and builds its exact graph. In particular C4 and C6 have
+            // the same basename in different groups.
+            if request
+                .operation
+                .candidate_roles()
+                .is_some_and(|roles| !roles.contains(&role))
+                || !request.groups.groups().contains(&role.group())
                 || (!request.circuits.is_empty()
                     && !request.circuits.iter().any(|selected| selected == name))
             {

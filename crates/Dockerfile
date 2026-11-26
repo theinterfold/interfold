@@ -131,6 +131,7 @@ RUN cargo build --locked --release
 
 COPY ./crates .
 COPY circuits/qualification/sync-insecure-64/minimum/manifest.json /build/circuits/qualification/sync-insecure-64/minimum/manifest.json
+COPY circuits/qualification/sync-secure-8192/minimum/manifest.json /build/circuits/qualification/sync-secure-8192/minimum/manifest.json
 
 RUN find . -name "*.rs" -exec touch {} +
 ARG E3_CIRCUITS_ARCHIVE_SHA256

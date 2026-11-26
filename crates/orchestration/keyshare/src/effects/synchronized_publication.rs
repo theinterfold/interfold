@@ -5,6 +5,7 @@
 use super::*;
 use crate::synchronized::SynchronizedSetupIntent;
 use anyhow::ensure;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{EventSource, SynchronizedDkgConsentPublished, SynchronizedRecipientProofReady};
 
 enum SetupDriveOutcome {
@@ -111,13 +112,16 @@ impl ThresholdKeyshare {
         let store = self.recovery_payloads.synchronized_setup();
         let interfold = self.interfold_address;
         let cipher = self.cipher.clone();
+        let published = self.canonical_key_published;
+        let effects = self.effects_enabled;
+        let keys = self.canonical_keys.clone();
+        let local = self.signer.address();
         ctx.wait(
             async move {
                 let saved = match store.restore().await {
                     Ok(saved) => saved,
                     Err(error) => return Ok(setup_store_failure(error)),
                 };
-                let restored = saved.is_some();
                 let intent = match saved {
                     Some(saved) => {
                         // A replayed candidate cannot block restoring the exclusive successful
@@ -125,40 +129,41 @@ impl ThresholdKeyshare {
                         if candidate.as_ref().is_some_and(|(result, _)| **saved.result() != **result) {
                             tracing::warn!(e3_id = %selected.e3_id, "ignoring candidate that differs from the durable recipient verdict");
                         }
-                        Some(saved)
-                    }
-                    None => candidate
-                        .map(|(result, material)| {
-                            SynchronizedSetupIntent::new(
-                                (*selected).clone(),
-                                material,
-                                result,
-                                interfold,
-                                &cipher,
-                            )
-                        })
-                        .transpose()?,
-                };
-                if let Some(intent) = &intent {
-                    let validate = || -> Result<()> {
-                        ensure!(
-                            intent.selected() == &*selected,
-                            "saved setup differs from the canonical selection"
-                        );
-                        intent.validate(interfold, &cipher)
-                    };
-                    if let Err(error) = validate() {
-                        return if restored {
-                            Ok(SetupDriveOutcome::InvalidSaved(error))
-                        } else {
-                            Err(error)
+                        let validate = || -> Result<()> {
+                            ensure!(saved.selected() == &*selected, "saved setup differs from the canonical selection");
+                            saved.validate(interfold, &cipher)
                         };
+                        if let Err(error) = validate() {
+                            return Ok(SetupDriveOutcome::InvalidSaved(error));
+                        }
+                        saved
                     }
-                    if let Err(error) = store.record(intent).await {
-                        return Ok(setup_store_failure(error));
+                    None => {
+                        let Some((result, material)) = candidate else {
+                            return Ok(SetupDriveOutcome::Ready(None));
+                        };
+                        if let Some(key) = keys.get(&selected.e3_id) {
+                            if !effects {
+                                return Ok(SetupDriveOutcome::Ready(None));
+                            }
+                            ensure!(key.matches_late_recipient(
+                                local, selected.params_profile,
+                                CiphernodesCommitteeSize::from_threshold(selected.threshold_m, selected.threshold_n)?,
+                                &result.context, &result.setup,
+                            ), "late local setup differs from confirmed recipient authority");
+                        } else if published {
+                            // Keep the candidate pending for the confirmed registry observations.
+                            return Ok(SetupDriveOutcome::Ready(None));
+                        }
+                        SynchronizedSetupIntent::new(
+                            (*selected).clone(), material, result, interfold, &cipher,
+                        )?
                     }
+                };
+                if let Err(error) = store.record(&intent).await {
+                    return Ok(setup_store_failure(error));
                 }
-                Ok::<_, anyhow::Error>(SetupDriveOutcome::Ready(intent.map(Box::new)))
+                Ok::<_, anyhow::Error>(SetupDriveOutcome::Ready(Some(Box::new(intent))))
             }
             .into_actor(self)
             .map(|result, actor, ctx| actor.finish_synchronized_setup_drive(result, ctx)),

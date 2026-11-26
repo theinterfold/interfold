@@ -4,7 +4,7 @@ use e3_fhe_params::BfvProfile;
 use e3_zk_config::{CircuitName, CircuitVariant};
 
 #[test]
-fn secure_minimum_is_decryption_only_and_does_not_fall_back_to_ss() {
+fn secure_minimum_binds_its_setup_and_decryption_definitions_below_admission() {
     use e3_committee::CiphernodesCommitteeSize::{Micro, Minimum};
     use e3_zk_config::synchronized::Configs;
     let secure = BfvProfile::SyncDecSecure8192;
@@ -23,8 +23,21 @@ fn secure_minimum_is_decryption_only_and_does_not_fall_back_to_ss() {
         cfg.public_inputs(CircuitName::DecryptionAggregator),
         Some(76)
     );
-    assert!(cfg.public_inputs(CircuitName::DkgShareDecryption).is_none());
-    assert!(CircuitName::DkgAggregator.source_path(secure).is_none());
+    assert_eq!(cfg.public_inputs(CircuitName::DkgShareDecryption), Some(12));
+    for role in CircuitName::synchronized_definitions() {
+        let source = role.source_path(secure).unwrap();
+        assert_ne!(
+            Some(source.clone()),
+            role.source_path(BfvProfile::SsSecure8192)
+        );
+        assert_eq!(
+            Some(source) == role.source_path(BfvProfile::SyncDecInsecure64),
+            matches!(
+                role,
+                CircuitName::DkgAggregator | CircuitName::DecryptionAggregator
+            )
+        );
+    }
     assert_ne!(
         CircuitName::ThresholdShareDecryption.source_path(secure),
         CircuitName::ThresholdShareDecryption.source_path(BfvProfile::SsSecure8192)

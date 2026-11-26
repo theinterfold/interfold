@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 use lib::configs::synchronized::sync_secure_8192::{
-    AGGREGATE_BIT, C6_NOISE_BIT, C6_NOISE_BOUND, C6_SHIFTED_NOISE_BIT, H, KEY_BITS, L, N, N_PARTIES,
-    PROFILE_ID, QIS, SHARE_BIT, T,
+    AGGREGATE_BIT, C6_NOISE_BIT, C6_NOISE_BOUND, C6_SHIFTED_NOISE_BIT, H, L_THRESHOLD as L, N,
+    N_PARTIES, PRF_KEY_BITS as KEY_BITS, PROFILE_ID, QIS_THRESHOLD as QIS, SHARE_BIT, T,
 };
 use lib::core::synchronized::threshold_decryption::secure_share;
 

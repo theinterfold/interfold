@@ -3,7 +3,10 @@
 //! Real registry/proof/signature qualification below disabled request admission. Only the
 //! finalized committee and controller lifecycle are harnessed. Decryption uses the writer effect.
 
-use super::{publication::Recovered, *};
+use super::{
+    publication::{RecipientJoinWork, Recovered},
+    *,
+};
 use alloy::{
     network::TransactionBuilder,
     node_bindings::{Anvil, AnvilInstance},
@@ -14,7 +17,7 @@ use alloy::{
     sol_types::SolValue,
 };
 use e3_event_system::{EventStoreAddrs, EventSystem};
-use e3_events::{AggregateConfig, AggregateId, E3Requested, SynchronizedSetupAnchors};
+use e3_events::{AggregateConfig, AggregateId, E3Requested, SynchronizedRecipientProofReady};
 use e3_evm::{
     canonical_key::CanonicalKeyProjection, CiphernodeRegistrySolReader, EvmLog, InterfoldEvmEvent,
 };
@@ -166,6 +169,14 @@ impl Chain {
         contract: Address,
     ) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
         ensure!(receipt.status(), "qualification transaction reverted");
+        self.decode_logs(receipt.logs(), contract).await
+    }
+
+    async fn decode_logs(
+        &self,
+        logs: &[alloy::rpc::types::Log],
+        contract: Address,
+    ) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let collector = Decoded(tx).start();
         let next = collector.clone().recipient();
@@ -181,11 +192,7 @@ impl Chain {
             .recipient()
         };
         let mut events = Vec::new();
-        for log in receipt
-            .logs()
-            .iter()
-            .filter(|log| log.address() == contract)
-        {
+        for log in logs.iter().filter(|log| log.address() == contract) {
             let block = log.block_number.context("unmined qualification log")?;
             let timestamp = self
                 .provider
@@ -227,8 +234,8 @@ impl Chain {
     pub async fn qualify(
         &self,
         recovered: &[Recovered],
-        setups: &[SynchronizedSetupAnchors],
-        recipients: &[Proof],
+        recipients: &BTreeMap<u32, SynchronizedRecipientProofReady>,
+        late: &RecipientJoinWork,
         planned: &super::publication::PlannedPublication,
         public_key: &PublicKey,
         proof: &Proof,
@@ -300,7 +307,7 @@ impl Chain {
             &artifact("contracts/verifiers/bfv/SynchronizedDkgPublicationVerifier.sol/SynchronizedDkgPublicationVerifier.json")?,
             (verifier, self.controller, B256::from(selected.crypto_config_id), tree, c5, U256::from(3), U256::from(2)).abi_encode_params(),
             &HashMap::new()).await?;
-        FixtureController::new(self.controller, &self.provider)
+        let configured = FixtureController::new(self.controller, &self.provider)
             .configure(
                 numeric_id,
                 registry,
@@ -312,6 +319,7 @@ impl Chain {
             .context("configure frozen qualification request")?
             .get_receipt()
             .await?;
+        ensure!(configured.status());
         let committee = selected
             .committee
             .iter()
@@ -394,19 +402,15 @@ impl Chain {
         ensure!(keys.get(id).is_none());
         let mut signatures = Vec::new();
         let mut intent = planned.intent.clone();
-        let mut local_setups = Vec::new();
-        for owner in 0..recovered.len() {
+        let mut local_setups = BTreeMap::new();
+        let setup = &recipients[&0].setup;
+        ensure!(recipients.keys().copied().eq(setup.dealers.iter().copied()));
+        for (&party, result) in recipients {
+            let owner = party as usize;
             use super::super::publication::{actor, consents, DriveSetup, SetupCheckpoint};
             let path = directory.join(format!("consent-{owner}"));
             let store = DataStore::from_sled_store(&SledStore::new(&bus, &path)?);
             let root = recovered[owner].0.clone();
-            let material = root.synchronized.as_ref().context("missing material")?;
-            let result = e3_events::SynchronizedRecipientProofReady {
-                e3_id: id.clone(),
-                context: material.context.clone(),
-                proof: recipients[owner].clone(),
-                setup: setups[owner].clone(),
-            };
             let (node, setup_bus, history) = actor(
                 &store,
                 root.clone(),
@@ -417,7 +421,7 @@ impl Chain {
             )
             .await?;
             node.send(DriveSetup {
-                result: Some(TypedEvent::new(result, test_ec(700))),
+                result: Some(TypedEvent::new(result.clone(), test_ec(700))),
                 effects: false,
             })
             .await??;
@@ -451,29 +455,28 @@ impl Chain {
                 .confirmed_setup(self.controller, &keys, &*cipher(owner).await?)
                 .is_err());
             let output = consents(&setup_bus, &history).await?;
-            ensure!(output.len() == usize::from(setups[0].dealers.contains(&(owner as u32))));
-            if let Some(event) = output.first() {
-                let InterfoldEventData::SynchronizedDkgConsentPublished(message) = event.get_data()
-                else {
-                    unreachable!()
-                };
-                ensure!(message.attestation.recover_address()? == committee[owner]);
-                planned.plan.consent(
-                    keys.synchronized_context(id)
-                        .context("missing frozen consent context")?,
-                    &planned.native,
-                    &planned.peers,
-                    &message.attestation,
-                )?;
-                signatures.push(Bytes::copy_from_slice(&message.attestation.signature));
-                intent.consents.push(message.attestation.clone());
-            }
-            local_setups.push(saved);
+            let [event] = output.as_slice() else {
+                anyhow::bail!("expected one H consent")
+            };
+            let InterfoldEventData::SynchronizedDkgConsentPublished(message) = event.get_data()
+            else {
+                unreachable!()
+            };
+            ensure!(message.attestation.recover_address()? == committee[owner]);
+            planned.plan.consent(
+                keys.synchronized_context(id)
+                    .context("missing frozen consent context")?,
+                &planned.native,
+                &planned.peers,
+                &message.attestation,
+            )?;
+            signatures.push(Bytes::copy_from_slice(&message.attestation.signature));
+            intent.consents.push(message.attestation.clone());
+            local_setups.insert(owner, saved);
             node.send(Die).await?;
             drop(node);
             store.shutdown().await?;
         }
-        let setup = &setups[0];
         let commitment =
             e3_zk_witness::threshold::user_data_encryption::compute_public_key_commitment(
                 &public_key.params,
@@ -487,6 +490,63 @@ impl Chain {
             signatures,
         };
         let contract = ISynchronizedDkgPublication::new(registry, &self.provider);
+        // A second finalized E3 with the same committee, profile and verifier cannot reuse
+        // this publication. No missing verifier, different roster or absent request explains it.
+        let other = numeric_id + U256::from(1);
+        let configured = FixtureController::new(self.controller, &self.provider)
+            .configure(other, registry, wrapper, selected.crypto_config_id.into())
+            .send()
+            .await?
+            .get_receipt()
+            .await?;
+        let finalized = FixtureRegistry::new(registry, &self.provider)
+            .seed(
+                other,
+                self.controller,
+                committee.clone().try_into().unwrap(),
+            )
+            .send()
+            .await?
+            .get_receipt()
+            .await?;
+        ensure!(configured.status() && finalized.status());
+        let error = contract
+            .publishSynchronizedCommittee(other, publication.clone())
+            .call()
+            .await
+            .expect_err("a different finalized E3 accepted the signed publication");
+        ensure!(
+            error
+                .as_decoded_error::<ISynchronizedDkgPublication::InvalidPublication>()
+                .is_some(),
+            "{error:#}"
+        );
+        if let Some(export) = std::env::var_os("E3_SYNC_OTHER_PROFILE_EXPORT") {
+            let dkg: Value =
+                serde_json::from_slice(&fs::read(Path::new(&export).join("publication.json"))?)?;
+            let foreign_id: B256 = serde_json::from_value(dkg["crypto_config_id"].clone())?;
+            let other_profile = if selected.params_profile == PROFILE {
+                BfvProfile::SyncDecSecure8192
+            } else {
+                PROFILE
+            };
+            ensure!(foreign_id == other_profile.crypto_config_id(COMMITTEE)?);
+            let raw: Bytes = serde_json::from_value(dkg["proof"].clone())?;
+            let fields: Vec<B256> = serde_json::from_value(dkg["public_inputs"].clone())?;
+            let mut foreign = publication.clone();
+            foreign.proof = (raw, fields).abi_encode_params().into();
+            let error = contract
+                .publishSynchronizedCommittee(numeric_id, foreign)
+                .call()
+                .await
+                .expect_err("accepted another profile's DKG proof");
+            ensure!(
+                error
+                    .as_decoded_error::<ISynchronizedDkgPublication::InvalidPublication>()
+                    .is_some(),
+                "{error:#}"
+            );
+        }
         let mut missing_consent = publication.clone();
         missing_consent.signatures.pop();
         let error = contract
@@ -508,10 +568,12 @@ impl Chain {
             None,
             EventSource::Local,
         ));
-        let (writer_keys, pending) = reopen_history(
+        let writer_keys = CanonicalPublicKeys::default();
+        let pending = reopen_history(
             &history,
             &directory.join("writer-recovery"),
             self.controller,
+            &writer_keys,
         )
         .await?;
         ensure!(pending == vec![intent.clone()] && writer_keys.get(id).is_none());
@@ -528,6 +590,7 @@ impl Chain {
             .wallet(signers[0].clone())
             .connect_http(self.anvil.endpoint_url());
         let publisher = e3_evm::EthProvider::new(publisher).await?;
+        let in_flight = late_setup::dispatch(late.clone(), prover.clone(), id.clone());
         let receipts = e3_evm::publish_synchronized_committee_definition(
             publisher.clone(),
             &writer_keys,
@@ -536,7 +599,7 @@ impl Chain {
         .await?;
         ensure!(
             receipts.len() == 2,
-            "expected proof and one native key chunk"
+            "expected the proof receipt and final key-chunk receipt"
         );
         // Reuse the reopened pre-publication journal after a mined success that it has not yet
         // observed. The complete-authority preflight skips the proof and resumes only key bytes.
@@ -552,17 +615,44 @@ impl Chain {
         ensure!(
             authority.version == 1
                 && authority.verifier == wrapper
+                && authority.cryptoConfigId == B256::from(selected.crypto_config_id)
                 && authority.pkCommitment.0 == commitment
                 && authority.keyBundleCommits
                     == setup
                         .dealers
                         .iter()
-                        .map(|&party| B256::from(setups[party as usize].key_bundle))
+                        .map(|party| B256::from(recipients[party].setup.key_bundle))
                         .collect::<Vec<_>>()
         );
-        for receipt in receipts {
-            history.extend(self.decode(&receipt, registry).await?);
-        }
+        let controller_logs = self.decode(&receipts[0], self.controller).await?;
+        let stage = controller_logs
+            .iter()
+            .find(|event| {
+                matches!(event.get_data(),
+            InterfoldEventData::E3StageChanged(change) if &change.e3_id == id
+                && change.new_stage == E3Stage::KeyPublished)
+            })
+            .context("publication receipt has no KeyPublished callback")?
+            .clone();
+        history.extend(controller_logs);
+        // The writer returns the final key-chunk receipt. Confirmed history must include
+        // every earlier chunk, too, when the secure public key spans transactions.
+        let logs = self
+            .provider
+            .get_logs(
+                &alloy::rpc::types::Filter::new()
+                    .address(registry)
+                    .from_block(receipts[0].block_number.context("unmined DKG")?)
+                    .to_block(receipts[1].block_number.context("unmined public key")?),
+            )
+            .await?;
+        history.extend(self.decode_logs(&logs, registry).await?);
+        eprintln!(
+            "{} signed DKG: {} gas, {} public key bytes",
+            selected.params_profile,
+            receipts[0].gas_used,
+            public_key.to_bytes().len()
+        );
         ensure!(
             ICiphernodeRegistry::new(registry, &self.provider)
                 .committeePublicKey(numeric_id)
@@ -574,33 +664,49 @@ impl Chain {
         let bytes = public_key.to_bytes();
         // Receipt success alone did not install authority in the shared projection.
         ensure!(writer_keys.get(id).is_none());
-        let (recovered_keys, pending) =
-            reopen_history(&history, directory, self.controller).await?;
-        ensure!(pending.is_empty());
+        let outside = late.request.context.party_id as usize;
+        ensure!(outside == 1 && !local_setups.contains_key(&outside));
+        let recovered_keys = CanonicalPublicKeys::default();
+        let saved = Box::pin(late_setup::qualify(
+            late,
+            in_flight,
+            prover,
+            &recovered[outside].0,
+            &signers[outside],
+            stage,
+            &history,
+            &recovered_keys,
+            directory,
+            &bus,
+        ))
+        .await?;
+        local_setups.insert(outside, saved);
         ensure!(recovered_keys.public_key(id).as_deref() == Some(bytes.as_slice()));
         let key = recovered_keys
             .get(id)
             .context("lost confirmed synchronized authority")?;
-        let CanonicalDkgAnchors::Synchronized(authority) = key.dkg_anchors else {
+        let CanonicalDkgAnchors::Synchronized(authority) = &key.dkg_anchors else {
             anyhow::bail!("SS authority substituted");
         };
         ensure!(
             authority.party_ids == setup.dealers
                 && authority.threshold_pk_commits == setup.threshold_keys
         );
+        let local_setups: Vec<_> = local_setups.into_values().collect();
         for (owner, (root, _)) in recovered.iter().enumerate() {
             let saved = root.synchronized.as_ref().unwrap();
             let selection = root.ciphernode_selected.as_ref().unwrap();
             let cipher = cipher(owner).await?;
             let handoff =
                 local_setups[owner].confirmed_setup(self.controller, &recovered_keys, &cipher)?;
+            let anchors = &local_setups[owner].result().setup;
             ensure!(
                 handoff.recipient() == owner as u32
                     && handoff.public_key()[..] == bytes
-                    && handoff.sk_commitment() == setups[owner].sk_commitment
-                    && handoff.key_bundle() == setups[owner].key_bundle
+                    && handoff.sk_commitment() == saved.sk_commitment.unwrap()
+                    && handoff.key_bundle() == saved.key_bundle.unwrap()
             );
-            let mut changed = setups[owner].clone();
+            let mut changed = anchors.clone();
             changed.dealer_batch[31] ^= 1;
             ensure!(saved
                 .confirmed_setup(
@@ -616,7 +722,7 @@ impl Chain {
                     selection,
                     self.controller,
                     &recovered_keys,
-                    &setups[owner],
+                    anchors,
                     &*super::cipher((owner + 1) % 3).await?
                 )
                 .is_err());
@@ -626,7 +732,7 @@ impl Chain {
                         selection,
                         self.controller,
                         &recovered_keys,
-                        &setups[owner],
+                        anchors,
                         public_key,
                         &signers[owner],
                         &cipher
@@ -634,8 +740,11 @@ impl Chain {
                     .is_err());
             }
         }
-        ensure!(recovered_keys.decryption_domains(id).is_none() && !PROFILE.admission_enabled());
-        decryption::qualify(
+        ensure!(
+            recovered_keys.decryption_domains(id).is_none()
+                && !selected.params_profile.admission_enabled()
+        );
+        Box::pin(decryption::qualify(
             self,
             registry,
             recovered,
@@ -645,7 +754,7 @@ impl Chain {
             history,
             public_key,
             directory,
-        )
+        ))
         .await?;
         Ok(())
     }
@@ -653,6 +762,8 @@ impl Chain {
 
 #[path = "decryption.rs"]
 mod decryption;
+#[path = "late_setup.rs"]
+mod late_setup;
 
 /// Reopen both the commit log and the Sled stores (sequence index, snapshots and plaintext pins).
 struct DiskJournal {
@@ -707,10 +818,8 @@ async fn reopen_history(
     history: &[InterfoldEvent<Unsequenced>],
     directory: &Path,
     controller: Address,
-) -> Result<(
-    CanonicalPublicKeys,
-    Vec<e3_events::SynchronizedDkgPublicationReady>,
-)> {
+    keys: &CanonicalPublicKeys,
+) -> Result<Vec<e3_events::SynchronizedDkgPublicationReady>> {
     let chain = AggregateId::new(31337);
     let node = DiskJournal::open(directory, "authority").await?;
     for event in history {
@@ -723,13 +832,12 @@ async fn reopen_history(
     }
     node.close().await?;
     let node = DiskJournal::open(directory, "authority").await?;
-    let keys = CanonicalPublicKeys::default();
     let mut projection =
         CanonicalKeyProjection::new(keys.clone(), HashMap::from([(31337, controller)]));
     projection
         .recover(&node.reader, &[chain], HashSet::new())
         .await?;
-    let pending = e3_evm::recover_synchronized_publications(&node.reader, 31337, &keys).await?;
+    let pending = e3_evm::recover_synchronized_publications(&node.reader, 31337, keys).await?;
     node.close().await?;
-    Ok((keys, pending))
+    Ok(pending)
 }

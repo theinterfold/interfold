@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-use super::{CanonicalPublicKey, CanonicalPublicKeys};
-use alloy::primitives::U256;
+use super::{CanonicalDkgAnchors, CanonicalPublicKey, CanonicalPublicKeys};
+use alloy::primitives::{Address, U256};
 use anyhow::{ensure, Result};
 use e3_committee_hash::{hash_committee_addresses, DkgSetupContext};
-use e3_events::{E3id, SynchronizedDkgContext};
+use e3_events::{
+    E3id, InterfoldEventData, SynchronizedDkgContext, SynchronizedProofContext,
+    SynchronizedSetupAnchors,
+};
 use e3_fhe_params::BfvDecryptionProtocol;
 
 mod publication;
@@ -16,6 +19,45 @@ pub struct SynchronizedDkgSelection {
     pub committee_size: e3_committee::CiphernodesCommitteeSize,
     pub interfold_address: alloy::primitives::Address,
     pub committee: Vec<alloy::primitives::Address>,
+}
+
+impl CanonicalPublicKey {
+    pub fn matches_late_recipient_work(
+        &self,
+        local: Address,
+        work: &e3_events::SynchronizedDkgProofRequest,
+    ) -> bool {
+        matches!(&work.job, e3_events::SynchronizedDkgProofJob::Recipient { expected, .. }
+            if self.matches_late_recipient(local, work.params_profile, work.committee_size, &work.context, expected))
+    }
+
+    /// A published H batch can authorize a local recipient join, never another publication.
+    /// The outside owner's SK and bundle have no on-chain row: the recipient proof opens them.
+    pub fn matches_late_recipient(
+        &self,
+        local: Address,
+        profile: e3_fhe_params::BfvProfile,
+        size: e3_committee::CiphernodesCommitteeSize,
+        context: &SynchronizedProofContext,
+        expected: &SynchronizedSetupAnchors,
+    ) -> bool {
+        let CanonicalDkgAnchors::Synchronized(authority) = &self.dkg_anchors else {
+            return false;
+        };
+        let binding = e3_committee_hash::split_decryption_domain(authority.setup_binding.into());
+        self.params_profile == profile
+            && self.committee_size == size
+            && self.committee.get(context.party_id as usize) == Some(&local)
+            && !authority.party_ids.contains(&context.party_id)
+            && context.setup.interfold_address == self.interfold_address
+            && context.setup.crypto_config_id.0 == authority.context.crypto_config_id
+            && context.setup.committee_hash == hash_committee_addresses(&self.committee)
+            && expected.recipient == context.party_id
+            && expected.binding == [binding.hi, binding.lo]
+            && expected.dealers == authority.party_ids
+            && expected.threshold_keys == authority.threshold_pk_commits
+            && expected.dealer_batch == authority.dealer_batch
+    }
 }
 
 impl CanonicalPublicKeys {
@@ -80,10 +122,11 @@ impl CanonicalPublicKeys {
         ensure!(
             !context.registry.is_zero()
                 && !context.verifying_contract.is_zero()
-                && context.crypto_config_id
-                    == e3_fhe_params::BfvProfile::SyncDecInsecure64
-                        .crypto_config_id(e3_committee::CiphernodesCommitteeSize::Minimum)?
-                        .0,
+                && e3_fhe_params::BfvProfile::for_committee_config_id(
+                    e3_committee::CiphernodesCommitteeSize::Minimum,
+                    context.crypto_config_id.into(),
+                )
+                .is_some_and(|p| p.protocol() == BfvDecryptionProtocol::Synchronized),
             "unsupported synchronized DKG signing context"
         );
         let mut keys = self.0.write().expect("canonical key lock");
@@ -113,6 +156,29 @@ pub struct SynchronizedDkgAuthority {
 }
 
 impl SynchronizedDkgAuthority {
+    /// Any of these confirmed facts can arrive last. The event wakes consumers; only the joined
+    /// projection supplies the winning batch.
+    pub fn observation_id(data: &InterfoldEventData) -> Option<&E3id> {
+        match data {
+            InterfoldEventData::E3Requested(request)
+                if request.params_profile.protocol() == BfvDecryptionProtocol::Synchronized =>
+            {
+                Some(&request.e3_id)
+            }
+            InterfoldEventData::SynchronizedDkgContextEstablished(context) => Some(&context.e3_id),
+            InterfoldEventData::EvmLogObserved(log)
+                if log.contract == "CiphernodeRegistry"
+                    && matches!(
+                        log.event_name.as_str(),
+                        "SynchronizedDkgAuthorityPublished" | "CommitteeProofPublished"
+                    ) =>
+            {
+                log.e3_id.as_ref()
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn validate(&self, id: &E3id, key: &CanonicalPublicKey) -> Result<()> {
         ensure!(
             key.params_profile.protocol() == BfvDecryptionProtocol::Synchronized,

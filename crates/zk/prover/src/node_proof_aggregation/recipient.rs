@@ -12,6 +12,7 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_data::{Repositories, Repository};
 use e3_events::*;
 use e3_fhe_params::BfvDecryptionProtocol;
+use e3_request::canonical_key::{CanonicalPublicKey, SynchronizedDkgAuthority};
 use e3_request::E3Meta;
 use e3_zk_config::{
     synchronized::{public_signals::PublicSignals, Configs},
@@ -39,6 +40,7 @@ pub(crate) struct RecipientRecord {
 #[derive(Default)]
 pub(crate) struct RecipientCollection {
     pub records: HashMap<E3id, RecipientRecord>,
+    terminal: HashSet<E3id>,
     in_flight: HashMap<E3id, ComputeRequest>,
     published: HashSet<E3id>,
     local_published: HashSet<E3id>,
@@ -121,9 +123,13 @@ pub(crate) async fn recover(
 }
 
 impl RecipientCollection {
-    pub(crate) fn from_records(records: HashMap<E3id, RecipientRecord>) -> Self {
+    pub(crate) fn from_records(
+        records: HashMap<E3id, RecipientRecord>,
+        terminal: HashSet<E3id>,
+    ) -> Self {
         Self {
             records,
+            terminal,
             ..Self::default()
         }
     }
@@ -145,7 +151,42 @@ impl RecipientCollection {
     }
 }
 
+enum RecipientPhase {
+    Collecting,
+    Published(Option<Box<CanonicalPublicKey>>),
+    Retired,
+}
+
+impl RecipientPhase {
+    fn accepts_work(&self, local: Address, work: &SynchronizedDkgProofRequest) -> bool {
+        match self {
+            Self::Collecting => true,
+            Self::Published(Some(key)) => key.matches_late_recipient_work(local, work),
+            _ => false,
+        }
+    }
+}
+
 impl NodeProofAggregator {
+    fn recipient_phase(&self, id: &E3id) -> RecipientPhase {
+        if self.recipient.terminal.contains(id) {
+            return RecipientPhase::Retired;
+        }
+        if let Some(key) = self.canonical_keys.get(id) {
+            let owner = self.signer.address();
+            if !key.committee.contains(&owner) || key.honest_committee.contains(&owner) {
+                return RecipientPhase::Retired;
+            }
+            return RecipientPhase::Published(Some(Box::new(key)));
+        }
+        if self.dealer.ended.contains(id) {
+            // Lifecycle and full registry authority are different observations. Hold the
+            // correlated inputs until the projection has the batch; the stage cannot supply it.
+            return RecipientPhase::Published(None);
+        }
+        RecipientPhase::Collecting
+    }
+
     pub(super) fn route_synchronized(
         &mut self,
         data: &InterfoldEventData,
@@ -167,7 +208,11 @@ impl NodeProofAggregator {
             && ec.source() == EventSource::Local
         {
             for id in self.recipient.records.keys().cloned().collect::<Vec<_>>() {
-                self.persist_recipient(&id, ctx);
+                if matches!(self.recipient_phase(&id), RecipientPhase::Retired) {
+                    self.retire_recipient(&id, ctx);
+                } else {
+                    self.persist_recipient(&id, ctx);
+                }
             }
         }
         let Some(id) = data.get_e3_id() else {
@@ -179,47 +224,29 @@ impl NodeProofAggregator {
         if meta.params_profile.protocol() != BfvDecryptionProtocol::Synchronized {
             return false;
         }
-        if self.dealer.ended.contains(&id) {
-            if let Some(retry) = self
-                .recipient
-                .flush_retries
-                .remove(&id)
-                .and_then(|retry| retry.timer)
-            {
-                ctx.cancel_future(retry);
+        let terminal = match data {
+            InterfoldEventData::E3StageChanged(stage) => {
+                ec.source() == EventSource::Evm && stage.new_stage.is_terminal()
             }
-            if let Some(retry) = self
-                .recipient
-                .delivery_retries
-                .remove(&id)
-                .and_then(|retry| retry.timer)
-            {
-                ctx.cancel_future(retry);
+            InterfoldEventData::E3Failed(_) | InterfoldEventData::E3RequestComplete(_) => {
+                matches!(ec.source(), EventSource::Evm | EventSource::Local)
             }
-            if let Some(retry) = self.recipient.work_retries.remove(&id) {
-                ctx.cancel_future(retry);
+            _ => false,
+        };
+        let newly_terminal = terminal && self.recipient.terminal.insert(id.clone());
+        let phase = self.recipient_phase(&id);
+        if matches!(phase, RecipientPhase::Retired) {
+            if newly_terminal || self.recipient.records.contains_key(&id) {
+                self.retire_recipient(&id, ctx);
             }
-            self.recipient.records.remove(&id);
-            self.recipient.in_flight.remove(&id);
-            self.recipient.published.remove(&id);
-            self.recipient.local_published.remove(&id);
-            self.recipient.invalid_work.remove(&id);
-            self.recipient.failed_work.remove(&id);
-            self.recipient.repairs.remove(&id);
-            self.recipient.repair_counts.remove(&id);
-            self.recipient.unflushed.remove(&id);
-            if let Some(repositories) = &self.recovery_repositories {
-                let store = e3_data::DataStore::from(repository(repositories, &id));
-                ctx.wait(
-                    async move { store.remove_sync().await }
-                        .into_actor(self)
-                        .map(|result, _, _| {
-                            if let Err(error) = result {
-                                tracing::error!(%error, "recipient retirement failed");
-                            }
-                        }),
-                );
-            }
+            return true;
+        }
+        if ec.source() == EventSource::Evm
+            && (matches!(data, InterfoldEventData::E3StageChanged(_))
+                || SynchronizedDkgAuthority::observation_id(data).is_some())
+            && matches!(phase, RecipientPhase::Published(_))
+        {
+            self.persist_recipient(&id, ctx);
             return true;
         }
         if !matches!(
@@ -253,6 +280,46 @@ impl NodeProofAggregator {
             }
         }
         true
+    }
+
+    fn retire_recipient(&mut self, id: &E3id, ctx: &mut Context<Self>) {
+        for timer in [
+            self.recipient
+                .flush_retries
+                .remove(id)
+                .and_then(|retry| retry.timer),
+            self.recipient
+                .delivery_retries
+                .remove(id)
+                .and_then(|retry| retry.timer),
+            self.recipient.work_retries.remove(id),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            ctx.cancel_future(timer);
+        }
+        self.recipient.records.remove(id);
+        self.recipient.in_flight.remove(id);
+        self.recipient.published.remove(id);
+        self.recipient.local_published.remove(id);
+        self.recipient.invalid_work.remove(id);
+        self.recipient.failed_work.remove(id);
+        self.recipient.repairs.remove(id);
+        self.recipient.repair_counts.remove(id);
+        self.recipient.unflushed.remove(id);
+        if let Some(repositories) = &self.recovery_repositories {
+            let store = e3_data::DataStore::from(repository(repositories, id));
+            ctx.wait(
+                async move { store.remove_sync().await }
+                    .into_actor(self)
+                    .map(|result, _, _| {
+                        if let Err(error) = result {
+                            tracing::error!(%error, "recipient retirement failed");
+                        }
+                    }),
+            );
+        }
     }
 
     fn validate_recipient_authority(&self, plan: &RecipientPlan) -> Result<()> {
@@ -318,7 +385,11 @@ impl NodeProofAggregator {
         ec: &EventContext<Sequenced>,
     ) -> Result<bool> {
         let id = data.get_e3_id().context("missing recipient E3")?;
-        ensure!(!self.dealer.ended.contains(&id), "recipient DKG has ended");
+        let phase = self.recipient_phase(&id);
+        ensure!(
+            !matches!(phase, RecipientPhase::Retired),
+            "recipient DKG has ended"
+        );
         let peer = matches!(data, InterfoldEventData::SynchronizedDkgProofPublished(_));
         ensure!(
             peer || ec.source() == EventSource::Local,
@@ -494,6 +565,12 @@ impl NodeProofAggregator {
                     anyhow::bail!("unexpected recipient request");
                 };
                 plan.validate_result(work, proof, setup)?;
+                if let RecipientPhase::Published(Some(key)) = phase {
+                    ensure!(
+                        key.matches_late_recipient_work(self.signer.address(), work),
+                        "recipient response differs from the published dealer batch"
+                    );
+                }
                 record.completed = Some(SynchronizedRecipientProofReady {
                     e3_id: id.clone(),
                     context: plan.inputs.context.clone(),
@@ -588,7 +665,7 @@ impl NodeProofAggregator {
     }
 
     fn persist_recipient(&mut self, id: &E3id, ctx: &mut Context<Self>) {
-        if !self.dealer.effects || self.dealer.ended.contains(id) {
+        if !self.dealer.effects || matches!(self.recipient_phase(id), RecipientPhase::Retired) {
             return;
         }
         if self
@@ -671,7 +748,9 @@ impl NodeProofAggregator {
             if let Some(state) = actor.recipient.flush_retries.get_mut(&retry_id) {
                 state.timer = None;
             }
-            if !actor.dealer.effects || actor.dealer.ended.contains(&retry_id) {
+            if !actor.dealer.effects
+                || matches!(actor.recipient_phase(&retry_id), RecipientPhase::Retired)
+            {
                 return;
             }
             // Retry the latest retained record, not a snapshot superseded by another input.
@@ -717,7 +796,11 @@ impl NodeProofAggregator {
     }
 
     fn retry_recipient_work(&mut self, id: &E3id, ctx: &mut Context<Self>) {
-        if !self.recipient.in_flight.contains_key(id) || self.recipient.invalid_work.contains(id) {
+        let eligible = self.recipient.in_flight.get(id).is_some_and(|request| {
+            matches!(&request.request, ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(work))
+                if self.recipient_phase(id).accepts_work(self.signer.address(), work))
+        });
+        if !eligible || self.recipient.invalid_work.contains(id) {
             if let Some(retry) = self.recipient.work_retries.remove(id) {
                 ctx.cancel_future(retry);
             }
@@ -730,7 +813,7 @@ impl NodeProofAggregator {
         let retry_id = id.clone();
         let retry = ctx.run_later(Duration::from_secs(60), move |actor, ctx| {
             actor.recipient.work_retries.remove(&retry_id);
-            if !actor.dealer.effects || actor.dealer.ended.contains(&retry_id) {
+            if !actor.dealer.effects || matches!(actor.recipient_phase(&retry_id), RecipientPhase::Retired) {
                 return;
             }
             if actor.recipient.invalid_work.contains(&retry_id) {
@@ -758,13 +841,20 @@ impl NodeProofAggregator {
             .context("missing recipient record")?;
         self.validate_recipient_record(id, record)?;
         let plan = record.plan.as_ref().context("missing recipient plan")?;
-        let work = plan.request(&record.leaves, &record.dealers)?;
+        let work = plan
+            .request(&record.leaves, &record.dealers)?
+            .context("missing recipient work")?;
         ensure!(
             record.completed.is_none()
-                && work.is_some_and(|work| current.request
-                    == ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(Box::new(work)))),
+                && matches!(&current.request, ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(old)) if **old == work),
             "recipient redelivery differs from flushed work"
         );
+        if !self
+            .recipient_phase(id)
+            .accepts_work(self.signer.address(), &work)
+        {
+            return Ok(());
+        }
         let mut request = current.clone();
         request.correlation_id = CorrelationId::new();
         // The compute gate reuses success and waits for queued/running work to finish. Keep the
@@ -776,13 +866,34 @@ impl NodeProofAggregator {
     }
 
     fn publish_recipient_work(&mut self, id: &E3id) -> Result<()> {
-        if !self.dealer.effects || self.dealer.ended.contains(id) {
+        let phase = self.recipient_phase(id);
+        if !self.dealer.effects || matches!(phase, RecipientPhase::Retired) {
             return Ok(());
         }
         let Some(record) = self.recipient.records.get(id) else {
             return Ok(());
         };
+        let Some(plan) = &record.plan else {
+            return Ok(());
+        };
         if let Some(output) = &record.completed {
+            if let RecipientPhase::Published(key) = phase {
+                if !self.recipient.local_published.contains(id)
+                    && key.is_some_and(|key| {
+                        key.matches_late_recipient(
+                            self.signer.address(),
+                            plan.inputs.params_profile,
+                            plan.inputs.committee_size,
+                            &output.context,
+                            &output.setup,
+                        )
+                    })
+                {
+                    self.bus.publish(output.clone(), record.ec.clone())?;
+                    self.recipient.local_published.insert(id.clone());
+                }
+                return Ok(());
+            }
             if !self.recipient.published.contains(id) {
                 let signed = SynchronizedDkgProofPublished::sign(
                     id.clone(),
@@ -799,10 +910,10 @@ impl NodeProofAggregator {
                 self.recipient.published.insert(id.clone());
             }
         } else if !self.recipient.in_flight.contains_key(id) {
-            let Some(plan) = &record.plan else {
-                return Ok(());
-            };
             if let Some(work) = plan.request(&record.leaves, &record.dealers)? {
+                if !phase.accepts_work(self.signer.address(), &work) {
+                    return Ok(());
+                }
                 let request = ComputeRequest::zk(
                     ZkRequest::SynchronizedDkg(Box::new(work)),
                     CorrelationId::new(),

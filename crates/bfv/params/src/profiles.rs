@@ -257,15 +257,21 @@ impl BfvProfile {
         committee: CiphernodesCommitteeSize,
         crypto_config_id: alloy_primitives::B256,
     ) -> Result<Self, BfvProfileError> {
+        Self::for_committee_config_id(committee, crypto_config_id)
+            .filter(|profile| profile.param_set() == param_set)
+            .ok_or_else(|| BfvProfileError::UnsupportedConfiguration(crypto_config_id.to_string()))
+    }
+
+    /// Resolve a frozen signing context which carries the full configuration ID but no paramSet.
+    #[cfg(feature = "abi-encoding")]
+    pub fn for_committee_config_id(
+        committee: CiphernodesCommitteeSize,
+        crypto_config_id: alloy_primitives::B256,
+    ) -> Option<Self> {
         SUPPORTED_CRYPTO_CONFIG_IDS
             .iter()
-            .find(|(profile, supported, id)| {
-                profile.param_set() == param_set
-                    && *supported == committee
-                    && *id == crypto_config_id
-            })
+            .find(|(_, supported, id)| *supported == committee && *id == crypto_config_id)
             .map(|(profile, _, _)| *profile)
-            .ok_or_else(|| BfvProfileError::UnsupportedConfiguration(crypto_config_id.to_string()))
     }
 }
 

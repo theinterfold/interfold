@@ -9,6 +9,9 @@ use e3_event_system::test_support::EventFixture;
 use e3_fhe_params::BfvProfile;
 use e3_utils::ArcBytes;
 
+#[path = "recipient_late_tests.rs"]
+mod late;
+
 fn ec(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
     EventContext::<Unsequenced>::from(data.into()).sequence(1)
 }
@@ -848,7 +851,7 @@ async fn recipient_flush_retry_never_persists_a_new_invalid_batch() -> Result<()
     addr.send(StopRecipient).await?;
     store.shutdown().await?;
     drop(store);
-    e3_data::SledDb::close_all_connections();
+    e3_data::SledDb::close_connection(directory.path());
     let reopened = e3_data::DataStore::from_sled_store(&e3_data::SledStore::new(
         &bus,
         &directory.path().to_path_buf(),
@@ -865,7 +868,7 @@ async fn recipient_flush_retry_never_persists_a_new_invalid_batch() -> Result<()
         .await?
         .is_empty());
     reopened.shutdown().await?;
-    e3_data::SledDb::close_all_connections();
+    e3_data::SledDb::close_connection(directory.path());
     Ok(())
 }
 
@@ -1045,7 +1048,7 @@ async fn recipient_terminal_history_cancels_failed_flush_retry() -> Result<()> {
             E3StageChanged {
                 e3_id: id.clone(),
                 previous_stage: E3Stage::Requested,
-                new_stage: E3Stage::KeyPublished,
+                new_stage: E3Stage::Failed,
             }
             .into(),
             None,
@@ -1069,10 +1072,21 @@ async fn recipient_terminal_history_cancels_failed_flush_retry() -> Result<()> {
 
 #[actix::test]
 async fn recipient_physical_restart_reuses_proofs_and_refreshes_correlations() -> Result<()> {
+    reopen_recipient(false).await
+}
+
+#[actix::test]
+async fn published_pending_recipient_reopens_exact_work_and_finished_recipient_only_redelivers_locally(
+) -> Result<()> {
+    reopen_recipient(true).await
+}
+
+async fn reopen_recipient(published: bool) -> Result<()> {
     let EventFixture { bus, history, .. } = EventFixture::new()?;
     let mut f = fixture(&bus, 1)?;
     collect(&mut f)?;
     let id = f.plan.inputs.e3_id.clone();
+    let key = late::published_key(&f)?;
     let directory = tempfile::tempdir()?;
     let store = e3_data::DataStore::from_sled_store(&e3_data::SledStore::new(
         &bus,
@@ -1080,6 +1094,7 @@ async fn recipient_physical_restart_reuses_proofs_and_refreshes_correlations() -
     )?);
     f.actor.recovery_repositories = Some(Repositories::new(store.clone()));
     f.actor.dealer.effects = true;
+    let live_keys = f.actor.canonical_keys.clone();
     let addr = f.actor.start();
     addr.send(FlushRecipient(id.clone())).await?;
     assert_eq!(addr.send(InspectRecipient(id.clone())).await?, (true, true));
@@ -1088,9 +1103,19 @@ async fn recipient_physical_restart_reuses_proofs_and_refreshes_correlations() -
     let InterfoldEventData::ComputeRequest(first) = requests[0].get_data() else {
         panic!()
     };
+    if published {
+        addr.send(late::stage(
+            &id,
+            E3Stage::CommitteeFinalized,
+            E3Stage::KeyPublished,
+        ))
+        .await?;
+        late::install(&live_keys, &id, key.clone())?;
+        assert_eq!(addr.send(InspectRecipient(id.clone())).await?, (true, true));
+    }
     addr.send(StopRecipient).await?;
     store.shutdown().await?;
-    e3_data::SledDb::close_all_connections();
+    e3_data::SledDb::close_connection(directory.path());
     let reopened = e3_data::DataStore::from_sled_store(&e3_data::SledStore::new(
         &bus,
         &directory.path().to_path_buf(),
@@ -1100,6 +1125,10 @@ async fn recipient_physical_restart_reuses_proofs_and_refreshes_correlations() -
         .await?
         .unwrap();
     let mut restarted = fixture(&bus, 1)?;
+    if published {
+        restarted.actor.dealer.ended.insert(id.clone());
+        late::install(&restarted.actor.canonical_keys, &id, key.clone())?;
+    }
     restarted.actor.validate_recipient_record(&id, &record)?;
     restarted.actor.recipient.records.insert(id.clone(), record);
     restarted.actor.dealer.effects = true;
@@ -1114,7 +1143,7 @@ async fn recipient_physical_restart_reuses_proofs_and_refreshes_correlations() -
         .write_sync(&finished)
         .await?;
     reopened.shutdown().await?;
-    e3_data::SledDb::close_all_connections();
+    e3_data::SledDb::close_connection(directory.path());
     let reopened = e3_data::DataStore::from_sled_store(&e3_data::SledStore::new(
         &bus,
         &directory.path().to_path_buf(),
@@ -1125,6 +1154,10 @@ async fn recipient_physical_restart_reuses_proofs_and_refreshes_correlations() -
         ..
     } = EventFixture::new()?;
     let mut restarted = fixture(&new_bus, 1)?;
+    if published {
+        restarted.actor.dealer.ended.insert(id.clone());
+        late::install(&restarted.actor.canonical_keys, &id, key)?;
+    }
     let record = repository(&Repositories::new(reopened.clone()), &id)
         .read()
         .await?
@@ -1136,18 +1169,20 @@ async fn recipient_physical_restart_reuses_proofs_and_refreshes_correlations() -
     restarted.actor.publish_recipient_work(&id)?;
     new_bus.flush_event_pipeline().await?;
     let events = new_history.send(GetEvents::<InterfoldEvent>::new()).await?;
-    assert_eq!(events.len(), 2);
+    assert_eq!(events.len(), if published { 1 } else { 2 });
     assert_eq!(
         events[0].get_data(),
         &InterfoldEventData::from(finished.completed.clone().unwrap())
     );
-    let InterfoldEventData::SynchronizedDkgProofPublished(signed) = events[1].get_data() else {
-        panic!()
-    };
-    assert_eq!(signed.recover_address()?, restarted.actor.signer.address());
-    assert_eq!(signed.proof, finished.completed.unwrap().proof);
+    if !published {
+        let InterfoldEventData::SynchronizedDkgProofPublished(signed) = events[1].get_data() else {
+            panic!()
+        };
+        assert_eq!(signed.recover_address()?, restarted.actor.signer.address());
+        assert_eq!(signed.proof, finished.completed.unwrap().proof);
+    }
     reopened.shutdown().await?;
-    e3_data::SledDb::close_all_connections();
+    e3_data::SledDb::close_connection(directory.path());
     Ok(())
 }
 
@@ -1182,7 +1217,7 @@ async fn recipient_admission_remains_disabled_and_confirmed_terminal_history_win
     let terminal: InterfoldEventData = E3StageChanged {
         e3_id: id.clone(),
         previous_stage: E3Stage::Requested,
-        new_stage: E3Stage::KeyPublished,
+        new_stage: E3Stage::Complete,
     }
     .into();
     addr.send(event(terminal.clone(), EventSource::Net)).await?;

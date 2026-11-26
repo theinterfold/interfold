@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 use lib::configs::protocol::MAX_MSG_NON_ZERO_COEFFS;
 use lib::configs::synchronized::sync_secure_8192::{
-    AGGREGATE_BIT, C6_PUBLIC_FIELDS, C7_BIT_K, C7_BIT_Q_TOTAL, C7_BIT_T, C7_PLAINTEXT_MODULUS, H, L,
-    N, N_PARTIES, QIS, SHARE_BIT, T,
+    AGGREGATE_BIT, C6_PUBLIC_FIELDS, C7_BIT_K, C7_BIT_Q_TOTAL, C7_BIT_T, C7_PLAINTEXT_MODULUS, H,
+    L_THRESHOLD as L, N, N_PARTIES, QIS_THRESHOLD as QIS, SHARE_BIT, T,
 };
 use lib::core::synchronized::plaintext_aggregation::execute_for;
 

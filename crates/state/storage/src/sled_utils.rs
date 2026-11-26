@@ -67,6 +67,10 @@ pub fn get_or_open_db_tree(path: &PathBuf, tree: &str) -> Result<Tree> {
     Ok(db.open_tree(tree)?)
 }
 
+pub(super) fn evict_cached_db(path: &Path) {
+    SLED_CACHE.lock().unwrap().remove(&canonical_key(path));
+}
+
 pub fn clear_all_caches() {
     let mut cache_lock = SLED_CACHE.lock().unwrap();
     cache_lock.clear();

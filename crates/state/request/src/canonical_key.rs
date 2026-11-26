@@ -16,9 +16,8 @@ use std::{
 mod synchronized;
 pub use synchronized::{SynchronizedDkgAuthority, SynchronizedDkgSelection};
 mod synchronized_output;
+pub use e3_zk_config::synchronized::verifier::SynchronizedChildPins;
 pub use synchronized_output::SynchronizedDecryptionPlan;
-mod synchronized_verifier;
-pub use synchronized_verifier::SynchronizedChildPins;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CanonicalDkgAnchors {

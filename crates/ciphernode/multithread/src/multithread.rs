@@ -123,6 +123,7 @@ impl Multithread {
             addr.clone().recipient(),
             lifecycle_stages,
             canonical_keys,
+            None,
             running,
         );
         info!("Multithread actor waiting behind the replay-safe effect gate.");
@@ -141,6 +142,7 @@ impl Multithread {
         zk_backend: &ZkBackend,
         lifecycle_stages: HashMap<E3id, E3Stage>,
         canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
+        local_signer: alloy::primitives::Address,
     ) -> Addr<Self> {
         let zk_prover = Arc::new(ZkProver::new(zk_backend));
         let actor = Self::new(
@@ -161,6 +163,7 @@ impl Multithread {
             addr.clone().recipient(),
             lifecycle_stages,
             canonical_keys,
+            Some(local_signer),
             running,
         );
         info!("Multithread actor with ZK waiting behind the replay-safe effect gate.");

@@ -1503,7 +1503,7 @@ describe("Interfold", function () {
         interfold.publishPlaintextOutput(e3Id, data, "0xfafafafa"),
       ).to.be.revertedWithCustomError(mocks.decryptionVerifier, "InvalidProof");
     });
-    it("sets plaintextOutput correctly", async function () {
+    it("finishes an in-flight request with its request-time decryption verifier after rotation", async function () {
       const {
         interfold,
         request,
@@ -1539,6 +1539,16 @@ describe("Interfold", function () {
       );
       const committeeHash =
         await ciphernodeRegistryContract.getCommitteeHash(e3Id);
+      // A switch for new requests must not strand a request already at CiphertextReady.
+      const replacement = await ethers.deployContract("MockDecryptionVerifier");
+      await replacement.expectCall("0x"); // Refuse every verify call.
+      await interfold.setDecryptionVerifier(
+        encryptionSchemeId,
+        await replacement.getAddress(),
+      );
+      expect(
+        await interfold.getDecryptionVerifier(encryptionSchemeId),
+      ).to.equal(await replacement.getAddress());
       const decryptionDomain = ethers.keccak256(
         abiCoder.encode(
           ["uint256", "address", "uint256", "bytes32", "bytes32", "bytes32"],

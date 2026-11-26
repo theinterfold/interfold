@@ -528,6 +528,43 @@ in-flight allocation across the cutover. Before activation the dormant code can 
 restoring an older store for an in-flight request is not a rollback. The wider drain/reset still
 applies. Activation, mixed-version policy and rollback need human review under #2461.
 
+### Synchronized Minimum rollout proposal (v1, pending review)
+
+1. **Keep admission disabled.** The [late outside-H setup](dkg.md) changes when a node can finish
+   its existing records. Keep schema 9, gossip/sync 7/6 and protocol/generation 10/2 for this slice:
+   no encoded field, peer message, deployed verifier or request snapshot changes. An older binary
+   can discard an unfinished join at `KeyPublished`; keep each qualification store with its matching
+   binary. No admitted synchronized requests need migration. Do not relabel an older allocation or
+   resume it with a fresh draw
+   ([#2460 decision](https://github.com/theinterfold/interfold/issues/2460#issuecomment-7161813363)).
+2. **Qualify the release candidate.** The
+   [Minimum coexistence rehearsal](../../circuits/qualification/minimum-coexistence.md) records the
+   tested SS archives, post-#2542 synchronized candidates, rejection cases and limits. Match the
+   request's full configuration ID and committee to the signed DKG route, both child VKs and the
+   generated outer verifier. Both Minimum profiles share the decryption outer key. The unpublished
+   decryption wrapper now takes `(honk, registry, configId)` and selects both child keys itself. Do
+   not install it in the [existing SS slot](../../packages/interfold-contracts/README.md#to-deploy).
+   Repeat the SS and synchronized paths on the release candidate, including the
+   [secure signed registry route](https://github.com/theinterfold/interfold/issues/2549),
+   substitutions, fixed-set failover and reopen.
+   [Independent crypto review](https://github.com/theinterfold/interfold/issues/2050#issuecomment-7015286864)
+   of DKG provenance, PRF equivalence, noise bounds and retry policy, and protocol-owner review of
+   [late setup](https://github.com/theinterfold/interfold/issues/2459#issuecomment-6982354376)
+   remain open.
+3. **Cut over only after approval.** The proposed pre-upgrade SS policy is drain, not migration:
+   pause new requests, finish SS under its original verifier snapshots, and require `activeE3Count`
+   and `unreleasedCommitteeCount` to be zero. Preserve the pre-upgrade binary, artifacts, keys and
+   store backup. Follow the [BFV profile cutover](#bfv-profile-cutover); rehearse request creation
+   and verifier routing for both protocols before resuming. Activate secure Minimum only by a
+   separately authorized governance release. If 10/2 has already shipped without this capability,
+   select a new required protocol version before activation; a mixed fleet cannot serve the new
+   requests.
+4. **Rollback.** Before activation, revert the disabled code and use matching qualification state.
+   After activation, pause new requests and finish or settle each admitted E3 under its frozen
+   routes and deadlines. Preserve allocated shares and the designated set through failover. After
+   drain, use the [rollback procedure](#rollback-and-evidence) with reviewed routes and compatible
+   state; never lower required counters or run an old node against live synchronized allocations.
+
 ### Retiring a BFV profile
 
 A node keeps the request metadata of every E3 that it sees until that E3 ends, whether or not the E3

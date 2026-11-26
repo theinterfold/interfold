@@ -95,6 +95,7 @@ pub(super) async fn actor(
         .as_ref()
         .context("missing selection")?;
     let e3 = selection.e3_id.clone();
+    let profile = selection.params_profile;
     // Observe the producer, not the number of events that survived bus deduplication.
     let (bus, history) = test_bus_with_deduplication(false);
     let repos = store.repositories();
@@ -115,7 +116,7 @@ pub(super) async fn actor(
         ),
         bus: bus.clone(),
         cipher,
-        params_profile: PROFILE,
+        params_profile: profile,
         interfold_address: interfold,
         signer,
         bfv_key: repos.threshold_keyshare_bfv_key(&e3),
@@ -714,6 +715,118 @@ async fn synchronized_setup_flush_recovery_publishes_one_consent_without_new_inp
         .await?;
     assert!(extra.timed_out && extra.events.is_empty());
     assert_eq!(consents(&bus, &history).await?.len(), 1);
+    node.send(Die).await?;
+    Ok(())
+}
+
+#[actix::test]
+async fn synchronized_late_setup_rechecks_the_confirmed_batch_before_exclusive_write() -> Result<()>
+{
+    use e3_request::canonical_key::{
+        CanonicalDkgAnchors, CanonicalPublicKey, SynchronizedDkgAuthority,
+    };
+    let setup = Setup::new().await?;
+    let owner = 1;
+    let selection = &setup.selected[owner];
+    let id = &selection.e3_id;
+    let DecryptionKeyPlan::Proceed {
+        synchronized: Some(material),
+        ..
+    } = setup.plan(owner)?
+    else {
+        unreachable!()
+    };
+    let valid = result(&setup, &material, owner)?;
+    let keys = CanonicalPublicKeys::default();
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let record = ThresholdKeyshareRecoveryPayloads::new(
+        store
+            .repositories()
+            .threshold_keyshare_recovery_payloads(id),
+    )
+    .synchronized_setup();
+    let (node, bus, history) = actor(
+        &store,
+        ThresholdKeyshareRecoveryState {
+            ciphernode_selected: Some(TypedEvent::new(selection.clone(), test_ec(1))),
+            synchronized: Some(material),
+            ..Default::default()
+        },
+        setup.signers[owner].clone(),
+        setup.cipher.clone(),
+        setup.interfold,
+        keys.clone(),
+    )
+    .await?;
+    node.send(keyshare_event(
+        E3StageChanged {
+            e3_id: id.clone(),
+            previous_stage: E3Stage::CommitteeFinalized,
+            new_stage: E3Stage::KeyPublished,
+        },
+        2,
+        EventSource::Evm,
+    ))
+    .await?;
+    node.send(DriveSetup {
+        result: Some(TypedEvent::new(valid.clone(), test_ec(3))),
+        effects: true,
+    })
+    .await??;
+    assert!(node.send(SetupCheckpoint).await?.is_none());
+    assert!(
+        record.restore().await?.is_none(),
+        "the stage alone wrote a local setup"
+    );
+
+    // The candidate is internally consistent, but a different batch actually won.
+    let context = e3_events::SynchronizedDkgContext {
+        registry: Address::repeat_byte(1),
+        verifying_contract: Address::repeat_byte(2),
+        crypto_config_id: selection.crypto_config_id,
+    };
+    let committee: Vec<_> = setup.signers.iter().map(|s| s.address()).collect();
+    keys.remember_synchronized_context(id.clone(), context)?;
+    let mut other_batch = valid.setup.dealer_batch;
+    other_batch[31] ^= 1;
+    keys.insert_synchronized_dkg_authority(
+        id.clone(),
+        CanonicalPublicKey {
+            params_profile: PROFILE,
+            committee_size: COMMITTEE,
+            interfold_address: setup.interfold,
+            honest_committee: vec![committee[0], committee[2]],
+            committee,
+            pk_commitment: scalar(10)?,
+            dkg_anchors: CanonicalDkgAnchors::Synchronized(SynchronizedDkgAuthority {
+                version: 1,
+                context,
+                setup_binding: valid
+                    .context
+                    .setup
+                    .hash(id.chain_id(), id.clone().try_into()?)
+                    .0,
+                party_ids: vec![0, 2],
+                threshold_pk_commits: valid.setup.threshold_keys.clone(),
+                dealer_batch: other_batch,
+                sk_agg_commits: vec![scalar(11)?; 2],
+                key_bundle_commits: vec![scalar(12)?; 2],
+            }),
+        },
+    )?;
+    node.send(DriveSetup {
+        result: None,
+        effects: true,
+    })
+    .await??;
+    assert!(node.send(SetupCheckpoint).await?.is_none());
+    assert!(record.restore().await?.is_none());
+    bus.flush_event_pipeline().await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(
+        matches!(events.as_slice(), [event] if matches!(event.get_data(),
+        InterfoldEventData::InterfoldError(err) if err.message.contains("confirmed recipient authority")))
+    );
     node.send(Die).await?;
     Ok(())
 }

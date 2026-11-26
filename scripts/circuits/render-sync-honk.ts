@@ -13,12 +13,10 @@ export function renderSynchronizedHonk(root: string, key: string, circuit: 'decr
 }
 
 if (require.main === module) {
-  if (process.argv.length !== 3) throw new Error('Expected the exported synchronized decryption fixture directory')
+  const circuit = process.argv[3] ?? 'decryption_aggregator'
+  if (process.argv.length < 3 || process.argv.length > 4 || (circuit !== 'decryption_aggregator' && circuit !== 'dkg_aggregator')) {
+    throw new Error('Expected the exported fixture directory and optional synchronized aggregator')
+  }
   const fixture = resolve(process.argv[2])
-  renderSynchronizedHonk(
-    resolve(__dirname, '../..'),
-    join(fixture, 'decryption_aggregator.vk'),
-    'decryption_aggregator',
-    join(fixture, 'SynchronizedHonk.sol'),
-  )
+  renderSynchronizedHonk(resolve(__dirname, '../..'), join(fixture, `${circuit}.vk`), circuit, join(fixture, 'SynchronizedHonk.sol'))
 }

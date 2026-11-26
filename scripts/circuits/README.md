@@ -99,12 +99,12 @@ Wildcards preserve manifest order; unsupported explicit pairs fail before tools 
 release matrix is a separate required subset. The Rust builder calls `e3-zk-config` to generate Noir
 configuration; files on disk are derived artifacts, not hand-tuned data.
 
-The legacy `--preset` spelling selects a `BfvProfile`; SS names/paths remain unchanged.
-`sync-insecure-64/minimum` has C0–C4 and draft dealer/recipient joins but is excluded from the live
-policy. `sync-sources` regenerates its configuration without switching SS selectors. Seeded test
-policies can build explicit sync definitions, never a complete/hydrated set or recursive anchors.
-For real DKG proof coverage independent of the build policy, use `pnpm rust:test:sync-dkg:proofs`
-with pinned Nargo/BB; this does not publish or qualify runtime admission.
+The legacy `--preset` spelling selects a `BfvProfile`; SS names/paths remain unchanged. Both
+synchronized Minimum definitions are excluded from the live policy. `sync-sources` regenerates their
+configurations and the secure DKG entrypoints without switching SS selectors. Seeded test policies
+can build explicit sync definitions, never a complete/hydrated set or recursive anchors. For real
+DKG proof coverage independent of the build policy, use `pnpm rust:test:sync-dkg:proofs` with pinned
+Nargo/BB; this does not publish or qualify runtime admission.
 
 ### Synchronized decryption candidates
 
@@ -119,13 +119,28 @@ existing public proof export,
 `pnpm build:circuits decryption-candidate --preset PROFILE --output EXPORT` runs just the rebuild
 and native verification step. An existing candidate is never overwritten.
 
-Both profiles are disabled. Only the insecure fixture also proves synchronized DKG and exercises the
-request-aware Solidity wrapper with signed registry publication. Secure Minimum qualifies decryption
-from native setup openings; secure DKG publication and runtime admission are separate. PR CI
-type-checks both secure packages, exercises the secure C6 constraints on a small fixture, and
-rebuilds the secure C7 recursive key and compares its VK bytes and field pin with the recorded
-candidate. Secure C6 compilation alone exceeds the 16 GiB proof runner budget; rerun the guarded
-qualification on a larger host when changing that leaf or its shared dependencies.
+For the signed DKG → ciphertext → plaintext rehearsal, first build the contracts (`pnpm evm:build`)
+and put Anvil on PATH. Run the insecure control before the secure case:
+
+```sh
+work=$(mktemp -d)
+bash scripts/circuits/qualify-sync-decryption.sh sync-insecure-64 "$work/insecure" --signed
+E3_SYNC_OTHER_PROFILE_EXPORT="$work/insecure" \
+  bash scripts/circuits/qualify-sync-decryption.sh sync-secure-8192 "$work/secure" --signed
+```
+
+Use new paths outside the source tree for the exports. The signed run uses the real registry, mined
+receipts and physically reopened keyshare/collector stores. The secure run needs the insecure proofs
+for the cross-profile rejection checks. `dkg-candidate` rebuilds the nine DKG roles from source,
+derives the complete setup tree and C5 pin, and verifies the exported publication before writing
+`dkg-candidate/manifest.json`. `decryption-candidate` checks the decryption proof from that same
+request. Neither operation changes the installable archive or enables admission.
+
+Both profiles are disabled. The two-argument runner proves decryption from native openings. PR CI
+type-checks the secure packages, exercises the secure C6 constraints on a small fixture, and
+compares the rebuilt secure C7 recursive VK bytes and field pin with the recorded candidate. Secure
+C6 compilation alone exceeds the 16 GiB proof runner budget; rerun the guarded qualification on a
+larger host when changing that leaf or its shared dependencies.
 
 The local artifact cache selection is written to `circuits/bin/.active-preset.json`. Source checks
 compare `active.nr` and `utils.ts`; a different hydrated cache is only a note. Switching committee
