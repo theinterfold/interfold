@@ -4710,8 +4710,11 @@ dependencies = [
 name = "e3-wasm"
 version = "0.20.0"
 dependencies = [
+ "ark-bn254 0.5.0",
+ "ark-ff 0.5.0",
  "e3-bfv-client",
  "e3-fhe-params",
+ "e3-zk-witness",
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "serde",

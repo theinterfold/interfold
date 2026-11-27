@@ -432,9 +432,17 @@ await sdk.onInterfoldEvent(
 )
 ```
 
-The assembler tracks at most 128 E3s by default. Pass a positive limit to the constructor if the
-application needs a different memory bound. Evicted incomplete keys can be rebuilt by replaying
-their chunk events.
+The assembler bounds its memory with three limits. Each is a constructor parameter, in this order:
+
+| Limit             | Default                                             | Meaning                                                                                                                                                                                             |
+| ----------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tracked E3s       | `DEFAULT_MAX_TRACKED_COMMITTEE_KEYS` (128)          | The least recently used E3 is evicted first.                                                                                                                                                        |
+| Buffered bytes    | `DEFAULT_MAX_BUFFERED_COMMITTEE_KEY_BYTES` (64 MiB) | Chunk bytes held in incomplete keys. At least `MAX_COMMITTEE_PUBLIC_KEY_BYTES` (16 MiB). A full buffer evicts older E3s first, then drops the incoming chunk without marking the candidate invalid. |
+| Candidates per E3 | `DEFAULT_MAX_COMMITTEE_KEY_ASSEMBLIES_PER_E3` (19)  | One candidate per publisher. 19 is the largest committee with l-BFV support (`Small`, n = 19).                                                                                                      |
+
+`bufferedByteLength` reports the bytes currently held. `clear(e3Id)` releases an E3 and makes the
+assembler ignore its later chunks, so other publishers' chunks of the same key are not buffered
+again. Evicted incomplete keys can be rebuilt by replaying their chunk events.
 
 #### Encryption
 
@@ -492,34 +500,44 @@ interface SDKConfig {
 `thresholdBfvParamsPresetName` selects the BFV parameter set used for encryption. It must match the
 on-chain `paramSet` index registered in the Interfold contract:
 
-| Preset name               | On-chain `paramSet` index | Use case                                                                 |
-| ------------------------- | ------------------------- | ------------------------------------------------------------------------ |
-| `'INSECURE_THRESHOLD_64'` | `4`                       | Fast local or testnet work. This preset is not cryptographically secure. |
-| `'SECURE_THRESHOLD_8192'` | `3`                       | Production-equivalent work with degree 8192 and three ciphertext moduli. |
+| Preset name                 | On-chain `paramSet` index | Use case                                                                       |
+| --------------------------- | ------------------------- | ------------------------------------------------------------------------------ |
+| `'INSECURE_THRESHOLD_64'`   | `4`                       | Fast local or testnet trBFV work. This preset is not cryptographically secure. |
+| `'SECURE_THRESHOLD_8192'`   | `3`                       | Production-equivalent work with degree 8192 and three ciphertext moduli.       |
+| `'SECURE_THRESHOLD_16384'`  | `5`                       | l-BFV work with degree 16384 and six ciphertext moduli.                        |
+| `'INSECURE_THRESHOLD_LBFV'` | `6`                       | Fast local or testnet l-BFV work at degree 128. Not cryptographically secure.  |
 
-| Network           | Supported presets                                       |
-| ----------------- | ------------------------------------------------------- |
-| Local development | `'INSECURE_THRESHOLD_64'` and `'SECURE_THRESHOLD_8192'` |
-| Sepolia testnet   | `'INSECURE_THRESHOLD_64'` and `'SECURE_THRESHOLD_8192'` |
-| Ethereum mainnet  | `'SECURE_THRESHOLD_8192'` only                          |
+| Network           | Supported presets                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Local development | `'INSECURE_THRESHOLD_64'`, `'INSECURE_THRESHOLD_LBFV'`, `'SECURE_THRESHOLD_8192'`, and `'SECURE_THRESHOLD_16384'` |
+| Sepolia testnet   | `'INSECURE_THRESHOLD_64'`, `'INSECURE_THRESHOLD_LBFV'`, `'SECURE_THRESHOLD_8192'`, and `'SECURE_THRESHOLD_16384'` |
+| Ethereum mainnet  | `'SECURE_THRESHOLD_8192'` only                                                                                    |
 
-New requests select `profile: 'ss-insecure-64'` or `profile: 'ss-secure-8192'` together with
-`committeeSize`. The SDK derives the registry slot and protocol/DKG/committee-bound configuration
-ID; do not supply a separate parameter-set or protocol selector. `sync-insecure-64` remains
-disabled.
+New requests select `profile: 'ss-insecure-64'`, `'ss-secure-8192'`, `'ss-insecure-lbfv'`, or
+`'ss-secure-16384'` together with `committeeSize`. The two l-BFV profiles support the `Minimum`,
+`Micro`, and `Small` committees. The SDK derives the registry slot and protocol/DKG/committee-bound
+configuration ID; do not supply a separate parameter-set or protocol selector. `sync-insecure-64`
+remains disabled.
 
-Use the preset that the target E3 selects. This package includes proof artifacts only for
-`'INSECURE_THRESHOLD_64'`. For secure proof generation, use matching application artifacts such as
-the `@crisp-e3/sdk/secure-8192` entry point, or compile your own artifacts.
+Use the preset that the target E3 selects. This package includes proof artifacts for
+`'INSECURE_THRESHOLD_64'` (trBFV) and for the l-BFV presets `'INSECURE_THRESHOLD_LBFV'` and
+`'SECURE_THRESHOLD_16384'`. For secure-8192 proof generation, use matching application artifacts
+such as the `@crisp-e3/sdk/secure-8192` entry point, or compile your own artifacts.
 
 ### Proving: embedded circuits or your own
 
 `generateProof()`, `encryptNumberAndGenProof()`, and `encryptVectorAndGenProof()` run the
-user-data-encryption (UDE) circuits bundled in this package. Those artifacts are compiled with
-`--preset insecure-64 --committee minimum` (`scripts/compile-circuits.sh`), so they only match
+user-data-encryption (UDE) circuits bundled in this package (`scripts/compile-circuits.sh`). The
+trBFV circuit is compiled with `--preset insecure-64 --committee minimum`, so it only matches
 `'INSECURE_THRESHOLD_64'` and a minimum-size committee. With `'SECURE_THRESHOLD_8192'`,
-`encryptNumberAndGenInputs()` returns N=8192 circuit inputs that the bundled N=64 circuits cannot
-execute.
+`encryptNumberAndGenInputs()` returns N=8192 circuit inputs that the bundled N=64 circuit cannot
+execute. The l-BFV presets use the chunked proof bundle of their own preset.
+
+An l-BFV proof has five public inputs, in this order: `ct0_vk_chain`, `ct1_vk_chain`,
+`pk_commitment`, `ct_commitment`, `k1_commitment`. The two chains bind the verification key of every
+circuit in the proof tree. A verifier MUST compare both, as field elements, to the values that
+`getUserDataEncryptionVkChains(preset)` returns for the bundle it trusts. Without the comparison, a
+proof from any circuit with a matching public-input shape at any level of the tree is accepted.
 
 For on-chain Honk verification, compile your own UDE, app, and fold circuits for the preset and
 committee your deployment uses, emit the Solidity verifier from them, and feed them the witness from

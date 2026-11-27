@@ -10,7 +10,13 @@ export { InterfoldSDK } from './interfold-sdk'
 // Core classes
 export { EventListener } from './events/event-listener'
 export { ContractClient } from './contracts/contract-client'
-export { CommitteePublicKeyAssembler, MAX_COMMITTEE_PUBLIC_KEY_BYTES, MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES } from './committee-public-key'
+export {
+  CommitteePublicKeyAssembler,
+  DEFAULT_MAX_BUFFERED_COMMITTEE_KEY_BYTES,
+  DEFAULT_MAX_COMMITTEE_KEY_ASSEMBLIES_PER_E3,
+  MAX_COMMITTEE_PUBLIC_KEY_BYTES,
+  MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES,
+} from './committee-public-key'
 export type { ContractClientConfig } from './contracts/contract-client'
 export type { EventListenerOptions } from './events/event-listener'
 export type { AssembledCommitteePublicKey } from './committee-public-key'
@@ -28,6 +34,7 @@ export {
   encryptVectorAndGenInputs,
   encryptVectorAndGenProof,
   generateProof,
+  getUserDataEncryptionVkChains,
 } from './crypto'
 
 // Types and interfaces (re-exported from sub-modules via types.ts)
@@ -66,6 +73,7 @@ export type {
   EncryptedValueAndPublicInputs,
   ThresholdBfvParamsPresetName,
 } from './types'
+export type { UserDataEncryptionVkChains } from './crypto'
 
 // Enums and constants
 export {

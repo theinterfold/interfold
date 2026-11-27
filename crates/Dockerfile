@@ -4,6 +4,7 @@ WORKDIR /build
 COPY crates/wasm/package.json ./crates/wasm/package.json
 COPY packages/interfold-react ./packages/interfold-react
 COPY packages/interfold-sdk ./packages/interfold-sdk
+COPY packages/user-data-encryption-prover ./packages/user-data-encryption-prover
 COPY packages/interfold-config ./packages/interfold-config
 COPY packages/interfold-contracts ./packages/interfold-contracts
 COPY package.json .

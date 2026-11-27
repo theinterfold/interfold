@@ -132,10 +132,15 @@ describe('SDK circuit selection', () => {
     await expect(assertSdkMinimumCircuits()).rejects.toMatchObject({ code: 'SDK_CIRCUIT_COMMITTEE_MISMATCH' })
   })
 
-  it('rechecks the selection after another build changes the stamp', async () => {
+  it('accepts a supported secure active preset after a separate circuit build', async () => {
     readFileSync.mockReturnValueOnce(JSON.stringify({ preset: 'insecure-64', committee: 'minimum' }))
     readFileSync.mockReturnValueOnce(JSON.stringify({ preset: 'secure-8192', committee: 'minimum' }))
     await assertSdkMinimumCircuits()
+    await expect(assertSdkMinimumCircuits()).resolves.toBeUndefined()
+  })
+
+  it('rejects an unsupported active preset', async () => {
+    readFileSync.mockReturnValue(JSON.stringify({ preset: 'unknown', committee: 'minimum' }))
     await expect(assertSdkMinimumCircuits()).rejects.toMatchObject({ code: 'SDK_CIRCUIT_PRESET_MISMATCH' })
   })
 })

@@ -3,7 +3,11 @@
   "include": ["src/**/*", "tests/**/*"],
   "exclude": ["node_modules", "dist"],
   "compilerOptions": {
+    "baseUrl": ".",
     "incremental": true,
+    "paths": {
+      "@interfold/sdk/internal/presets/*": ["src/crypto/presets/*"]
+    },
     "tsBuildInfoFile": "./dist/.tsbuildinfo"
   }
 }

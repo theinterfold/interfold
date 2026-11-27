@@ -4,11 +4,14 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use ark_bn254::Fr;
+use ark_ff::{BigInteger, PrimeField};
 use e3_bfv_client::client::{
     bfv_encrypt, bfv_verifiable_encrypt, compute_ct_commitment as _compute_ct_commitment,
     compute_pk_commitment as _compute_pk_commitment, generate_public_key as _generate_public_key,
 };
 use e3_fhe_params::{BfvParamSet, BfvPreset};
+use e3_zk_witness::compute_vk_hash as _compute_vk_hash;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -89,6 +92,31 @@ pub fn compute_ct_commitment(
     let commitment = _compute_ct_commitment(ciphertext, degree, plaintext_modulus, moduli)
         .map_err(|e| JsValue::from_str(&format!("{}", e)))?;
     Ok(commitment.to_vec())
+}
+
+/// Hashes verification-key hashes with the `VK_HASH` domain separator, as Noir's
+/// `compute_vk_hash` does.
+///
+/// # Arguments
+///
+/// * `key_hashes` - The key hashes in order, each as 32 big-endian bytes, concatenated
+///
+/// # Returns
+///
+/// Returns the 32-byte big-endian hash, or an error if `key_hashes` is empty or not a whole number
+/// of 32-byte values.
+#[wasm_bindgen]
+pub fn compute_vk_hash(key_hashes: Vec<u8>) -> Result<Vec<u8>, JsValue> {
+    if key_hashes.is_empty() || key_hashes.len() % 32 != 0 {
+        return Err(JsValue::from_str(
+            "Key hashes must be a non-empty whole number of 32-byte values",
+        ));
+    }
+    let fields = key_hashes
+        .chunks(32)
+        .map(Fr::from_be_bytes_mod_order)
+        .collect();
+    Ok(_compute_vk_hash(fields).into_bigint().to_bytes_be())
 }
 
 #[wasm_bindgen]
@@ -197,7 +225,7 @@ pub fn bfv_verifiable_encrypt_vector(
 /// Retrieves a BFV parameter set by name.
 ///
 /// # Parameters
-/// * `name` - Parameter set identifier (e.g., "SECURE_THRESHOLD_8192")
+/// * `name` - Parameter set identifier (e.g., "SECURE_THRESHOLD_8192" or "SECURE_THRESHOLD_16384")
 ///
 /// # Returns
 /// A JavaScript object with the following structure:
@@ -228,7 +256,7 @@ pub fn get_bfv_params(name: &str) -> Result<JsValue, JsValue> {
 ///
 /// # Returns
 /// Array of parameter set names that can be passed to `get_bfv_params()`.
-/// Includes both production-ready sets (e.g., "SECURE_THRESHOLD_8192") and
+/// Includes production-ready sets (e.g., "SECURE_THRESHOLD_8192" and "SECURE_THRESHOLD_16384") and
 /// insecure sets for testing (prefixed with "INSECURE_").
 pub fn get_bfv_params_list() -> Vec<String> {
     BfvPreset::list()

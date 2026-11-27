@@ -8,12 +8,18 @@ import { defineConfig } from 'tsup'
 import { baseConfig } from '@interfold/config/tsup'
 
 const entry = ['src/index.ts', 'src/crypto/index.ts', 'src/contracts/index.ts', 'src/events/index.ts']
+// The proof bundles hold the compiled circuits. `index.cjs` reaches them through `import()` of the
+// ESM-only `./internal/presets/*` exports, so only the ESM build emits them.
+const presetBundles = ['src/crypto/presets/insecure-lbfv.ts', 'src/crypto/presets/secure-16384.ts']
+const presetEntries = ['@interfold/sdk/internal/presets/insecure-lbfv', '@interfold/sdk/internal/presets/secure-16384']
 
 export default defineConfig([
   {
     ...baseConfig,
-    entry,
+    entry: [...entry, ...presetBundles],
     include: ['./src/**/*.ts'],
+    external: presetEntries,
+    noExternal: ['@interfold/user-data-encryption-prover'],
     format: ['esm'],
     outExtension: () => ({
       js: '.js',
@@ -28,6 +34,8 @@ export default defineConfig([
     ...baseConfig,
     entry,
     include: ['./src/**/*.ts'],
+    external: presetEntries,
+    noExternal: ['@interfold/user-data-encryption-prover'],
     format: ['cjs'],
     // Avoid running DTS build twice for the same entries.
     dts: false,

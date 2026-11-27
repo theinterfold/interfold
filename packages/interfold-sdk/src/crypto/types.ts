@@ -14,11 +14,21 @@ export interface BfvParams {
   error1Variance: string | undefined
 }
 
-export type ThresholdBfvParamsPresetName = 'INSECURE_THRESHOLD_64' | 'SECURE_THRESHOLD_8192'
+/**
+ * On-chain parameter sets: `INSECURE_THRESHOLD_64` (4, trBFV), `SECURE_THRESHOLD_8192` (3, trBFV),
+ * `SECURE_THRESHOLD_16384` (5, l-BFV) and `INSECURE_THRESHOLD_LBFV` (6, l-BFV, degree 128).
+ */
+export type ThresholdBfvParamsPresetName =
+  | 'INSECURE_THRESHOLD_64'
+  | 'INSECURE_THRESHOLD_LBFV'
+  | 'SECURE_THRESHOLD_8192'
+  | 'SECURE_THRESHOLD_16384'
 
 export const ThresholdBfvParamsPresetNames = [
   'INSECURE_THRESHOLD_64',
+  'INSECURE_THRESHOLD_LBFV',
   'SECURE_THRESHOLD_8192',
+  'SECURE_THRESHOLD_16384',
 ] as const satisfies ReadonlyArray<ThresholdBfvParamsPresetName>
 
 export interface VerifiableEncryptionResult {

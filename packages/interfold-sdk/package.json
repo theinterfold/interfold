@@ -23,6 +23,14 @@
       "types": "./dist/events/index.d.ts",
       "import": "./dist/events/index.js",
       "require": "./dist/events/index.cjs"
+    },
+    "./internal/presets/insecure-lbfv": {
+      "types": "./dist/crypto/presets/insecure-lbfv.d.ts",
+      "import": "./dist/crypto/presets/insecure-lbfv.js"
+    },
+    "./internal/presets/secure-16384": {
+      "types": "./dist/crypto/presets/secure-16384.d.ts",
+      "import": "./dist/crypto/presets/secure-16384.js"
     }
   },
   "main": "./dist/index.cjs",
@@ -53,6 +61,7 @@
   },
   "devDependencies": {
     "@interfold/config": "workspace:*",
+    "@interfold/user-data-encryption-prover": "workspace:*",
     "concurrently": "^9.1.2",
     "tsup": "^8.5.0",
     "typescript": "5.8.3",
