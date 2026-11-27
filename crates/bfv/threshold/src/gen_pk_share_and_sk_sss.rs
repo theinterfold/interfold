@@ -8,7 +8,6 @@ use crate::synchronized::{PrfKey, SealedPrfKeys};
 /// This module defines event payloads that will generate the public key share as well as the sk shamir secret shares to be distributed to other members of the committee.
 /// This has been separated from the esi setup in order to be able to take advantage of parallelism
 use crate::{
-    helpers::calculate_error_size,
     shares::{Encrypted, SharedSecret},
     TrBFVConfig,
 };
@@ -17,11 +16,12 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_fhe_params::BfvProfile;
 use e3_fhe_params::LambdaConfig;
+use e3_fhe_params::{calculate_smudging_bound_with_model, fresh_noise_model, BfvPreset};
 use e3_utils::utility_types::ArcBytes;
 use fhe::{
     bfv::SecretKey,
     mbfv::{CommonRandomPoly, PublicKeyShare},
-    trbfv::ShareManager,
+    trbfv::{FreshNoiseModel, ShareManager},
 };
 use fhe_math::rq::sample_uniform_coefficients_bigint;
 use fhe_traits::Serialize as FheSerialize;
@@ -42,6 +42,35 @@ pub struct GenPkShareAndSkSssRequest {
     /// Number of ciphertexts (z) for smudging noise generation.
     pub num_ciphertexts: usize,
     pub synchronized: Option<SynchronizedDkgGeneration>,
+}
+
+/// [`GenPkShareAndSkSssRequest`] of an l-BFV E3 ([`crate::TrBFVRequest::GenLbfvPkShareAndSkSss`]).
+///
+/// The l-BFV smudging bound needs the multiplicative depth and the preset's fresh-noise model.
+/// The trBFV request carries neither and keeps its persisted layout: it is the summation-only
+/// bound with the BFV model. The response is [`GenPkShareAndSkSssResponse`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GenLbfvPkShareAndSkSssRequest {
+    pub request: GenPkShareAndSkSssRequest,
+    /// Multiplicative depth for l-BFV smudging noise computation.
+    pub mult_depth: u32,
+    /// Threshold preset the E3 runs on; selects the smudging bound's fresh-noise model.
+    pub preset: BfvPreset,
+}
+
+/// How the smudging bound is sized.
+#[derive(Clone, Copy)]
+struct SmudgingBound {
+    model: FreshNoiseModel,
+    mult_depth: u32,
+}
+
+impl SmudgingBound {
+    /// The bound that every trBFV E3 uses: summation only, with the BFV fresh-noise model.
+    const TRBFV: Self = Self {
+        model: FreshNoiseModel::BfvPublicKey,
+        mult_depth: 0,
+    };
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -131,6 +160,28 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
     cipher: &Cipher,
     req: GenPkShareAndSkSssRequest,
 ) -> Result<GenPkShareAndSkSssResponse> {
+    generate(rng, cipher, req, SmudgingBound::TRBFV)
+}
+
+/// [`gen_pk_share_and_sk_sss`] with the l-BFV smudging bound.
+pub fn gen_lbfv_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
+    rng: &mut R,
+    cipher: &Cipher,
+    req: GenLbfvPkShareAndSkSssRequest,
+) -> Result<GenPkShareAndSkSssResponse> {
+    let bound = SmudgingBound {
+        model: fresh_noise_model(req.preset),
+        mult_depth: req.mult_depth,
+    };
+    generate(rng, cipher, req.request, bound)
+}
+
+fn generate<R: RngCore + CryptoRng>(
+    rng: &mut R,
+    cipher: &Cipher,
+    req: GenPkShareAndSkSssRequest,
+    smudging: SmudgingBound,
+) -> Result<GenPkShareAndSkSssResponse> {
     info!("gen_pk_share_and_sk_sss");
     let req: InnerRequest = req.try_into()?;
     if let Some(config) = req.synchronized.as_ref() {
@@ -154,10 +205,12 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
     let share_manager_for_esm =
         ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
     let lambda = req.lambda.into_lambda()?;
-    let bound = calculate_error_size(
+    let bound = calculate_smudging_bound_with_model(
+        smudging.model,
         params.clone(),
         num_ciphernodes as usize,
         req.num_ciphertexts,
+        smudging.mult_depth,
         lambda,
     )?;
     // Retain the same signed-to-RNS sampling path for the encrypted C1 witness.

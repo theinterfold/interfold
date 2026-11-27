@@ -8,14 +8,16 @@ impl ShareVerifier {
     /// Run ECDSA validation across all parties and prepare the cached proof
     /// hashes/signals/data plus the consistency-check request payload for the
     /// parties that passed. Pure: no event publishing.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn validate_and_prepare<P: VerifiableParty>(
         party_proofs: &[P],
-        e3_id_str: &str,
+        e3_id: &E3id,
         kind: &VerificationKind,
         label: &str,
         committee: Option<&[Address]>,
         params_profile: e3_fhe_params::BfvProfile,
         committee_size: CiphernodesCommitteeSize,
+        lbfv_context: Option<&e3_events::LbfvVerificationContext>,
     ) -> EcdsaValidationOutcome<P> {
         let mut ecdsa_dishonest = HashSet::new();
         let mut failures = Vec::new();
@@ -95,6 +97,21 @@ impl ShareVerifier {
                 ecdsa_dishonest.insert(party.party_id());
                 continue;
             }
+            if !Self::has_valid_lbfv_statements(
+                kind,
+                &proofs,
+                party.party_id(),
+                committee_size,
+                lbfv_context,
+            ) {
+                info!(
+                    "{} party {} supplied inconsistent l-BFV public statements",
+                    label,
+                    party.party_id()
+                );
+                ecdsa_dishonest.insert(party.party_id());
+                continue;
+            }
 
             let expected_signer = usize::try_from(party.party_id())
                 .ok()
@@ -103,9 +120,10 @@ impl ShareVerifier {
             let result = Self::ecdsa_validate_signed_proofs(
                 party.party_id(),
                 &proofs,
-                e3_id_str,
+                &e3_id.to_string(),
                 label,
                 expected_signer,
+                params_profile.threshold_preset(),
             );
             if result.passed {
                 ecdsa_passed_parties.push(party.clone());
@@ -132,37 +150,52 @@ impl ShareVerifier {
         }
 
         // Compute proof hashes and public signals for ECDSA-passed parties.
-        let mut party_proof_hashes: HashMap<u64, Vec<(ProofType, [u8; 32])>> = HashMap::new();
-        let mut party_public_signals: HashMap<u64, Vec<(ProofType, ArcBytes)>> = HashMap::new();
-        let mut party_raw_proof_data: HashMap<u64, Vec<(ProofType, ArcBytes)>> = HashMap::new();
+        let lbfv_rows = e3_fhe_params::lbfv_row_count(params_profile.threshold_preset());
+        let mut party_proof_hashes: HashMap<u64, Vec<(ProofIdentity, [u8; 32])>> = HashMap::new();
+        let mut party_public_signals: HashMap<u64, Vec<(ProofIdentity, ArcBytes)>> = HashMap::new();
+        let mut party_raw_proof_data: HashMap<u64, Vec<(ProofIdentity, ArcBytes)>> = HashMap::new();
         for party in &ecdsa_passed_parties {
-            let hashes: Vec<(ProofType, [u8; 32])> = party
-                .signed_proofs()
-                .iter()
-                .map(|signed| (signed.payload.proof_type, Self::proof_data_hash(signed)))
-                .collect();
-            let signals: Vec<(ProofType, ArcBytes)> = party
-                .signed_proofs()
+            let proofs = party.signed_proofs();
+            let identities: Vec<ProofIdentity> = proofs
                 .iter()
                 .map(|signed| {
-                    (
-                        signed.payload.proof_type,
-                        signed.payload.proof.public_signals.clone(),
-                    )
+                    signed
+                        .payload
+                        .proof_type
+                        .identity(&signed.payload.proof, lbfv_rows)
+                        .expect("canonical proof shape validated the proof identity")
                 })
                 .collect();
-            let datas: Vec<(ProofType, ArcBytes)> = party
-                .signed_proofs()
-                .iter()
-                .map(|signed| (signed.payload.proof_type, signed.payload.proof.data.clone()))
-                .collect();
-            party_proof_hashes.insert(party.party_id(), hashes);
-            party_public_signals.insert(party.party_id(), signals);
-            party_raw_proof_data.insert(party.party_id(), datas);
+            party_proof_hashes.insert(
+                party.party_id(),
+                identities
+                    .iter()
+                    .zip(&proofs)
+                    .map(|(identity, signed)| (*identity, Self::proof_data_hash(signed)))
+                    .collect(),
+            );
+            party_public_signals.insert(
+                party.party_id(),
+                identities
+                    .iter()
+                    .zip(&proofs)
+                    .map(|(identity, signed)| {
+                        (*identity, signed.payload.proof.public_signals.clone())
+                    })
+                    .collect(),
+            );
+            party_raw_proof_data.insert(
+                party.party_id(),
+                identities
+                    .iter()
+                    .zip(&proofs)
+                    .map(|(identity, signed)| (*identity, signed.payload.proof.data.clone()))
+                    .collect(),
+            );
         }
 
         // Assemble consistency-check request payload.
-        let consistency_party_data: Vec<PartyProofData> = ecdsa_passed_parties
+        let consistency_party_data: Vec<LbfvPartyProofData> = ecdsa_passed_parties
             .iter()
             .map(|party| {
                 let signals = party_public_signals
@@ -183,7 +216,7 @@ impl ShareVerifier {
                     .zip(raw_datas)
                     .map(|(((pt, ps), (_, dh)), (_, pd))| (pt, ps, dh, pd))
                     .collect();
-                PartyProofData {
+                LbfvPartyProofData {
                     party_id: party.party_id(),
                     address: party_addresses
                         .get(&party.party_id())

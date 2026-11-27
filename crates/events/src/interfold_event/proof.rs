@@ -56,6 +56,40 @@ impl Proof {
             .extract_field(&self.public_signals, field_name)
             .map(ArcBytes::from_bytes)
     }
+
+    /// Read a named public input as a `u32`.
+    ///
+    /// A `u32` field has zero in bytes `0..28` and the big-endian value in bytes `28..32`. Returns
+    /// `None` when the input is missing or does not fit.
+    pub fn input_u32(&self, field_name: &str) -> Option<u32> {
+        let field = self
+            .circuit
+            .input_layout()
+            .extract_field(&self.public_signals, field_name)?;
+        let (high, low) = field.split_at(28);
+        high.iter()
+            .all(|byte| *byte == 0)
+            .then(|| u32::from_be_bytes(low.try_into().expect("four-byte u32 suffix")))
+    }
+
+    /// Read a named public input as a `u128`: zero in bytes `0..16`, the big-endian value in bytes
+    /// `16..32`. Returns `None` when the input is missing or does not fit.
+    pub fn input_u128(&self, field_name: &str) -> Option<u128> {
+        let field = self
+            .circuit
+            .input_layout()
+            .extract_field(&self.public_signals, field_name)?;
+        let (high, low) = field.split_at(16);
+        high.iter()
+            .all(|byte| *byte == 0)
+            .then(|| u128::from_be_bytes(low.try_into().expect("sixteen-byte u128 suffix")))
+    }
+
+    /// Whether the public inputs `session_id_hi` and `session_id_lo` equal the given session limbs.
+    pub fn has_session(&self, session_hi: u128, session_lo: u128) -> bool {
+        self.input_u128("session_id_hi") == Some(session_hi)
+            && self.input_u128("session_id_lo") == Some(session_lo)
+    }
 }
 
 #[cfg(test)]
@@ -173,8 +207,18 @@ mod tests {
 
     #[test]
     fn input_layout_share_encryption() {
-        let layout = CircuitName::ShareEncryption.input_layout();
-        assert_eq!(layout.field_count(), Some(2));
+        // C3 has 2 public inputs: expected_pk_commitment, expected_message_commitment.
+        assert_eq!(
+            CircuitName::ShareEncryption.input_layout().field_count(),
+            Some(2)
+        );
+        // The chunked C3 also exposes party_idx and mod_idx.
+        assert_eq!(
+            CircuitName::ShareEncryptionChunked
+                .input_layout()
+                .field_count(),
+            Some(4)
+        );
     }
 
     #[test]
@@ -184,6 +228,84 @@ mod tests {
             CircuitName::PkGeneration.input_layout().field_count(),
             Some(0)
         );
+    }
+
+    #[test]
+    fn rlk_generation_layout_tracks_row_and_commitments() {
+        let mut signals = vec![0u8; 256];
+        signals[127] = 3;
+        signals[128..160].copy_from_slice(&[0x11; 32]);
+        signals[160..192].copy_from_slice(&[0x22; 32]);
+        signals[192..224].copy_from_slice(&[0x33; 32]);
+        signals[224..256].copy_from_slice(&[0x44; 32]);
+        let proof = make_proof(CircuitName::RlkGeneration, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 3);
+        assert_eq!(
+            &*proof.extract_output("sk_commitment").unwrap(),
+            &[0x11; 32]
+        );
+        assert_eq!(&*proof.extract_output("r_commitment").unwrap(), &[0x22; 32]);
+        assert_eq!(
+            &*proof.extract_output("d0_commitment").unwrap(),
+            &[0x33; 32]
+        );
+        assert_eq!(
+            &*proof.extract_output("d2_commitment").unwrap(),
+            &[0x44; 32]
+        );
+        assert!(proof.extract_output("limb_vk_hash").is_none());
+    }
+
+    #[test]
+    fn lbfv_pk_generation_layout_tracks_row_and_commitments() {
+        let mut signals = vec![0u8; 192];
+        signals[127] = 2;
+        signals[128..160].copy_from_slice(&[0x11; 32]);
+        signals[160..192].copy_from_slice(&[0x22; 32]);
+        let proof = make_proof(CircuitName::LbfvPkGeneration, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 2);
+        assert_eq!(
+            &*proof.extract_output("sk_commitment").unwrap(),
+            &[0x11; 32]
+        );
+        assert_eq!(
+            &*proof.extract_output("pk_commitment").unwrap(),
+            &[0x22; 32]
+        );
+        assert!(proof.extract_output("limb_vk_hash").is_none());
+    }
+
+    #[test]
+    fn rlk_aggregation_layout_tracks_row_component_and_commitment() {
+        let mut signals = vec![0u8; 320];
+        signals[191] = 4;
+        signals[223] = 1;
+        signals[288..320].copy_from_slice(&[0x55; 32]);
+        let proof = make_proof(CircuitName::RlkAggregation, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 4);
+        assert_eq!(proof.extract_input("component").unwrap()[31], 1);
+        assert_eq!(
+            &*proof.extract_output("agg_commitment").unwrap(),
+            &[0x55; 32]
+        );
+    }
+
+    #[test]
+    fn lbfv_pk_aggregation_layout_tracks_row_and_tail_commitment() {
+        let mut signals = vec![0u8; 288];
+        signals[191] = 4;
+        signals[256..288].copy_from_slice(&[0x77; 32]);
+        let proof = make_proof(CircuitName::LbfvPkAggregation, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 4);
+        assert_eq!(
+            &*proof.extract_output("pk_agg_commitment").unwrap(),
+            &[0x77; 32]
+        );
+        assert_eq!(proof.circuit.input_layout().field_count(), Some(6));
     }
 
     #[test]
@@ -207,6 +329,56 @@ mod tests {
             &*proof.extract_output("ct_commitment").unwrap(),
             &[0xCC; 32]
         );
+        assert!(proof.extract_input("party_idx").is_none());
+    }
+
+    #[test]
+    fn extract_input_from_share_encryption_chunked() {
+        // Chunked C3: four public inputs at the head and ct_commitment at the tail.
+        let mut signals = vec![0u8; 160];
+        signals[0..32].copy_from_slice(&[0xAA; 32]); // expected_pk_commitment
+        signals[32..64].copy_from_slice(&[0xBB; 32]); // expected_message_commitment
+        signals[95] = 7; // party_idx
+        signals[127] = 2; // mod_idx
+        signals[128..160].copy_from_slice(&[0xCC; 32]); // ct_commitment
+
+        let proof = make_proof(CircuitName::ShareEncryptionChunked, &signals);
+        assert_eq!(
+            &*proof.extract_input("expected_pk_commitment").unwrap(),
+            &[0xAA; 32]
+        );
+        assert_eq!(
+            &*proof.extract_input("expected_message_commitment").unwrap(),
+            &[0xBB; 32]
+        );
+        assert_eq!(proof.input_u32("party_idx"), Some(7));
+        assert_eq!(proof.input_u32("mod_idx"), Some(2));
+        assert_eq!(
+            &*proof.extract_output("ct_commitment").unwrap(),
+            &[0xCC; 32]
+        );
+    }
+
+    #[test]
+    fn public_integer_inputs_reject_values_that_do_not_fit() {
+        // RLK generation: four public inputs, then four outputs.
+        let mut signals = vec![0u8; 256];
+        signals[31] = 9; // session_id_hi
+        signals[63] = 4; // session_id_lo
+        signals[95] = 1; // party_id
+        let proof = make_proof(CircuitName::RlkGeneration, &signals);
+        assert_eq!(proof.input_u32("party_id"), Some(1));
+        assert_eq!(proof.input_u128("session_id_hi"), Some(9));
+        assert!(proof.has_session(9, 4));
+        assert!(!proof.has_session(4, 9));
+
+        signals[40] = 1; // session_id_lo no longer fits a u128
+        signals[64] = 1; // party_id no longer fits a u32
+        let proof = make_proof(CircuitName::RlkGeneration, &signals);
+        assert_eq!(proof.input_u128("session_id_lo"), None);
+        assert!(!proof.has_session(9, 4));
+        assert_eq!(proof.input_u32("party_id"), None);
+        assert_eq!(proof.input_u32("nonexistent"), None);
     }
 
     #[test]

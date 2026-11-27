@@ -19,12 +19,12 @@
 //! 4. Receives [`ComputeResponse`] from multithread with pure ZK results.
 //! 5. Combines ECDSA + ZK results.
 //! 6. Emits [`SignedProofFailed`] for any failing proofs.
-//! 7. Publishes [`ShareVerificationComplete`] with dishonest party set.
+//! 7. Publishes [`ShareVerificationComplete`](e3_events::ShareVerificationComplete) with dishonest party set.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use actix::{Actor, Addr, Context, Handler};
-use alloy::primitives::{keccak256, Address, Bytes};
+use alloy::primitives::{keccak256, Address, Bytes, B256};
 use alloy::sol_types::SolValue;
 use anyhow::anyhow;
 use e3_committee::Committee;
@@ -32,11 +32,11 @@ use e3_events::{
     BusHandle, CommitmentConsistencyCheckComplete, CommitmentConsistencyCheckRequested,
     ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId, E3id,
     EType, ErrorDispatcher, EventContext, EventPublisher, EventSubscriber, EventType,
-    InterfoldEvent, InterfoldEventData, PartyVerificationResult, ProofType,
-    ProofVerificationFailed, ProofVerificationPassed, Sequenced, ShareVerificationComplete,
-    ShareVerificationDispatched, SignedProofFailed, SignedProofPayload, TypedEvent,
-    VerificationKind, VerifyShareDecryptionProofsRequest, VerifyShareProofsRequest, ZkRequest,
-    ZkResponse,
+    InterfoldEvent, InterfoldEventData, LbfvCommitmentConsistencyCheckRequested,
+    LbfvShareVerificationComplete, LbfvShareVerificationDispatched, PartyVerificationResult,
+    ProofVerificationFailed, ProofVerificationPassed, Sequenced, SignedProofFailed,
+    SignedProofPayload, TypedEvent, VerificationKind, VerifyShareDecryptionProofsRequest,
+    VerifyShareProofsRequest, ZkRequest, ZkResponse,
 };
 use e3_utils::utility_types::ArcBytes;
 use e3_utils::NotifySync;
@@ -55,7 +55,7 @@ use crate::workflow::share_verification::{
 /// 3. ZK proof verification (heavyweight, delegated to multithread)
 ///
 /// Emits [`SignedProofFailed`] for fault attribution and
-/// [`ShareVerificationComplete`] with the final dishonest party set.
+/// [`ShareVerificationComplete`](e3_events::ShareVerificationComplete) with the final dishonest party set.
 pub struct ShareVerificationActor {
     bus: BusHandle,
     /// Canonical finalized committees in party-id order. Every signed C1-C4/C6 proof must recover
@@ -85,6 +85,10 @@ impl ShareVerificationActor {
         let addr = Self::new(bus, persisted_committees).start();
         bus.subscribe(EventType::CommitteeFinalized, addr.clone().into());
         bus.subscribe(EventType::ShareVerificationDispatched, addr.clone().into());
+        bus.subscribe(
+            EventType::LbfvShareVerificationDispatched,
+            addr.clone().into(),
+        );
         bus.subscribe(EventType::ComputeResponse, addr.clone().into());
         bus.subscribe(EventType::ComputeRequestError, addr.clone().into());
         bus.subscribe(

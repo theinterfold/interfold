@@ -17,21 +17,27 @@ pub mod c2_to_c4;
 pub mod c4a_to_c6;
 pub mod c4b_to_c6;
 pub mod c6_to_c7;
+pub mod lbfv_generation_sk;
+pub mod lbfv_share_transport;
 mod synchronized;
 
 use e3_committee::CiphernodesCommitteeSize;
 use e3_fhe_params::{BfvDecryptionProtocol, BfvProfile};
 pub use e3_slashing::{CommitmentLink, FieldValue, LinkScope};
 
-/// The share-commitment section of a final C2 proof's public signals: everything between the
-/// leading `expected_secret_commitment` and the trailing chunk key-tree hash the final C2 circuit
-/// exposes. Empty when the signals cannot hold a share.
-pub(crate) fn c2_share_commitments(public_signals: &[u8]) -> &[u8] {
+/// The share-commitment section of a C2 proof's public signals. The trBFV final C2 proof leads
+/// with `expected_secret_commitment` and ends with the hash of its chunk keys; the l-BFV chunk
+/// finalizer (`chunked`) leads with its chunk VK hash and secret root and ends with its batch VK
+/// hash. Empty when the signals cannot hold a share.
+pub(crate) fn c2_share_commitments(public_signals: &[u8], chunked: bool) -> &[u8] {
     let field = e3_zk_config::FIELD_BYTE_LEN;
-    if public_signals.len() < 3 * field || !public_signals.len().is_multiple_of(field) {
+    let (front, back) = if chunked { (2, 1) } else { (1, 1) };
+    if public_signals.len() < (front + back + 1) * field
+        || !public_signals.len().is_multiple_of(field)
+    {
         return &[];
     }
-    &public_signals[field..public_signals.len() - field]
+    &public_signals[front * field..public_signals.len() - back * field]
 }
 
 /// Returns the default set of commitment links to register.
@@ -45,6 +51,9 @@ pub(crate) fn c2_share_commitments(public_signals: &[u8]) -> &[u8] {
 /// that C4 consumes as `expected_commitments`. Since C2→C3 already ensures
 /// C3 encrypts the correct share, C2→C4 closes the remaining gap (preventing
 /// a party from using different commitments in C4 than they computed in C2).
+///
+/// The C1 links apply on the trBFV path only. The l-BFV path proves no C1: its generation rows
+/// bind `sk` instead ([`lbfv_generation_sk`]), and its C2b chunk leaves bound `e_sm`.
 pub fn default_links(
     profile: BfvProfile,
     committee: CiphernodesCommitteeSize,
@@ -53,19 +62,75 @@ pub fn default_links(
     if profile.protocol() == BfvDecryptionProtocol::Synchronized {
         return synchronized::links(profile, committee);
     }
-    let l = profile.threshold_preset().metadata().num_moduli;
-    Ok(vec![
+    let preset = profile.threshold_preset();
+    let l = preset.metadata().num_moduli;
+    let lbfv = e3_fhe_params::is_lbfv_path(preset);
+    let mut links: Vec<Box<dyn CommitmentLink>> = vec![
         Box::new(c0_to_c3::C3aToC0PkCommitmentLink),
         Box::new(c0_to_c3::C3bToC0PkCommitmentLink),
-        Box::new(c1_to_c2::C1ToC2aSkCommitmentLink),
-        Box::new(c1_to_c2::C1ToC2bESmCommitmentLink),
-        Box::new(c1_to_c5::C1ToC5PkCommitmentLink),
-        Box::new(c2_to_c3::C3aToC2aShareEncryptionLink),
-        Box::new(c2_to_c3::C3bToC2bShareEncryptionLink),
-        Box::new(c2_to_c4::C2aToC4aShareCommitmentLink { l }),
-        Box::new(c2_to_c4::C2bToC4bShareCommitmentLink { l }),
+    ];
+    if lbfv {
+        links.push(Box::new(
+            lbfv_generation_sk::LbfvPkToRlkGenerationSkCommitmentLink,
+        ));
+        links.push(Box::new(
+            lbfv_generation_sk::C2aToLbfvPkGenerationSkCommitmentLink,
+        ));
+        links.push(Box::new(
+            lbfv_generation_sk::C2aToRlkGenerationSkCommitmentLink,
+        ));
+    } else {
+        links.push(Box::new(c1_to_c2::C1ToC2aSkCommitmentLink));
+        links.push(Box::new(c1_to_c2::C1ToC2bESmCommitmentLink));
+        links.push(Box::new(c1_to_c5::C1ToC5PkCommitmentLink));
+    }
+    let shared: [Box<dyn CommitmentLink>; 7] = [
+        Box::new(c2_to_c3::C3aToC2aShareEncryptionLink { chunked: lbfv }),
+        Box::new(c2_to_c3::C3bToC2bShareEncryptionLink { chunked: lbfv }),
+        Box::new(c2_to_c4::C2aToC4aShareCommitmentLink { l, chunked: lbfv }),
+        Box::new(c2_to_c4::C2bToC4bShareCommitmentLink { l, chunked: lbfv }),
         Box::new(c6_to_c7::C6ToC7DCommitmentLink),
-        Box::new(c4a_to_c6::C4aToC6SkCommitmentLink),
-        Box::new(c4b_to_c6::C4bToC6ESmCommitmentLink),
-    ])
+        Box::new(c4a_to_c6::C4aToC6SkCommitmentLink { chunked: lbfv }),
+        Box::new(c4b_to_c6::C4bToC6ESmCommitmentLink { chunked: lbfv }),
+    ];
+    links.extend(shared);
+    Ok(links)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use e3_events::ProofType;
+
+    fn link_pairs(profile: BfvProfile) -> Vec<(ProofType, ProofType)> {
+        default_links(profile, CiphernodesCommitteeSize::Minimum)
+            .unwrap()
+            .iter()
+            .map(|link| (link.source_proof_type(), link.target_proof_type()))
+            .collect()
+    }
+
+    #[test]
+    fn c1_links_apply_on_the_trbfv_path_only() {
+        let touches_c1 = |(source, target): &(ProofType, ProofType)| {
+            *source == ProofType::C1PkGeneration || *target == ProofType::C1PkGeneration
+        };
+        let binds_rows_to_c2a = (
+            ProofType::C2aSkShareComputation,
+            ProofType::LbfvPkGeneration,
+        );
+
+        for profile in [BfvProfile::SsSecure16384, BfvProfile::SsInsecureLbfv] {
+            let pairs = link_pairs(profile);
+            assert!(!pairs.iter().any(touches_c1), "{profile:?}");
+            assert!(pairs.contains(&binds_rows_to_c2a), "{profile:?}");
+            assert!(pairs.contains(&(ProofType::C2aSkShareComputation, ProofType::RlkGeneration)));
+            assert!(pairs.contains(&(ProofType::LbfvPkGeneration, ProofType::RlkGeneration)));
+        }
+        for profile in [BfvProfile::SsSecure8192, BfvProfile::SsInsecure64] {
+            let pairs = link_pairs(profile);
+            assert_eq!(pairs.iter().filter(|pair| touches_c1(pair)).count(), 3);
+            assert!(!pairs.contains(&binds_rows_to_c2a), "{profile:?}");
+        }
+    }
 }

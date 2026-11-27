@@ -18,8 +18,9 @@ use e3_events::{
     CorrelationId, DKGInnerProofReady, DKGRecursiveAggregationComplete, DkgFoldAttestationContext,
     DkgFoldAttestationContextEstablished, DkgFoldAttestationPayload, E3StageChanged, E3id, EType,
     ErrorDispatcher, EventContext, EventPublisher, EventSubscriber, EventType, InterfoldEvent,
-    InterfoldEventData, Proof, Sequenced, SignedDkgFoldAttestation, ThresholdSharePending,
-    TypedEvent, ZkRequest, ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    InterfoldEventData, LbfvKeyShareDocumentCreated, Proof, Sequenced, SignedDkgFoldAttestation,
+    ThresholdSharePending, TypedEvent, ZkRequest, ZkResponse,
+    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use tracing::{debug, error, info, warn};
 
@@ -28,6 +29,20 @@ use crate::node_fold_public::extract_node_fold_agg_commits;
 #[cfg(test)]
 use recovery::{meta_repository, proof_repository};
 use recovery::{NodeProofRecovery, NodeProofRecoveryIndex};
+
+/// l-BFV generation-fold progress of one E3.
+///
+/// Memory only: the keyshare actor publishes its documents again after a restart, which rebuilds
+/// the row proofs, and the fold restarts from row 0. Removed with the rest of the E3's state.
+#[derive(Default)]
+struct LbfvFoldState {
+    pk_proofs: Vec<Proof>,
+    rlk_proofs: Vec<Proof>,
+    /// Accumulator proof over rows `0..next_row`; absent before row 0 is folded.
+    accumulator: Option<Proof>,
+    next_row: u32,
+}
+
 /// Local DKG collector with protocol-specific dispatch and recovery.
 pub struct NodeProofAggregator {
     bus: BusHandle,
@@ -39,6 +54,8 @@ pub struct NodeProofAggregator {
     dkg_fold_attestation_contexts_by_chain: HashMap<u64, Option<DkgFoldAttestationContext>>,
     states: HashMap<E3id, DkgProofCollectionState>,
     fold_correlation: HashMap<CorrelationId, E3id>,
+    /// l-BFV generation-fold progress by E3.
+    lbfv_fold: HashMap<E3id, LbfvFoldState>,
     /// A completed local fold waiting for its request-time attestation context.
     pending_fold_proofs: HashMap<E3id, Proof>,
     pending_inner_proofs: HashMap<E3id, BTreeMap<usize, Proof>>,
@@ -66,6 +83,7 @@ impl NodeProofAggregator {
             fold_correlation: HashMap::new(),
             pending_fold_proofs: HashMap::new(),
             pending_inner_proofs: HashMap::new(),
+            lbfv_fold: HashMap::new(),
             recovery_repositories: None,
             recovery_index: NodeProofRecoveryIndex::default(),
             dealer: dealer::DealerCollection::default(),
@@ -135,6 +153,7 @@ impl NodeProofAggregator {
             EventType::SynchronizedDkgProofPublished,
             addr.clone().into(),
         );
+        bus.subscribe(EventType::LbfvKeyShareDocumentCreated, addr.clone().into());
         bus.subscribe(EventType::DKGInnerProofReady, addr.clone().into());
         bus.subscribe(EventType::ComputeResponse, addr.clone().into());
         bus.subscribe(EventType::ComputeRequestError, addr.clone().into());

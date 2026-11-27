@@ -11,7 +11,7 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
     hlc_factory::HlcFactory, ComputeRequestErrorKind, ComputeRequestKind, EffectsEnabled, Event,
     EventBus, EventBusBarrier, EventBusConfig, EventPublisher, GetEvents, Proof, ProofPayload,
-    Sequencer, StoreEventRequested, Unsequenced, ZkError,
+    ProofType, Sequencer, ShareVerificationDispatched, StoreEventRequested, Unsequenced, ZkError,
 };
 use e3_fhe_params::BfvProfile;
 use e3_utils::utility_types::ArcBytes;
@@ -89,7 +89,7 @@ async fn disabled_profile_does_not_dispatch_or_classify_a_verification_batch() {
         };
         let ec = EventContext::<Unsequenced>::from(InterfoldEventData::from(dispatch.clone()))
             .sequence(0);
-        actor.handle_share_verification_dispatched(TypedEvent::new(dispatch, ec));
+        actor.handle_share_verification_dispatched(TypedEvent::new(dispatch.into(), ec));
         bus.flush_event_pipeline().await.unwrap();
         assert!(actor.pending_consistency.is_empty());
         assert!(actor.pending.is_empty());
@@ -108,6 +108,53 @@ async fn disabled_profile_does_not_dispatch_or_classify_a_verification_batch() {
     assert_eq!(errors, expected_errors);
 }
 
+/// The verdict has the form of its kind: trBFV kinds publish the trBFV event, whose layout does
+/// not change, and only an l-BFV verdict carries its candidate-set identity.
+#[actix::test]
+async fn a_verdict_is_published_in_the_form_of_its_kind() {
+    let e3_event_system::test_support::EventFixture { bus, history, .. } =
+        e3_event_system::test_support::EventFixture::new().unwrap();
+    let actor = ShareVerificationActor::new(&bus, HashMap::new());
+    let e3_id = E3id::new("verdict-form", 1);
+    let context_data: InterfoldEventData = EffectsEnabled::new().into();
+    let ec = EventContext::<Unsequenced>::from(context_data).sequence(0);
+    let id = alloy::primitives::B256::repeat_byte(7);
+
+    actor.publish_complete(
+        e3_id.clone(),
+        VerificationKind::ShareProofs,
+        None,
+        BTreeSet::from([1]),
+        ec.clone(),
+    );
+    actor.publish_complete(
+        e3_id.clone(),
+        VerificationKind::LbfvGenerationProofs,
+        Some(id),
+        BTreeSet::from([2]),
+        ec,
+    );
+
+    let events = history
+        .send(e3_events::TakeEvents::<InterfoldEvent>::new(2))
+        .await
+        .unwrap();
+    assert!(!events.timed_out);
+    let events = events.events;
+    assert!(matches!(
+        events[0].get_data(),
+        InterfoldEventData::ShareVerificationComplete(result)
+            if result.kind == VerificationKind::ShareProofs
+                && result.dishonest_parties == BTreeSet::from([1])
+    ));
+    assert!(matches!(
+        events[1].get_data(),
+        InterfoldEventData::LbfvShareVerificationComplete(result)
+            if result.verification_id == Some(id)
+                && result.dishonest_parties == BTreeSet::from([2])
+    ));
+}
+
 #[actix::test]
 async fn local_verifier_error_preserves_pending_work_without_accusing_parties() {
     let bus = test_bus();
@@ -122,6 +169,7 @@ async fn local_verifier_error_preserves_pending_work_without_accusing_parties() 
         PendingVerification {
             e3_id: e3_id.clone(),
             kind: VerificationKind::ShareProofs,
+            verification_id: None,
             ec: context.clone(),
             ecdsa_dishonest: HashSet::new(),
             pre_dishonest: BTreeSet::new(),
@@ -316,7 +364,10 @@ async fn unauthenticated_share_proofs_do_not_emit_accusations() {
         };
         let ec = EventContext::<Unsequenced>::from(InterfoldEventData::from(dispatch(bad.clone())))
             .sequence(0);
-        actor.handle_share_verification_dispatched(TypedEvent::new(dispatch(bad), ec.clone()));
+        actor.handle_share_verification_dispatched(TypedEvent::new(
+            dispatch(bad).into(),
+            ec.clone(),
+        ));
         let events = history
             .send(e3_events::TakeEvents::<InterfoldEvent>::new(1))
             .await
@@ -327,7 +378,7 @@ async fn unauthenticated_share_proofs_do_not_emit_accusations() {
             if result.dishonest_parties == BTreeSet::from([0])),
             "{forgery} emitted fault evidence"
         );
-        actor.handle_share_verification_dispatched(TypedEvent::new(dispatch(good), ec));
+        actor.handle_share_verification_dispatched(TypedEvent::new(dispatch(good).into(), ec));
         assert_eq!(
             actor.pending_consistency.len(),
             1,
@@ -370,7 +421,7 @@ async fn failed_worker_payload_cannot_borrow_a_verified_signer() {
     };
     let ec =
         EventContext::<Unsequenced>::from(InterfoldEventData::from(dispatch.clone())).sequence(0);
-    actor.handle_share_verification_dispatched(TypedEvent::new(dispatch, ec.clone()));
+    actor.handle_share_verification_dispatched(TypedEvent::new(dispatch.into(), ec.clone()));
     let consistency_id = *actor.pending_consistency.keys().next().unwrap();
     actor.handle_consistency_check_complete(TypedEvent::new(
         CommitmentConsistencyCheckComplete {

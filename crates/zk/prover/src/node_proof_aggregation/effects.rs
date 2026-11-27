@@ -5,8 +5,41 @@
 use crate::utils::total_expected_for;
 
 use super::*;
+use e3_events::{LbfvGenerationFoldRequest, LbfvKeyShareDocumentRole, NodeDkgFoldV2Request};
 
 impl NodeProofAggregator {
+    pub(in crate::actors::node_proof_aggregator) fn handle_lbfv_document(
+        &mut self,
+        msg: TypedEvent<LbfvKeyShareDocumentCreated>,
+    ) {
+        let (msg, _) = msg.into_components();
+        let e3_id = msg.document.e3_id().clone();
+        let role = msg.document.role();
+        let fold = self.lbfv_fold.entry(e3_id.clone()).or_default();
+        let proofs: Vec<Proof> = msg
+            .document
+            .signed_row_proofs()
+            .iter()
+            .map(|signed| signed.payload.proof.clone())
+            .collect();
+        let rows = match role {
+            LbfvKeyShareDocumentRole::PublicKey => &mut fold.pk_proofs,
+            LbfvKeyShareDocumentRole::RelinearizationKey => &mut fold.rlk_proofs,
+        };
+        if *rows != proofs {
+            // The accumulator folds the old rows, so progress restarts from row 0.
+            *rows = proofs;
+            fold.accumulator = None;
+            fold.next_row = 0;
+        }
+        info!(
+            "NodeProofAggregator: received l-BFV {role:?} document for E3 {e3_id} (pk_rows={}, rlk_rows={})",
+            fold.pk_proofs.len(),
+            fold.rlk_proofs.len(),
+        );
+        self.try_dispatch_node_dkg_fold(&e3_id);
+    }
+
     pub(in crate::actors::node_proof_aggregator) fn handle_threshold_share_pending(
         &mut self,
         msg: TypedEvent<ThresholdSharePending>,
@@ -246,6 +279,11 @@ impl NodeProofAggregator {
             return;
         }
 
+        if e3_fhe_params::supports_lbfv(state.meta.params_profile.threshold_preset()) {
+            self.try_dispatch_v2_generation_fold(e3_id);
+            return;
+        }
+
         let req = state.build_fold_request();
         let corr = CorrelationId::new();
         let ec = state.last_ec.clone();
@@ -260,7 +298,7 @@ impl NodeProofAggregator {
         );
 
         if let Err(err) = self.bus.publish(
-            ComputeRequest::zk(ZkRequest::NodeDkgFold(req), corr, e3_id.clone()),
+            ComputeRequest::zk(req.into_zk_request(), corr, e3_id.clone()),
             ec,
         ) {
             error!(
@@ -274,6 +312,145 @@ impl NodeProofAggregator {
         }
     }
 
+    fn try_dispatch_v2_generation_fold(&mut self, e3_id: &E3id) {
+        let row_count = self
+            .states
+            .get(e3_id)
+            .and_then(|state| {
+                e3_fhe_params::lbfv_row_count(state.meta.params_profile.threshold_preset())
+            })
+            .unwrap_or_default();
+        let Some(fold) = self.lbfv_fold.get(e3_id) else {
+            info!(
+                "NodeProofAggregator: waiting for l-BFV generation documents for E3 {e3_id} (expected {row_count} rows)"
+            );
+            return;
+        };
+        if fold.pk_proofs.len() != row_count || fold.rlk_proofs.len() != row_count {
+            info!(
+                "NodeProofAggregator: l-BFV generation fold not ready for E3 {e3_id} (pk_rows={}, rlk_rows={}, expected_rows={row_count})",
+                fold.pk_proofs.len(),
+                fold.rlk_proofs.len(),
+            );
+            return;
+        }
+        let Some(state) = self.states.get_mut(e3_id) else {
+            return;
+        };
+        if state.fold_correlation.is_some() {
+            return;
+        }
+        let next_row = fold.next_row;
+        if next_row as usize >= row_count {
+            self.try_dispatch_v2_node_fold(e3_id);
+            return;
+        }
+        let corr = CorrelationId::new();
+        let ec = state.last_ec.clone();
+        state.fold_correlation = Some(corr);
+        self.fold_correlation.insert(corr, e3_id.clone());
+        info!(
+            "NodeProofAggregator: dispatched l-BFV generation fold row {next_row}/{row_count} for E3 {e3_id}"
+        );
+        let request = LbfvGenerationFoldRequest {
+            pk_proof: fold.pk_proofs[next_row as usize].clone(),
+            rlk_proof: fold.rlk_proofs[next_row as usize].clone(),
+            prior_accumulator: fold.accumulator.clone(),
+            row_index: next_row,
+            params_preset: state.meta.params_profile.threshold_preset(),
+            committee_size: state.meta.committee_size,
+        };
+        if let Err(error) = self.bus.publish(
+            ComputeRequest::zk(ZkRequest::LbfvGenerationFold(request), corr, e3_id.clone()),
+            ec,
+        ) {
+            error!("NodeProofAggregator: failed to publish l-BFV generation fold for E3 {e3_id}: {error}");
+            state.fold_correlation = None;
+            self.fold_correlation.remove(&corr);
+        }
+    }
+
+    pub(in crate::actors::node_proof_aggregator) fn handle_generation_fold_response(
+        &mut self,
+        correlation_id: &CorrelationId,
+        proof: Proof,
+    ) {
+        let Some(e3_id) = self.fold_correlation.remove(correlation_id) else {
+            return;
+        };
+        let Some(state) = self.states.get_mut(&e3_id) else {
+            return;
+        };
+        state.fold_correlation = None;
+        let Some(fold) = self.lbfv_fold.get_mut(&e3_id) else {
+            return;
+        };
+        fold.accumulator = Some(proof);
+        fold.next_row += 1;
+        info!(
+            "NodeProofAggregator: completed l-BFV generation fold row for E3 {e3_id}; next row={}",
+            fold.next_row
+        );
+        self.try_dispatch_node_dkg_fold(&e3_id);
+    }
+
+    fn try_dispatch_v2_node_fold(&mut self, e3_id: &E3id) {
+        let Some(state) = self.states.get_mut(e3_id) else {
+            return;
+        };
+        if state.fold_correlation.is_some() {
+            return;
+        }
+        let request = state.build_fold_request();
+        let corr = CorrelationId::new();
+        let ec = state.last_ec.clone();
+        state.fold_correlation = Some(corr);
+        self.fold_correlation.insert(corr, e3_id.clone());
+        info!("NodeProofAggregator: dispatching l-BFV legacy node fold for E3 {e3_id}");
+        if let Err(error) = self.bus.publish(
+            ComputeRequest::zk(request.into_zk_request(), corr, e3_id.clone()),
+            ec,
+        ) {
+            error!("NodeProofAggregator: failed to publish V2 node fold for E3 {e3_id}: {error}");
+            state.fold_correlation = None;
+            self.fold_correlation.remove(&corr);
+        }
+    }
+
+    fn dispatch_v2_with_legacy_node_fold(&mut self, e3_id: &E3id, legacy_proof: Proof) {
+        let Some(state) = self.states.get_mut(e3_id) else {
+            return;
+        };
+        let Some(generation_proof) = self
+            .lbfv_fold
+            .get(e3_id)
+            .and_then(|fold| fold.accumulator.clone())
+        else {
+            return;
+        };
+        let corr = CorrelationId::new();
+        let ec = state.last_ec.clone();
+        let request = NodeDkgFoldV2Request {
+            legacy_node_fold_proof: legacy_proof,
+            generation_proof,
+            party_id: state.meta.party_id,
+            params_preset: state.meta.params_profile.threshold_preset(),
+            committee_size: state.meta.committee_size,
+        };
+        state.fold_correlation = Some(corr);
+        self.fold_correlation.insert(corr, e3_id.clone());
+        info!("NodeProofAggregator: dispatching l-BFV V2 node fold for E3 {e3_id}");
+        if let Err(error) = self.bus.publish(
+            ComputeRequest::zk(ZkRequest::NodeDkgFoldV2(request), corr, e3_id.clone()),
+            ec,
+        ) {
+            error!("NodeProofAggregator: failed to publish V2 node fold for E3 {e3_id}: {error}");
+            state.fold_correlation = None;
+            self.fold_correlation.remove(&corr);
+        }
+    }
+
+    /// Response to a [`ZkRequest::NodeDkgFold`] or [`ZkRequest::LbfvNodeDkgFold`] request.
     pub(in crate::actors::node_proof_aggregator) fn handle_node_dkg_response(
         &mut self,
         correlation_id: &CorrelationId,
@@ -288,6 +465,31 @@ impl NodeProofAggregator {
                 "NodeProofAggregator: NodeDkgFold response for unknown E3 {}",
                 e3_id
             );
+            return;
+        };
+        state.fold_correlation = None;
+        // On the l-BFV path this is the legacy node fold, which the V2 fold wraps.
+        if e3_fhe_params::supports_lbfv(state.meta.params_profile.threshold_preset()) {
+            info!(
+                "NodeProofAggregator: completed l-BFV legacy node fold for E3 {e3_id}; dispatching V2 fold"
+            );
+            self.dispatch_v2_with_legacy_node_fold(&e3_id, proof);
+            return;
+        }
+        self.finish_node_dkg_fold(e3_id, proof);
+    }
+
+    /// Response to a [`ZkRequest::NodeDkgFoldV2`] request.
+    pub(in crate::actors::node_proof_aggregator) fn handle_node_dkg_v2_response(
+        &mut self,
+        correlation_id: &CorrelationId,
+        proof: Proof,
+    ) {
+        let Some(e3_id) = self.fold_correlation.remove(correlation_id) else {
+            return;
+        };
+        let Some(state) = self.states.get_mut(&e3_id) else {
+            error!("NodeProofAggregator: NodeDkgFoldV2 response for unknown E3 {e3_id}");
             return;
         };
         state.fold_correlation = None;
@@ -402,6 +604,7 @@ impl NodeProofAggregator {
             self.states.insert(e3_id, state);
             return;
         }
+        self.lbfv_fold.remove(&e3_id);
         if let Err(err) = self.bus.publish(output, ec) {
             error!(
                 "NodeProofAggregator: failed to publish DKGRecursiveAggregationComplete for E3 {}: {err}",

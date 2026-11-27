@@ -7,16 +7,26 @@ use super::*;
 impl ShareVerificationActor {
     pub(in crate::actors::share_verification) fn handle_share_verification_dispatched(
         &mut self,
-        msg: TypedEvent<ShareVerificationDispatched>,
+        msg: TypedEvent<LbfvShareVerificationDispatched>,
     ) {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
-        // A profile that this build cannot verify is a local fault. The node abstains: it keeps no
-        // pending work, publishes no verdict and blames no peer.
+        // A profile or l-BFV context that this build cannot verify against is a local fault. The
+        // node abstains: it keeps no pending work, publishes no verdict and blames no peer.
         if let Err(error) = msg
             .params_profile
             .ensure_admission_enabled()
             .and_then(|()| msg.params_profile.validate_committee(msg.committee_size))
+            .map_err(|error| error.to_string())
+            .and_then(|()| {
+                ShareVerifier::validate_lbfv_dispatch(
+                    &msg.kind,
+                    &e3_id,
+                    msg.params_profile,
+                    msg.committee_size,
+                    msg.lbfv_context.as_ref(),
+                )
+            })
         {
             self.bus.with_ec(&ec).err(
                 EType::Computation,
@@ -29,16 +39,20 @@ impl ShareVerificationActor {
         }
 
         info!(
-            "handling ShareVerificationDispatched {:?}, {:?}",
+            "handling share verification dispatch {:?}, {:?}",
             e3_id, msg.kind
         );
 
         let params_profile = msg.params_profile;
         let committee_size = msg.committee_size;
+        let lbfv_context = msg.lbfv_context;
+        let verification_id = msg.verification_id;
         match msg.kind {
             VerificationKind::ShareProofs
             | VerificationKind::ThresholdDecryptionProofs
-            | VerificationKind::PkGenerationProofs => {
+            | VerificationKind::PkGenerationProofs
+            | VerificationKind::LbfvGenerationProofs
+            | VerificationKind::LbfvAggregationProofs => {
                 let kind = msg.kind.clone();
                 self.verify_proofs(
                     e3_id,
@@ -48,6 +62,8 @@ impl ShareVerificationActor {
                     ec,
                     params_profile,
                     committee_size,
+                    lbfv_context.as_ref(),
+                    verification_id,
                     |pending, passed| {
                         pending.ecdsa_passed_share_proofs = passed;
                     },
@@ -62,6 +78,8 @@ impl ShareVerificationActor {
                     ec,
                     params_profile,
                     committee_size,
+                    lbfv_context.as_ref(),
+                    verification_id,
                     |pending, passed| {
                         pending.ecdsa_passed_decryption_proofs = passed;
                     },

@@ -22,21 +22,22 @@
 //! commitments for the C4 recipient do not exactly match the corresponding
 //! row in C4's `expected_commitments`.
 //!
-//! ## C2 inner-circuit public signals layout
+//! ## C2 terminal public signals layout
 //!
 //! ```text
-//! [expected_secret_commitment (32 B, skip)]
+//! [child_vk_hash (32 B, skip)]
+//! [secret_root_commitment (32 B, skip)]
 //! [party_0_mod_0 (32 B)] [party_0_mod_1] ... [party_0_mod_{L-1}]
 //! [party_1_mod_0] ...
 //! [party_{N-1}_mod_{L-1}]
-//! [key_tree (32 B, skip)]
+//! [trailing field (32 B, skip): the hash of the C2 chain's chunk keys on trBFV, the batch VK hash
+//!  on l-BFV]
 //! ```
 //!
-//! The first field is the `expected_secret_commitment` public input and is
-//! skipped. The last is the hash of the chunk keys of the C2 chain and is
-//! skipped. The N_PARTIES × L fields between them are share commitments
-//! output by the chunk chain, indexed in row-major order (party first, then
-//! modulus).
+//! On trBFV the first field is the `expected_secret_commitment` public input and is skipped; on
+//! l-BFV the first two are the child VK hash and the secret root commitment. The remaining
+//! N_PARTIES × L fields are share commitments output by the C2 proof (trBFV) or the chunk
+//! finalizer (l-BFV), indexed in row-major order (party first, then modulus).
 //!
 //! ## C4 public signals layout
 //!
@@ -45,7 +46,7 @@
 //! [expected_commitments[1][0]] ...
 //! [expected_commitments[H-1][L-1]]
 //! [commitment (32 B, aggregated output)]
-//! [key_tree (32 B, hash of the limb keys, last)]
+//! [key_tree (32 B, hash of the limb keys, last; trBFV only)]
 //! ```
 //!
 //! ## Precise check
@@ -75,6 +76,8 @@ pub struct C2aToC4aShareCommitmentLink {
     /// Number of threshold CRT moduli (L). Determines the block size in both
     /// C2 and C4 public signals.
     pub l: usize,
+    /// Whether the C2 source is the l-BFV chunk finalizer and the target the chunked C4.
+    pub chunked: bool,
 }
 
 impl CommitmentLink for C2aToC4aShareCommitmentLink {
@@ -95,7 +98,7 @@ impl CommitmentLink for C2aToC4aShareCommitmentLink {
     }
 
     fn extract_source_values(&self, public_signals: &[u8]) -> Vec<FieldValue> {
-        extract_share_commitments(public_signals)
+        extract_share_commitments(public_signals, self.chunked)
     }
 
     fn check_consistency(
@@ -111,6 +114,7 @@ impl CommitmentLink for C2aToC4aShareCommitmentLink {
             src_party_id,
             tgt_party_id,
             self.l,
+            c4_output_fields(self.chunked),
         )
     }
 }
@@ -119,6 +123,8 @@ impl CommitmentLink for C2aToC4aShareCommitmentLink {
 pub struct C2bToC4bShareCommitmentLink {
     /// Number of threshold CRT moduli (L).
     pub l: usize,
+    /// Whether the C2 source is the l-BFV chunk finalizer and the target the chunked C4.
+    pub chunked: bool,
 }
 
 impl CommitmentLink for C2bToC4bShareCommitmentLink {
@@ -139,7 +145,7 @@ impl CommitmentLink for C2bToC4bShareCommitmentLink {
     }
 
     fn extract_source_values(&self, public_signals: &[u8]) -> Vec<FieldValue> {
-        extract_share_commitments(public_signals)
+        extract_share_commitments(public_signals, self.chunked)
     }
 
     fn check_consistency(
@@ -155,21 +161,25 @@ impl CommitmentLink for C2bToC4bShareCommitmentLink {
             src_party_id,
             tgt_party_id,
             self.l,
+            c4_output_fields(self.chunked),
         )
     }
 }
 
-/// Extract all share commitments from C2's public signals.
-///
-/// Final C2 public signals:
-///   - field 0: `expected_secret_commitment` (skipped)
-///   - fields 1..last: `commit_to_party_shares[party_idx][mod_idx]` outputs,
-///     row-major (party first, modulus second)
-///   - last field: the chunk key-tree hash (skipped)
-///
-/// Returns the share commitments only.
-fn extract_share_commitments(public_signals: &[u8]) -> Vec<FieldValue> {
-    super::c2_share_commitments(public_signals)
+/// The outputs a C4 proof returns after its rows: the l-BFV chunked circuit returns only the
+/// aggregate commitment, the trBFV one also its limb key tree.
+fn c4_output_fields(chunked: bool) -> usize {
+    if chunked {
+        1
+    } else {
+        2
+    }
+}
+
+/// Extract all share commitments from C2's public signals ([`super::c2_share_commitments`]), in
+/// row-major order (party first, modulus second).
+fn extract_share_commitments(public_signals: &[u8], chunked: bool) -> Vec<FieldValue> {
+    super::c2_share_commitments(public_signals, chunked)
         .chunks(FIELD_BYTE_LEN)
         .filter_map(|chunk| {
             if chunk.len() == FIELD_BYTE_LEN {
@@ -186,7 +196,8 @@ fn extract_share_commitments(public_signals: &[u8]) -> Vec<FieldValue> {
 /// Precise L-way check: verifies that the L share commitments C2_X computed
 /// for recipient R exactly match C4_R's expected_commitments row for sender X.
 ///
-/// - `source_values`: all N_PARTIES × L commits from C2_X (from `extract_share_commitments`)
+/// - `source_values`: C2 commitments after the explicit prefix and before the
+///   trailing batch VK hash
 /// - `target_public_signals`: C4_R's public signals
 /// - `src_party_id`: C2 sender's row X in the selected H-party roster
 /// - `tgt_party_id`: C4 recipient R in the full N-party committee
@@ -200,6 +211,7 @@ fn check_exact_l_commitments(
     src_party_id: u64,
     tgt_party_id: u64,
     l: usize,
+    target_output_fields: usize,
 ) -> bool {
     if source_values.is_empty() || l == 0 {
         return false;
@@ -208,19 +220,43 @@ fn check_exact_l_commitments(
     let tgt_idx = tgt_party_id as usize;
     let src_idx = src_party_id as usize;
 
+    if source_values.len() % l != 0 {
+        return false;
+    }
+
     // Slice L commits from C2 at slot tgt_idx (the C4 recipient's position).
-    let c2_start = tgt_idx * l;
-    let c2_end = c2_start + l;
+    let Some(c2_start) = tgt_idx.checked_mul(l) else {
+        return false;
+    };
+    let Some(c2_end) = c2_start.checked_add(l) else {
+        return false;
+    };
     if source_values.len() < c2_end {
         return false;
     }
     let c2_block = &source_values[c2_start..c2_end];
 
     // C4 row for src_idx (the C2 sender): bytes [X*L*32 .. (X+1)*L*32].
-    // C4's outputs (the aggregate commitment, then the limb key tree) follow the rows.
-    let c4_row_start = src_idx * l * FIELD_BYTE_LEN;
-    let c4_row_end = c4_row_start + l * FIELD_BYTE_LEN;
-    if target_public_signals.len() < c4_row_end + 2 * FIELD_BYTE_LEN {
+    // C4's outputs follow the rows: the aggregate commitment, then on trBFV the limb key tree.
+    let Some(c4_row_start) = src_idx
+        .checked_mul(l)
+        .and_then(|offset| offset.checked_mul(FIELD_BYTE_LEN))
+    else {
+        return false;
+    };
+    let Some(c4_row_len) = l.checked_mul(FIELD_BYTE_LEN) else {
+        return false;
+    };
+    let Some(c4_row_end) = c4_row_start.checked_add(c4_row_len) else {
+        return false;
+    };
+    let Some(c4_min_len) = target_output_fields
+        .checked_mul(FIELD_BYTE_LEN)
+        .and_then(|outputs| c4_row_end.checked_add(outputs))
+    else {
+        return false;
+    };
+    if target_public_signals.len() < c4_min_len {
         return false;
     }
 
