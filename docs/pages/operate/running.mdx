@@ -85,8 +85,8 @@ chains:
   <Tabs.Tab unmount={false}>
 
 <Callout type='info'>
-  E3 requests on Sepolia stay paused until operators that run the 0.20.0-dev.3 release register. Run
-  that release on Sepolia. A node of an earlier release does not match the Sepolia deployment.
+  E3 requests on Sepolia stay paused until operators that run the 0.20.0 release register. Run that
+  release on Sepolia. A node of an earlier release does not match the Sepolia deployment.
 </Callout>
 
 ```yaml filename="interfold.config.yaml"
@@ -103,17 +103,17 @@ chains:
       rpc_url: 'https://turing-rpc.avail.so/rpc'
     contracts:
       interfold:
-        address: '0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26'
-        deploy_block: 12050035
+        address: '0x5611c8aa517FE57D05229Ff94eA37E88b1b8FDDB'
+        deploy_block: 12219881
       ciphernode_registry:
-        address: '0x895392D5782E78768A35B1aDfc5b0BD1faB259e4'
-        deploy_block: 12050030
+        address: '0x60b55A3cD65A48129F41a20fe09056E895f86785'
+        deploy_block: 12219876
       bonding_registry:
-        address: '0x8f42eD45556bC8fF8949c37c7644Af9Cf321108F'
-        deploy_block: 12050022
+        address: '0x776F3F494B9935BFe36F29bc0CC84855cee6c5c1'
+        deploy_block: 12219784
       slashing_manager:
-        address: '0xa82F589B29BD5c2392b7127Cba8727Af2bbEd84D'
-        deploy_block: 12050027
+        address: '0x75a608b57E4E800c27442586839C6357d04b4057'
+        deploy_block: 12219872
       fee_token:
         address: '0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B'
         deploy_block: 11856062
@@ -518,7 +518,7 @@ The command downloads `manifest.json` from the latest GitHub release and compare
 Example output for a current Sepolia entry:
 
 ```text
-Deployment manifest: release v0.20.0-dev.3
+Deployment manifest: release v0.20.0
 sepolia: up to date
   note  sepolia is a mock deployment - proofs are accepted without being verified
 ```
@@ -527,8 +527,8 @@ Example output for a stale entry:
 
 ```text
 sepolia:
-  STALE interfold: config has 0xc5DD9418…, published is 0xb35EE9ed…
-  warn  ciphernode_registry: deploy_block 11855915, published is 12050030
+  STALE interfold: config has 0xb35EE9ed…, published is 0x5611c8aa…
+  warn  ciphernode_registry: deploy_block 12050030, published is 12219876
   note  sepolia is a mock deployment - proofs are accepted without being verified
 ```
 
@@ -541,6 +541,13 @@ sepolia:
 The command exits with a non-zero status when a line is `STALE`. You can use it as a gate before a
 restart in a process manager or a CI job. Use `--chain <name>` to check one chain. Use
 `--manifest-url <url>` to check against a specific manifest file.
+
+<Callout type='info'>
+  The manifest of the v0.20.0 release has the Sepolia addresses of the earlier deployment. Sepolia
+  was deployed again on 2026-11-27. Until the next release publishes the new manifest, check Sepolia
+  against the manifest on `main`: `interfold config check --chain sepolia --manifest-url
+  https://raw.githubusercontent.com/theinterfold/interfold/main/deployments/manifest.json`.
+</Callout>
 
 ## Watch the node
 

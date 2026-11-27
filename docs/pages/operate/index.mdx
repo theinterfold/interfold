@@ -180,24 +180,24 @@ use.
 
 <Callout type='info'>
   E3 requests on Sepolia stay paused (`requestsPaused()` returns `true` on the `Interfold` contract)
-  until operators that run the 0.20.0-dev.3 release register. Operators can bond, register, and add
+  until operators that run the 0.20.0 release register. Operators can bond, register, and add
   tickets while requests are paused.
 </Callout>
 
 | Contract                                   | Address                                      | Deploy block |
 | ------------------------------------------ | -------------------------------------------- | ------------ |
-| Interfold                                  | `0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26` | 12050035     |
-| CiphernodeRegistry                         | `0x895392D5782E78768A35B1aDfc5b0BD1faB259e4` | 12050030     |
-| BondingRegistry                            | `0x8f42eD45556bC8fF8949c37c7644Af9Cf321108F` | 12050022     |
-| SlashingManager                            | `0xa82F589B29BD5c2392b7127Cba8727Af2bbEd84D` | 12050027     |
-| E3RefundManager                            | `0x272f3A25E30990A7C30b7B90a240e7afe4365349` | 12050041     |
-| NodeReleaseRegistry                        | `0xd6d7D4839985BFEB5d6440A1ECe594e288C128e6` | 12050048     |
-| BondedVotes                                | `0xfbd932BD297e9C7261A384925E78371C7B1FEc7a` | 12050190     |
-| InterfoldTicketToken (tFOLD)               | `0xE7cCF95F36131340bdAB122C4cc09787D28217e5` | 12050025     |
+| Interfold                                  | `0x5611c8aa517FE57D05229Ff94eA37E88b1b8FDDB` | 12219881     |
+| CiphernodeRegistry                         | `0x60b55A3cD65A48129F41a20fe09056E895f86785` | 12219876     |
+| BondingRegistry                            | `0x776F3F494B9935BFe36F29bc0CC84855cee6c5c1` | 12219784     |
+| SlashingManager                            | `0x75a608b57E4E800c27442586839C6357d04b4057` | 12219872     |
+| E3RefundManager                            | `0xAF5127fe261308d95956d4C401BFc9A49a25A00f` | 12219884     |
+| NodeReleaseRegistry                        | `0xcCce682A95533e4248811e214eaC3A6dd375417e` | 12219891     |
+| BondedVotes                                | `0x9e32510C3249Bb0EfBC363929ED7278406a6e8B4` | 12220008     |
+| InterfoldTicketToken (tFOLD)               | `0xdFAa93b080CAeBea1C66d141eE9387A5d3f19ae8` | 12219870     |
 | InterfoldToken (FOLD)                      | `0x3192Ee1FeE48159807058aA78038cf80cB3450Cb` | 11873112     |
 | MockUSDC (fee token and ticket collateral) | `0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B` | 11856062     |
 | Faucet                                     | `0x1B4340A65BB669267BF5DE37385B139987C3F09c` | 11873271     |
-| MockE3Program                              | `0xc4C83c3C94e9360C136f3cd022925b4979BD580b` | 12050024     |
+| MockE3Program                              | `0xa900b941d05c29486E9b618fa6Cb5e58b92C7fD6` | 12219869     |
 
 `MockUSDC` is a test USDC with 6 decimals. Anyone can mint it. The `Faucet` sends 1000 FOLD and 1000
 USDC. `MockE3Program` is a test E3 program. The deployment registers it as its first E3 program.
@@ -206,8 +206,8 @@ The public key and decryption proofs use real verifiers:
 
 | Contract                    | Address                                      | Deploy block |
 | --------------------------- | -------------------------------------------- | ------------ |
-| BfvPkVerifierRouter         | `0xA5a95C7aBdFdC814f4E724743CFD20Cc50ba7E5B` | 12050098     |
-| BfvDecryptionVerifierRouter | `0x2e66AE65d8eF5399b231113aFE4E06a175F0A20E` | 12050099     |
+| BfvPkVerifierRouter         | `0x1c200BfDf2aE78FD7C317329b99951B3409F4CEc` | 12219949     |
+| BfvDecryptionVerifierRouter | `0xBa5a8e8cc61d2ca9ec7FE2ba7AaD9AdBA22BbA80` | 12219950     |
 
 The ciphertext verifier for BFV is `OpenVmBfvCiphertextVerifier`. It wraps
 `MockOpenVmReceiptVerifier`, which accepts every receipt, so Sepolia does not verify compute proofs.

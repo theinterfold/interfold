@@ -113,9 +113,9 @@ command needs `curl` and `jq`.
 ```bash
 RPC=https://your-endpoint.example
 # Sepolia CiphernodeRegistry, from deployments/manifest.json
-CIPHERNODE_REGISTRY_CONTRACT=0x895392D5782E78768A35B1aDfc5b0BD1faB259e4
-FROM=$(printf '0x%x' 12050030)   # the registry deploy block
-TO=$(printf '0x%x' 12050079)     # FROM + 49: a range of 50 blocks
+CIPHERNODE_REGISTRY_CONTRACT=0x60b55A3cD65A48129F41a20fe09056E895f86785
+FROM=$(printf '0x%x' 12219876)   # the registry deploy block
+TO=$(printf '0x%x' 12219925)     # FROM + 49: a range of 50 blocks
 
 # The result must be a log count, not an error and not an empty list.
 curl -s -X POST "$RPC" -H 'Content-Type: application/json' \

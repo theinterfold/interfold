@@ -50,16 +50,16 @@ export const NETWORKS: Record<NetworkKey, NetworkProfile> = {
     name: 'Sepolia',
     rpc: 'https://ethereum-sepolia.publicnode.com',
     explorer: 'https://sepolia.etherscan.io',
-    interfold: '0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26',
-    ciphernodeRegistry: '0x895392D5782E78768A35B1aDfc5b0BD1faB259e4',
-    crispProgram: '0x25Df8D3C04D67efb6198E215963d19a8d119ADFF',
+    interfold: '0x5611c8aa517FE57D05229Ff94eA37E88b1b8FDDB',
+    ciphernodeRegistry: '0x60b55A3cD65A48129F41a20fe09056E895f86785',
+    crispProgram: '0xeCA6589a150905E7a52111b18610cb098159bc22',
     previousCrispPrograms: [],
-    bondingRegistry: '0x8f42eD45556bC8fF8949c37c7644Af9Cf321108F',
+    bondingRegistry: '0x776F3F494B9935BFe36F29bc0CC84855cee6c5c1',
     // Test Faucet. It sends 1000 FOLD and 1000 MockUSDC.
     faucet: '0x1B4340A65BB669267BF5DE37385B139987C3F09c',
-    // Deploy block of the CiphernodeRegistry (12050030), the earlier of it and the Interfold. A later
+    // Deploy block of the CiphernodeRegistry (12219876), the earlier of it and the Interfold. A later
     // value silently drops early registry events.
-    deployBlock: '12050030',
+    deployBlock: '12219876',
     // MockUSDC (0xE2e534F7…555B), the fee token and ticket collateral. Anyone can mint it.
     feeSymbol: 'USDC',
     feeDecimals: 6,
