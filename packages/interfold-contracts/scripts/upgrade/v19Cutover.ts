@@ -232,6 +232,16 @@ export function buildV19CutoverTransactions(
   const txs: SafeTransaction[] = [];
   if (decisions.pauseRequests) {
     txs.push(call("setRequestsPaused", [true]));
+    // prepare checked the drain while requests were open. The release setter checks it again on
+    // chain; without that action, the batch asks the registry directly.
+    if (!decisions.nodeRelease) {
+      txs.push(
+        safeTx(
+          decisions.nodeReleaseRegistry,
+          releaseInterface.encodeFunctionData("assertUpgradeWindow"),
+        ),
+      );
+    }
   }
   txs.push(
     safeTx(
