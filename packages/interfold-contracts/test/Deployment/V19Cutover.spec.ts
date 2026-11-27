@@ -98,6 +98,41 @@ describe("v0.19 cutover", function () {
     expect(pk.args[1]).to.equal(addr(4));
   });
 
+  it("pauses requests as the first action with --pause-in-batch", function () {
+    const txs = buildV19CutoverTransactions({
+      ...decisions(),
+      pauseRequests: true,
+    });
+    const pause = interfoldInterface.parseTransaction({ data: txs[0].data })!;
+    expect(txs[0].to).to.equal(addr(1));
+    expect(pause.name).to.equal("setRequestsPaused");
+    expect(pause.args[0]).to.equal(true);
+    expect(txs.slice(1)).to.deep.equal(
+      buildV19CutoverTransactions(decisions()),
+    );
+  });
+
+  it("checks the drain on chain when a paused batch keeps the release policy", function () {
+    const txs = buildV19CutoverTransactions({
+      ...decisions(),
+      pauseRequests: true,
+      nodeRelease: undefined,
+    });
+    expect(
+      interfoldInterface.parseTransaction({ data: txs[0].data })!.name,
+    ).to.equal("setRequestsPaused");
+    expect(txs[1].to).to.equal(addr(9));
+    expect(
+      releaseInterface.parseTransaction({ data: txs[1].data })!.name,
+    ).to.equal("assertUpgradeWindow");
+    expect(
+      buildV19CutoverTransactions({
+        ...decisions(),
+        nodeRelease: undefined,
+      }).some((tx) => tx.to === addr(9)),
+    ).to.equal(false);
+  });
+
   it("upgrades the registry right after Interfold and before the Large threshold", function () {
     const txs = buildV19CutoverTransactions(decisions());
     // A registry that predates `Large` rejects a size-3 E3 in its `E3` decode, so it must be

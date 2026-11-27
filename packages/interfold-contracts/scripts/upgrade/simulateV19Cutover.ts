@@ -69,7 +69,14 @@ function run(
   );
   const result = spawnSync(command, args, {
     cwd,
-    env: { ...process.env, RPC_URL: RPC, PRIVATE_KEY: TEST_KEY, ...env },
+    // Source verification waits for confirmations that an idle fork never mines.
+    env: {
+      ...process.env,
+      RPC_URL: RPC,
+      PRIVATE_KEY: TEST_KEY,
+      SKIP_SOURCE_VERIFICATION: "1",
+      ...env,
+    },
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });

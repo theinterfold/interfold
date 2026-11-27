@@ -8,7 +8,8 @@
 // policy. Requests stay paused until `resume` builds the unpause batch.
 //
 //   prepare   deploys the implementation and the BFV routes with the operator key, then writes
-//             the plan, the governance batch and the Aragon Safe batch.
+//             the plan, the governance batch and the Aragon Safe batch. With `--pause-in-batch`
+//             and requests open, the batch pauses requests itself as its first action.
 //   validate  checks the chain against the plan after governance executed the batch. It only
 //             reads, so it can run any number of times; `--write-records` then updates the
 //             deployment record and `deployed_contracts.json`.
@@ -188,6 +189,8 @@ function batchPath(config: ProtocolConfigFile, stage: string): string {
 
 /** The decisions that `prepare` reads from the chain; the batch follows from them alone. */
 export interface V19CutoverDecisions {
+  /** Pause requests as the first action (`--pause-in-batch` while requests are open). */
+  pauseRequests?: boolean;
   interfold: string;
   interfoldProxyAdmin: string;
   interfoldImplementation: string;
@@ -221,7 +224,26 @@ export interface V19CutoverDecisions {
 export function buildV19CutoverTransactions(
   decisions: V19CutoverDecisions,
 ): SafeTransaction[] {
-  const txs: SafeTransaction[] = [
+  const call = (functionName: string, args: unknown[]) =>
+    safeTx(
+      decisions.interfold,
+      interfoldInterface.encodeFunctionData(functionName as any, args as any),
+    );
+  const txs: SafeTransaction[] = [];
+  if (decisions.pauseRequests) {
+    txs.push(call("setRequestsPaused", [true]));
+    // prepare checked the drain while requests were open. The release setter checks it again on
+    // chain; without that action, the batch asks the registry directly.
+    if (!decisions.nodeRelease) {
+      txs.push(
+        safeTx(
+          decisions.nodeReleaseRegistry,
+          releaseInterface.encodeFunctionData("assertUpgradeWindow"),
+        ),
+      );
+    }
+  }
+  txs.push(
     safeTx(
       decisions.interfoldProxyAdmin,
       proxyAdminInterface.encodeFunctionData("upgradeAndCall", [
@@ -238,12 +260,7 @@ export function buildV19CutoverTransactions(
         "0x",
       ]),
     ),
-  ];
-  const call = (functionName: string, args: unknown[]) =>
-    safeTx(
-      decisions.interfold,
-      interfoldInterface.encodeFunctionData(functionName as any, args as any),
-    );
+  );
   for (const paramSet of decisions.paramSets) {
     txs.push(call("setParamSet", [paramSet.index, paramSet.encoded]));
   }
@@ -536,6 +553,10 @@ async function requireDrainedAndPaused(
   if (!(await interfold.requestsPaused())) {
     throw new Error("Pause E3 requests before the cutover");
   }
+  await requireDrained(interfold, registry);
+}
+
+async function requireDrained(interfold: any, registry: any): Promise<void> {
   const [activeE3s, unreleased] = await Promise.all([
     interfold.activeE3Count(),
     registry.unreleasedCommitteeCount(),
@@ -617,7 +638,16 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
     config.protocolOwner,
     "CiphernodeRegistry ProxyAdmin owner",
   );
-  await requireDrainedAndPaused(interfold, registry);
+  // `--pause-in-batch` lets governance sign the pause and the cutover once: the batch pauses
+  // requests as its first action. The drain check then holds only when prepare runs, so read
+  // `activeE3Count` and `unreleasedCommitteeCount` again right before the batch executes.
+  const pauseRequests =
+    hasFlag("pause-in-batch") && !(await interfold.requestsPaused());
+  if (pauseRequests) {
+    await requireDrained(interfold, registry);
+  } else {
+    await requireDrainedAndPaused(interfold, registry);
+  }
 
   // A stale record would make the plan describe a different upgrade than the one executed.
   const liveImplementation = await proxyImplementation(
@@ -765,6 +795,7 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
     await interfold.getCiphertextVerifier(BFV_SCHEME_ID),
   );
   const txs = buildV19CutoverTransactions({
+    pauseRequests,
     interfold: deployment.interfold,
     interfoldProxyAdmin: deployment.interfoldProxyAdmin,
     interfoldImplementation: upgrade.implementation,
@@ -791,8 +822,7 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
 
   const rawBatchFile = batchPath(config, "cutover");
   const title = `${config.name} v0.19 cutover`;
-  const description =
-    "Upgrade Interfold and CiphernodeRegistryOwnable, register the BFV parameters, install the BFV routers, wire the OpenVM CRISP program and raise the node release while requests stay paused.";
+  const description = `${pauseRequests ? "Pause requests, then u" : "U"}pgrade Interfold and CiphernodeRegistryOwnable, register the BFV parameters, install the BFV routers, wire the OpenVM CRISP program and raise the node release while requests stay paused.`;
   const batch = governanceBatch(config, txs);
   batch.meta.name = title;
   batch.meta.description = description;
@@ -906,7 +936,7 @@ v0.19 cutover prepared
   node release:             ${plan.nodeRelease.version} (protocol ${plan.nodeRelease.protocolVersion}, generation ${plan.nodeRelease.nodeGeneration})${plan.nodeReleasePolicyUpdated ? "" : " already required"}
   governance batch:         ${plan.safeTransactions} (${txs.length} transactions)
   Aragon Safe batch:        ${plan.governanceSafeBuilder ?? "not configured"}
-  requests remain paused after execution
+  requests:                 ${pauseRequests ? "paused by the batch (first action); check activeE3Count and unreleasedCommitteeCount are 0 right before it executes" : "already paused"}; they remain paused after execution
 `);
   return plan;
 }
