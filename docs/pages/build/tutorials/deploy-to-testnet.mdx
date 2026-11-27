@@ -30,8 +30,8 @@ register it, and your server and client use the testnet.
 <Callout type='warning'>
   E3 requests on Sepolia are paused. `requestsPaused()` on the `Interfold` contract returns `true`,
   and `request` reverts with `RequestsPaused`. The owner of the Interfold contract unpauses requests
-  after operators that run the 0.20.0-dev.3 release (`protocol_version` 9, `node_generation` 2)
-  register. Until then, you can deploy your program but you cannot run an E3.
+  after operators that run the 0.20.0 release (`protocol_version` 10, `node_generation` 2) register.
+  Until then, you can deploy your program but you cannot run an E3.
 </Callout>
 
 ## Sepolia protocol contracts
@@ -41,20 +41,20 @@ These addresses come from `deployments/manifest.json` (chain ID 11155111), excep
 
 | Contract                       | Address                                      | Deploy block | Role                                                        |
 | ------------------------------ | -------------------------------------------- | ------------ | ----------------------------------------------------------- |
-| `Interfold`                    | `0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26` | 12050035     | Requests, stages, fees, and outputs of each E3              |
-| `CiphernodeRegistry`           | `0x895392D5782E78768A35B1aDfc5b0BD1faB259e4` | 12050030     | `CiphernodeRegistryOwnable`: committees and committee keys  |
-| `BondingRegistry`              | `0x8f42eD45556bC8fF8949c37c7644Af9Cf321108F` | 12050022     | Operator bonds and tickets                                  |
-| `SlashingManager`              | `0xa82F589B29BD5c2392b7127Cba8727Af2bbEd84D` | 12050027     | Slashing of ciphernodes that break protocol rules           |
+| `Interfold`                    | `0x5611c8aa517FE57D05229Ff94eA37E88b1b8FDDB` | 12219881     | Requests, stages, fees, and outputs of each E3              |
+| `CiphernodeRegistry`           | `0x60b55A3cD65A48129F41a20fe09056E895f86785` | 12219876     | `CiphernodeRegistryOwnable`: committees and committee keys  |
+| `BondingRegistry`              | `0x776F3F494B9935BFe36F29bc0CC84855cee6c5c1` | 12219784     | Operator bonds and tickets                                  |
+| `SlashingManager`              | `0x75a608b57E4E800c27442586839C6357d04b4057` | 12219872     | Slashing of ciphernodes that break protocol rules           |
 | `MockUSDC` (fee token)         | `0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B` | 11856062     | Test USDC, 6 decimals. Anyone can mint it. It pays E3 fees. |
 | `InterfoldToken` (FOLD)        | `0x3192Ee1FeE48159807058aA78038cf80cB3450Cb` | 11873112     | Governance and utility token. Operators bond FOLD.          |
-| `InterfoldTicketToken` (tFOLD) | `0xE7cCF95F36131340bdAB122C4cc09787D28217e5` | 12050025     | Non-transferable operator tickets for sortition             |
-| `E3RefundManager`              | `0x272f3A25E30990A7C30b7B90a240e7afe4365349` | 12050041     | Refunds for failed E3s                                      |
-| `NodeReleaseRegistry`          | `0xd6d7D4839985BFEB5d6440A1ECe594e288C128e6` | 12050048     | The ciphernode releases that can join new E3s               |
-| `BondedVotes`                  | `0xfbd932BD297e9C7261A384925E78371C7B1FEc7a` | 12050190     | Voting power of locked and bonded FOLD                      |
-| `BfvPkVerifierRouter`          | `0xA5a95C7aBdFdC814f4E724743CFD20Cc50ba7E5B` | 12050098     | Verifies the committee public key proofs                    |
-| `BfvDecryptionVerifierRouter`  | `0x2e66AE65d8eF5399b231113aFE4E06a175F0A20E` | 12050099     | Verifies the decryption proofs                              |
-| `OpenVmBfvCiphertextVerifier`  | `0x86A4C3CF4026599ed521738cd534f1C0354f77fA` | 12050706     | Ciphertext verifier for BFV. It wraps a mock.               |
-| `MockE3Program`                | `0xc4C83c3C94e9360C136f3cd022925b4979BD580b` | 12050024     | Test E3 program. The deployment registers it.               |
+| `InterfoldTicketToken` (tFOLD) | `0xdFAa93b080CAeBea1C66d141eE9387A5d3f19ae8` | 12219870     | Non-transferable operator tickets for sortition             |
+| `E3RefundManager`              | `0xAF5127fe261308d95956d4C401BFc9A49a25A00f` | 12219884     | Refunds for failed E3s                                      |
+| `NodeReleaseRegistry`          | `0xcCce682A95533e4248811e214eaC3A6dd375417e` | 12219891     | The ciphernode releases that can join new E3s               |
+| `BondedVotes`                  | `0x9e32510C3249Bb0EfBC363929ED7278406a6e8B4` | 12220008     | Voting power of locked and bonded FOLD                      |
+| `BfvPkVerifierRouter`          | `0x1c200BfDf2aE78FD7C317329b99951B3409F4CEc` | 12219949     | Verifies the committee public key proofs                    |
+| `BfvDecryptionVerifierRouter`  | `0xBa5a8e8cc61d2ca9ec7FE2ba7AaD9AdBA22BbA80` | 12219950     | Verifies the decryption proofs                              |
+| `OpenVmBfvCiphertextVerifier`  | `0xf78e4F492C190D5ED5F17Ba12dcb37335f241553` | 12220031     | Ciphertext verifier for BFV. It wraps a mock.               |
+| `MockE3Program`                | `0xa900b941d05c29486E9b618fa6Cb5e58b92C7fD6` | 12219869     | Test E3 program. The deployment registers it.               |
 | `Faucet`                       | `0x1B4340A65BB669267BF5DE37385B139987C3F09c` | 11873271     | Test faucet. It sends 1000 FOLD and 1000 USDC               |
 
 `MockUSDC` is a test token. Anyone can call its `mint` function. The deployment uses the same token
@@ -101,7 +101,7 @@ Set the same values in your shell for the `cast` commands, and add the Interfold
 
 ```bash
 source .env
-INTERFOLD_ADDRESS=0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26
+INTERFOLD_ADDRESS=0x5611c8aa517FE57D05229Ff94eA37E88b1b8FDDB
 ```
 
 ### Get Sepolia USDC
@@ -129,8 +129,8 @@ Hardhat network name (`readDeploymentArgs`). Add a `sepolia` object next to `loc
   "localhost": { "...": "..." },
   "sepolia": {
     "Interfold": {
-      "address": "0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26",
-      "blockNumber": 12050035
+      "address": "0x5611c8aa517FE57D05229Ff94eA37E88b1b8FDDB",
+      "blockNumber": 12219881
     }
   }
 }
@@ -149,14 +149,14 @@ chains:
     chain_id: 11155111
     contracts:
       interfold:
-        address: '0xb35EE9ed8BE5967daabBA8c2e817C52D0b57ac26'
-        deploy_block: 12050035
+        address: '0x5611c8aa517FE57D05229Ff94eA37E88b1b8FDDB'
+        deploy_block: 12219881
       ciphernode_registry:
-        address: '0x895392D5782E78768A35B1aDfc5b0BD1faB259e4'
-        deploy_block: 12050030
+        address: '0x60b55A3cD65A48129F41a20fe09056E895f86785'
+        deploy_block: 12219876
       bonding_registry:
-        address: '0x8f42eD45556bC8fF8949c37c7644Af9Cf321108F'
-        deploy_block: 12050022
+        address: '0x776F3F494B9935BFe36F29bc0CC84855cee6c5c1'
+        deploy_block: 12219784
       fee_token:
         address: '0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B'
         deploy_block: 11856062
@@ -280,8 +280,8 @@ with `E3ProgramNotAllowed`.
 ### Check the protocol ciphertext verifier
 
 Every output proof must pass the ciphertext verifier that the owner set for BFV. On Sepolia, this is
-`OpenVmBfvCiphertextVerifier` at `0x86A4C3CF4026599ed521738cd534f1C0354f77fA`. It wraps
-`MockOpenVmReceiptVerifier` at `0x226436d8A72357c7992896B37f0A2E00dCb6A341`, which accepts every
+`OpenVmBfvCiphertextVerifier` at `0xf78e4F492C190D5ED5F17Ba12dcb37335f241553`. It wraps
+`MockOpenVmReceiptVerifier` at `0xA3E42546Bc343ef68dd9DB78798D87861BE8e1A5`, which accepts every
 receipt. Read the verifier address:
 
 ```bash

@@ -83,7 +83,7 @@ const ALLOWED: Record<string, string> = {
 
   // An E3 program belongs to its application, not to the protocol. See the
   // comment on `CONTRACT_KEYS` in packages/interfold-contracts/scripts/genManifest.ts.
-  '0x25df8d3c04d67efb6198e215963d19a8d119adff': 'CRISPProgram, sepolia',
+  '0xeca6589a150905e7a52111b18610cb098159bc22': 'CRISPProgram, sepolia',
   '0x1ea4dbdec0f2f1e9235915847fc59ef4045eee28': 'CRISPProgram, mainnet',
   // The dashboard still lists the E3s of this earlier mainnet CRISP program.
   '0x53fcdb21e73a461cfe6c64b19855204384b91ba3': 'CRISPProgram, mainnet, previous deployment',
@@ -91,15 +91,15 @@ const ALLOWED: Record<string, string> = {
   // Sepolia contracts that the docs list but the manifest does not publish (it publishes only
   // the CONTRACT_KEYS set). Source: packages/interfold-contracts/deploy/protocol/sepolia-protocol.deployment.json
   // and packages/crisp-contracts/deployed_contracts.json in the CRISP repository.
-  '0x226436d8a72357c7992896b37f0a2e00dcb6a341': 'MockOpenVmReceiptVerifier (CRISP), sepolia',
-  '0xb5cde772357c9db2d2515cf94daa0696c9a2fb17': 'MockCrispDataAvailabilityVerifier (CRISP), sepolia',
-  '0x0f5f300581273c7986095b76f1d718fe87031ff1': 'HonkVerifier (CRISP), sepolia',
-  '0x584f6b4f0ea4a1b0a94b7224cdfadb3fb5eea7d0': 'OnchainHonkVerifier (CRISP), sepolia',
-  '0xe7d5a0a91a616a78daf5753dbe2ea63edbb9f4f3': 'MockVotingToken (CRISP), sepolia',
-  '0xd3a7998d9df56ce2218a26fdc36f3b27870b1b5f': 'BondedCheckpoints, sepolia',
-  '0x06fb4dee06483988cf0292691ef46a1e70f3057f': 'SelfRegistry (CRISP), sepolia',
-  '0xb34a7998d3960d1e0a91b0cdcfb98d57d66dfea8': 'ChainlinkVrfRandomnessProvider, sepolia',
-  '0xfbd932bd297e9c7261a384925e78371c7b1fec7a': 'BondedVotes, sepolia',
+  '0xa3e42546bc343ef68dd9db78798d87861be8e1a5': 'MockOpenVmReceiptVerifier (CRISP), sepolia',
+  '0x258ee786cf73565eac606e09ed93d40e349481bc': 'MockCrispDataAvailabilityVerifier (CRISP), sepolia',
+  '0x6898076f676cf2121465c7989dc417de7d245d7c': 'HonkVerifier (CRISP), sepolia',
+  '0xe77af9b6c13dba65ef103b9971367ca21e686ba9': 'OnchainHonkVerifier (CRISP), sepolia',
+  '0x9d2bd658ab14457f6fffaacc2d5061845dd22818': 'MockVotingToken (CRISP), sepolia',
+  '0x2c25c8faf800d60ad510182d288d60f200be0f3d': 'BondedCheckpoints, sepolia',
+  '0x3c906be82fc4c642c08db141c7f85254fd792b8e': 'SelfRegistry (CRISP), sepolia',
+  '0x59f508169bd456f35cce7cc4289d7e85145758fb': 'ChainlinkVrfRandomnessProvider, sepolia',
+  '0x9e32510c3249bb0efbc363929ed7278406a6e8b4': 'BondedVotes, sepolia',
 
   // TODO: record this in deployed_contracts.json so the manifest can publish
   // it. Until then no check can tell a correct value here from a stale one.
