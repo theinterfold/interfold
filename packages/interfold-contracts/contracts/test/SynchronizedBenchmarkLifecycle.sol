@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 pragma solidity 0.8.28;
 
+import { Proxy } from "@openzeppelin/contracts/proxy/Proxy.sol";
 import { Interfold } from "../Interfold.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { BfvProtocol } from "../lib/BfvProtocol.sol";
@@ -10,9 +11,14 @@ import {
     SynchronizedDecryptionVerifier
 } from "../verifiers/bfv/SynchronizedDecryptionVerifier.sol";
 
-/// One private deployment per benchmark profile. Interfold.request performs the actual snapshot.
-library SynchronizedBenchmarkQuote {
-    function validate(
+/// @dev Link only on the private benchmark chain. Interfold still takes the request snapshot;
+/// all lifecycle selectors except the quote check delegate to the normal library.
+contract SynchronizedBenchmarkLifecycle is Proxy {
+    function _implementation() internal pure override returns (address) {
+        return address(InterfoldLifecycle);
+    }
+
+    function validateQuoteLimit(
         address feeToken,
         address expectedToken,
         uint8 paramSet,
@@ -51,23 +57,6 @@ library SynchronizedBenchmarkQuote {
             size,
             ActiveCryptoConfig.configIdForRequest(paramSet, size),
             maxFee,
-            fee
-        );
-    }
-}
-
-contract SynchronizedBenchmarkInterfold is Interfold {
-    function _validateRequestQuote(
-        E3RequestParams calldata params,
-        uint256 fee
-    ) internal view override {
-        SynchronizedBenchmarkQuote.validate(
-            address(feeToken),
-            address(params.expectedFeeToken),
-            params.paramSet,
-            uint8(params.committeeSize),
-            params.expectedCryptoConfigId,
-            params.maxFee,
             fee
         );
     }

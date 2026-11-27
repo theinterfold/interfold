@@ -133,11 +133,13 @@ python3 scripts/circuits/guard-proof-rss.py pnpm bench:circuits request \
   proof against the selected child pins and public sample expectations. `--circuit` includes its
   prerequisites; `--leaf-only` stops after C7; `--witness-only` stops at the two C6 witnesses.
 - **`request` / `protocol`:** the regular `committee:new` task submits to a private, temporary Anvil
-  deployment. Its controller admits the selected candidate on this chain. The mined request freezes
-  the DKG and decryption wrappers before ticket submission; the decryption default then rotates. The
-  signed recovery scenario uses that E3, its registry and finalized committee through key chunks,
-  ciphertext publication, aggregator failover and the mined plaintext. Production admission stays
-  disabled. The application compute verifier and HTTP DA object service are test fixtures.
+  deployment. The production `Interfold` implementation is linked to a benchmark-only lifecycle
+  adapter: it checks the candidate quote and forwards other calls to the normal library. The mined
+  request freezes the DKG and decryption wrappers before ticket submission; the decryption default
+  then rotates. The signed recovery scenario uses that E3, its registry and finalized committee
+  through key chunks, ciphertext publication, aggregator failover and the mined plaintext.
+  Production admission stays disabled. The application compute verifier and HTTP DA object service
+  are test fixtures.
 - **Timing:** `request_receipt.json` records the host time from the CLI's `request(...)` dispatch to
   receiving the plaintext transaction receipt. It also records the longer time from CLI invocation,
   which includes capacity and fee preflights. Local deployment and circuit builds precede both

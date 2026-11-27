@@ -188,6 +188,9 @@ Minimum. The linked receipts preserve all four transaction hashes, the ciphertex
 request identity and verifier rotation. Matching numeric E3 IDs and addresses across runs reflect
 deterministic deployments on separate chains.
 
+The SyncDec receipts above used the original benchmark controller. Current benchmark runs link the
+quote check through the lifecycle library, so their transaction gas can differ.
+
 After each SS receipt, replaying the actual verifier subcalls as standalone estimates gave
 **3,122,591 / 3,122,531 gas** for DKG and **3,449,925 / 3,450,069 gas** for decryption (insecure /
 secure). The SyncDec standalone _decryption graph_ estimates above were **3,567,383 / 3,567,371

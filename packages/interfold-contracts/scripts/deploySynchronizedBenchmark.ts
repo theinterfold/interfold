@@ -41,19 +41,18 @@ const system = await deployInterfoldSystem({
 const { interfold, ciphernodeRegistry, owner, mocks } = system;
 const address = await interfold.getAddress();
 const registry = await ciphernodeRegistry.getAddress();
-const quote = await ethers.deployContract("SynchronizedBenchmarkQuote", {
-  libraries: { InterfoldLifecycle: system.interfoldLifecycle },
-});
-const implementation = await ethers.deployContract(
-  "SynchronizedBenchmarkInterfold",
+const benchmarkLifecycle = await ethers.deployContract(
+  "SynchronizedBenchmarkLifecycle",
   {
-    libraries: {
-      InterfoldLifecycle: system.interfoldLifecycle,
-      InterfoldPricing: system.interfoldPricing,
-      SynchronizedBenchmarkQuote: await quote.getAddress(),
-    },
+    libraries: { InterfoldLifecycle: system.interfoldLifecycle },
   },
 );
+const implementation = await ethers.deployContract("Interfold", {
+  libraries: {
+    InterfoldLifecycle: await benchmarkLifecycle.getAddress(),
+    InterfoldPricing: system.interfoldPricing,
+  },
+});
 const admin = await ethers.getContractAt(
   "ProxyAdmin",
   await getProxyAdmin(ethers.provider, address),
