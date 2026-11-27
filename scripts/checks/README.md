@@ -54,8 +54,9 @@ review:
 - **Application execution** is the program packages (Secure Process, OpenVM types and host, program
   server and runner), the OpenVM worker, and the default template's program, runner, and guest. It
   may link only itself and the reviewed shared libraries: the BFV client and parameters and the
-  ZK-configuration/witness, polynomial, committee, and SAFE libraries below them. General utilities
-  are not shared libraries; `e3-utils`, for example, brings Actix and Alloy.
+  ZK-configuration/witness, polynomial, committee, committee-hash (Alloy primitives and ABI types
+  only), and SAFE libraries below them. General utilities are not shared libraries; `e3-utils`, for
+  example, brings Actix and Alloy.
 - **The node binary**, `e3-cli` (the `interfold` executable), may not link application execution.
   Its project commands build and run the project's own runner binary, so the project's pinned
   program crates process its data, and the node carries no OpenVM or program-service dependencies.

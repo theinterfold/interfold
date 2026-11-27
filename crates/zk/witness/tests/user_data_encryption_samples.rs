@@ -53,6 +53,12 @@ fn insecure_e0_bound_matches_error1_sampler() {
     assert_eq!(bounds.e0_bound, BigUint::from(460800u32));
     assert_eq!(bounds.e1_bound, BigUint::from(20u32));
     assert_eq!(bits.e0_bit, 19);
+
+    let config = Configs::for_preset(BfvPreset::InsecureThreshold).unwrap();
+    // B_Enc of the insecure (degree 128) search: ⌊B_Enc(B_Enc+1)/3⌋ is its error1 variance.
+    assert_eq!(config.bounds.e0_bound, BigUint::from(389120u32));
+    assert_eq!(config.bounds.e1_bound, BigUint::from(20u32));
+    assert_eq!(config.bits.e0_bit, 19);
 }
 
 /// ct1 hard-codes the CRS, so a key with a random `a` cannot be proven; say so up front.

@@ -5,9 +5,7 @@
 use e3_fhe_params::BfvPreset;
 use e3_zk_witness::WitnessError;
 use fhe::bfv::BfvParameters;
-use fhe::trbfv::{
-    SmudgingBoundCalculator, SmudgingBoundCalculatorConfig, SsSmudgingNoiseGenerator,
-};
+use fhe::trbfv::{SmudgingBoundCalculator, SsSmudgingNoiseGenerator};
 use num_bigint::BigInt;
 use rand::CryptoRng;
 use std::sync::Arc;
@@ -18,11 +16,16 @@ pub(crate) fn generator(
     ciphertexts: usize,
     preset: BfvPreset,
 ) -> Result<SsSmudgingNoiseGenerator, WitnessError> {
-    let config = SmudgingBoundCalculatorConfig::new_multiplicative(
+    let mult_depth = preset
+        .search_defaults()
+        .ok_or_else(|| WitnessError::Sample("Preset has no search defaults".into()))?
+        .mult_depth;
+    let config = e3_fhe_params::smudging_bound_config(
+        preset,
         params.clone(),
         parties,
         ciphertexts,
-        0,
+        mult_depth,
         preset
             .lambda()
             .map_err(|e| WitnessError::Sample(e.to_string()))?,

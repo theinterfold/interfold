@@ -76,3 +76,16 @@ pub(crate) fn context(
     }
     Ok(())
 }
+pub(crate) fn committee(
+    configured: e3_committee::CiphernodesCommitteeSize,
+    supplied: &e3_committee::CiphernodesCommittee,
+) -> Result<(), crate::WitnessError> {
+    let expected = configured.values();
+    if (expected.n, expected.threshold, expected.h) != (supplied.n, supplied.threshold, supplied.h)
+    {
+        return Err(crate::WitnessError::Other(
+            "witness committee does not match the concrete configuration".into(),
+        ));
+    }
+    Ok(())
+}

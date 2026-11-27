@@ -15,6 +15,7 @@ const SHARED = [
   'e3-polynomial',
   'e3-polynomial-fhe',
   'e3-committee',
+  'e3-committee-hash',
   'e3-safe',
 ]
 // The permitted graph in miniature: application and node share libraries, tests may cross, and

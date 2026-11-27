@@ -3605,12 +3605,20 @@ name = "e3-bfv-client"
 version = "0.20.0"
 dependencies = [
  "anyhow",
+ "e3-committee",
  "e3-fhe-params",
+ "e3-polynomial",
+ "e3-polynomial-fhe",
  "e3-zk-config",
+ "e3-zk-samples",
  "e3-zk-witness",
  "fhe",
+ "fhe-math",
  "fhe-traits",
+ "num-bigint 0.5.1",
+ "prost 0.14.4",
  "rand 0.9.5",
+ "serde_json",
  "thiserror 1.0.69",
 ]
 
@@ -3752,7 +3760,8 @@ dependencies = [
 name = "e3-committee-hash"
 version = "0.20.0"
 dependencies = [
- "alloy",
+ "alloy-primitives",
+ "alloy-sol-types",
  "hex",
  "serde",
 ]
@@ -4847,7 +4856,9 @@ dependencies = [
 name = "e3-zk-samples"
 version = "0.20.0"
 dependencies = [
+ "alloy-primitives",
  "e3-committee",
+ "e3-committee-hash",
  "e3-fhe-params",
  "e3-polynomial",
  "e3-polynomial-fhe",
@@ -4860,6 +4871,7 @@ dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
  "rand 0.9.5",
+ "toml",
  "zeroize",
 ]
 
@@ -4867,10 +4879,12 @@ dependencies = [
 name = "e3-zk-witness"
 version = "0.20.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "e3-committee",
+ "e3-committee-hash",
  "e3-fhe-params",
  "e3-polynomial",
  "e3-polynomial-fhe",

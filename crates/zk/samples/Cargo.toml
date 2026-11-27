@@ -9,6 +9,8 @@ publish = false
 
 [dependencies]
 zeroize.workspace = true
+alloy-primitives.workspace = true
+e3-committee-hash.workspace = true
 e3-zk-witness.workspace = true
 e3-zk-config.workspace = true
 e3-committee.workspace = true
@@ -24,4 +26,5 @@ rand.workspace = true
 
 [dev-dependencies]
 fhe = { workspace = true, features = ["synchronized-decryption"] }
+toml.workspace = true
 num-traits.workspace = true

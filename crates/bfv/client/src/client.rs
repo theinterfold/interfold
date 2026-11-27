@@ -9,11 +9,44 @@ use e3_fhe_params::{try_build_bfv_params_arc, BfvParamSet, BfvPreset};
 use e3_zk_witness::threshold::user_data_encryption::{
     encrypt_and_prepare, public_key_on_protocol_crs, UserDataEncryptionCircuitData,
 };
+use e3_zk_witness::threshold::user_data_encryption_chunked::Inputs as ChunkedUserDataEncryptionInputs;
 use fhe::bfv::{BfvParameters, Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::Error as FheError;
 use fhe_traits::{DeserializeParametrized, FheEncoder, FheEncrypter, Serialize};
 use rand::rng;
 use std::sync::Arc;
+
+/// The preset of a committee key with these parameters. An l-BFV committee publishes its key as an
+/// envelope, which names the l-BFV path; the parameters alone resolve to the trBFV label.
+fn key_preset(
+    public_key: &[u8],
+    degree: usize,
+    plaintext_modulus: u64,
+    moduli: &[u64],
+) -> Option<BfvPreset> {
+    let preset = BfvPreset::from_threshold_parameters(degree, plaintext_modulus, moduli)?;
+    if crate::is_lbfv_key_envelope(public_key) {
+        preset.lbfv_label()
+    } else {
+        Some(preset)
+    }
+}
+
+fn decode_public_key(
+    public_key: &[u8],
+    params: &Arc<BfvParameters>,
+    preset: Option<BfvPreset>,
+) -> Result<PublicKey> {
+    let public_key = if crate::is_lbfv_key_envelope(public_key) {
+        let preset = preset
+            .ok_or_else(|| anyhow!("Unsupported BFV parameters for an l-BFV key envelope"))?;
+        crate::lbfv_key_envelope_encryption_key(public_key, preset)?
+    } else {
+        public_key.to_vec()
+    };
+    PublicKey::from_bytes(&public_key, params)
+        .map_err(|error| anyhow!("Error deserializing public key: {error}"))
+}
 
 fn build_client_params(
     degree: usize,
@@ -55,8 +88,8 @@ where
 {
     let params = build_client_params(degree, plaintext_modulus, moduli, None)?;
 
-    let pk = PublicKey::from_bytes(&public_key, &params)
-        .map_err(|e| anyhow!("Error deserializing public key:{e}"))?;
+    let preset = key_preset(&public_key, degree, plaintext_modulus, moduli);
+    let pk = decode_public_key(&public_key, &params, preset)?;
 
     let pt = Plaintext::try_encode(&data, Encoding::poly(), &params)
         .map_err(|e: FheError| anyhow!("Error encoding plaintext: {e}"))?;
@@ -104,14 +137,13 @@ pub fn bfv_verifiable_encrypt<T>(
 where
     Plaintext: for<'a> FheEncoder<&'a T, Error = FheError>,
 {
-    let preset = BfvPreset::from_threshold_parameters(degree, plaintext_modulus, &moduli)
-        .ok_or_else(|| {
-            anyhow!(
-                "Unsupported BFV threshold parameters for verifiable encryption: degree={degree}, \
+    let preset = key_preset(&public_key, degree, plaintext_modulus, &moduli).ok_or_else(|| {
+        anyhow!(
+            "Unsupported BFV threshold parameters for verifiable encryption: degree={degree}, \
                  plaintext_modulus={plaintext_modulus}, moduli_count={}",
-                moduli.len()
-            )
-        })?;
+            moduli.len()
+        )
+    })?;
     let preset_parameters = BfvParamSet::from(preset);
     let params = build_client_params(
         degree,
@@ -120,23 +152,38 @@ where
         preset_parameters.error1_variance,
     )?;
 
-    let pk = PublicKey::from_bytes(&public_key, &params)
-        .map_err(|e| anyhow!("Error deserializing public key: {}", e))?;
+    let pk = decode_public_key(&public_key, &params, Some(preset))?;
 
     let plaintext = Plaintext::try_encode(&data, Encoding::poly(), &params)
         .map_err(|e: FheError| anyhow!("Error encoding plaintext: {}", e))?;
 
-    let config = e3_zk_config::threshold::user_data_encryption::Configs::new(&params)?;
-    let (ciphertext, inputs) = encrypt_and_prepare(
-        &config,
-        &UserDataEncryptionCircuitData {
-            public_key: pk,
-            plaintext,
-        },
-    )?;
-
-    let encrypted_data = ciphertext.to_bytes();
-    let circuit_inputs = inputs.to_json().to_string();
+    // The trBFV path proves user encryption with `user_data_encryption`'s ct0/ct1; the l-BFV path
+    // with the chunked ct0/ct1 pipeline, which takes its own witness.
+    let (encrypted_data, circuit_inputs) = if e3_fhe_params::is_lbfv_path(preset) {
+        let config = e3_zk_config::threshold::user_data_encryption_chunked::Configs::new(&params)?;
+        let (ciphertext, intermediates) =
+            pk.try_encrypt_with_intermediates(&plaintext, &mut rng())?;
+        let inputs = ChunkedUserDataEncryptionInputs::compute(
+            &config,
+            &UserDataEncryptionCircuitData {
+                public_key: pk,
+                plaintext,
+            },
+            &ciphertext,
+            &intermediates,
+        )?;
+        (ciphertext.to_bytes(), inputs.to_json().to_string())
+    } else {
+        let config = e3_zk_config::threshold::user_data_encryption::Configs::new(&params)?;
+        let (ciphertext, inputs) = encrypt_and_prepare(
+            &config,
+            &UserDataEncryptionCircuitData {
+                public_key: pk,
+                plaintext,
+            },
+        )?;
+        (ciphertext.to_bytes(), inputs.to_json().to_string())
+    };
 
     Ok(VerifiableEncryptionResult {
         encrypted_data,
@@ -178,6 +225,13 @@ pub fn compute_pk_commitment(
 ) -> Result<[u8; 32]> {
     use e3_zk_witness::threshold::user_data_encryption::compute_public_key_commitment;
 
+    if crate::is_lbfv_key_envelope(&public_key) {
+        let preset = key_preset(&public_key, degree, plaintext_modulus, &moduli)
+            .ok_or_else(|| anyhow!("Unsupported BFV parameters for an l-BFV key envelope"))?;
+        return Ok(crate::inspect_lbfv_key_envelope(&public_key, preset)?
+            .0
+            .envelope);
+    }
     let params = build_client_params(degree, plaintext_modulus, &moduli, None)?;
 
     let public_key = PublicKey::from_bytes(&public_key, &params)
@@ -206,6 +260,12 @@ pub fn validate_pk_commitment(
 ) -> Result<()> {
     use e3_zk_witness::threshold::user_data_encryption::compute_public_key_commitment;
 
+    if crate::is_lbfv_key_envelope(public_key) {
+        let preset = key_preset(public_key, degree, plaintext_modulus, &moduli)
+            .ok_or_else(|| anyhow!("Unsupported BFV parameters for an l-BFV key envelope"))?;
+        crate::validate_lbfv_key_envelope(public_key, expected_commitment, preset)?;
+        return Ok(());
+    }
     let params = build_client_params(degree, plaintext_modulus, &moduli, None)?;
     let decoded = PublicKey::from_bytes(public_key, &params)
         .map_err(|e| anyhow!("Error deserializing public key: {e}"))?;
@@ -306,6 +366,7 @@ mod tests {
     use e3_fhe_params::DEFAULT_BFV_PRESET;
     use e3_fhe_params::{build_bfv_params_from_set_arc, BfvParamSet};
     use fhe_traits::FheDecoder;
+    use serde_json::Value;
 
     use super::*;
 
@@ -347,6 +408,77 @@ mod tests {
         assert!(error
             .to_string()
             .contains("Unsupported BFV threshold parameters"));
+    }
+
+    /// For parameters that exist as both a trBFV and an l-BFV preset, the key's format picks the
+    /// witness: a plain key gets the trBFV witness, an l-BFV key envelope gets the chunked witness.
+    #[test]
+    fn verifiable_encryption_witness_follows_the_key_format() -> Result<()> {
+        let parameters = BfvParamSet::from(BfvPreset::InsecureThreshold);
+        let encrypt = |public_key: Vec<u8>| -> Result<Value> {
+            let result = bfv_verifiable_encrypt(
+                [1_u64],
+                public_key,
+                parameters.degree,
+                parameters.plaintext_modulus,
+                parameters.moduli.to_vec(),
+            )?;
+            Ok(serde_json::from_str(&result.circuit_inputs)?)
+        };
+
+        let plain_key = generate_public_key(
+            parameters.degree,
+            parameters.plaintext_modulus,
+            parameters.moduli.to_vec(),
+        )?;
+        let trbfv = encrypt(plain_key)?;
+        assert!(trbfv.get("r").is_some() && trbfv.get("r1is").is_none());
+
+        let lbfv = encrypt(crate::lbfv_key_envelope::tests::envelope()?)?;
+        assert!(lbfv.get("r1is").is_some() && lbfv.get("r").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn envelope_keys_encrypt_and_commit_like_the_proof_commitment() -> Result<()> {
+        let parameters = BfvParamSet::from(BfvPreset::InsecureThreshold);
+        let moduli = parameters.moduli.to_vec();
+        let envelope = crate::lbfv_key_envelope::tests::envelope()?;
+
+        bfv_encrypt(
+            [1_u64],
+            envelope.clone(),
+            parameters.degree,
+            parameters.plaintext_modulus,
+            &moduli,
+        )?;
+
+        let commitment = compute_pk_commitment(
+            envelope.clone(),
+            parameters.degree,
+            parameters.plaintext_modulus,
+            moduli.clone(),
+        )?;
+        let (expected, _, _) =
+            crate::inspect_lbfv_key_envelope(&envelope, BfvPreset::InsecureThresholdLbfv)?;
+        assert_eq!(commitment, expected.envelope);
+
+        validate_pk_commitment(
+            &envelope,
+            commitment,
+            parameters.degree,
+            parameters.plaintext_modulus,
+            moduli.clone(),
+        )?;
+        assert!(validate_pk_commitment(
+            &envelope,
+            [0x55; 32],
+            parameters.degree,
+            parameters.plaintext_modulus,
+            moduli,
+        )
+        .is_err());
+        Ok(())
     }
 
     #[test]

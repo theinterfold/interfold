@@ -75,6 +75,23 @@ impl Inputs {
             ));
         }
 
+        // The trBFV C7 circuit has always truncated the message to its configured prefix.
+        let dropped_non_zero = if e3_fhe_params::is_lbfv_path(config.preset) {
+            data.message_vec
+                .iter()
+                .skip(max_msg_non_zero_coeffs)
+                .filter(|&&v| v != 0)
+                .count()
+        } else {
+            0
+        };
+        if dropped_non_zero > 0 {
+            return Err(WitnessError::Other(format!(
+                "message_vec has {} non-zero coefficient(s) at index >= MAX_MSG_NON_ZERO_COEFFS ({}); they would be silently dropped by truncation",
+                dropped_non_zero, max_msg_non_zero_coeffs
+            )));
+        }
+
         // The circuit takes exactly T+1 shares and T+1 party IDs, and the Lagrange weights pair
         // them by position. One polynomial more would copy into the witness unpaired and make it
         // the wrong shape; one party ID more would weight a share that does not exist.
@@ -191,5 +208,38 @@ impl Inputs {
             "party_ids": bigint_1d_to_json_values(&self.party_ids),
             "message": polynomial_to_toml_json(&self.message),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use e3_committee::CiphernodesCommitteeSize;
+    use e3_fhe_params::BfvPreset;
+
+    /// Build C7 inputs for a message with one non-zero coefficient just past the proven prefix.
+    /// No shares are supplied, so a preset that does not reject the tail stops at the share count.
+    fn compute_with_tail(preset: BfvPreset) -> String {
+        let config = Configs::for_preset(preset, CiphernodesCommitteeSize::Minimum).unwrap();
+        let mut message_vec = vec![0; config.max_msg_non_zero_coeffs];
+        message_vec.push(1);
+        let data = DecryptedSharesAggregationCircuitData {
+            d_share_polys: Vec::new(),
+            reconstructing_parties: Vec::new(),
+            message_vec,
+        };
+        Inputs::compute(&config, &data).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn lbfv_rejects_a_message_tail_that_truncation_would_drop() {
+        assert!(compute_with_tail(BfvPreset::InsecureThresholdLbfv).contains("silently dropped"));
+    }
+
+    #[test]
+    fn trbfv_does_not_reject_a_message_tail() {
+        let error = compute_with_tail(BfvPreset::InsecureThreshold64);
+        assert!(!error.contains("silently dropped"), "{error}");
+        assert!(error.contains("d_share_polys.len()"), "{error}");
     }
 }

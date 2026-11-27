@@ -5,14 +5,20 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Prepare descending, centered CRT coefficients and canonical field/JSON encodings for Noir witnesses.
+use crate::WitnessError;
+
 use ark_ff::BigInteger;
 use ark_ff::PrimeField;
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_polynomial_fhe::{FromFhePolynomial as _, ToPowerBasisPoly};
 use e3_zk_config::field::bigint_to_field;
+use fhe::bfv::SecretKey;
+use fhe_math::rq::{traits::TryConvertFrom, Context, Poly, PowerBasis, RepresentationTag};
 use num_bigint::BigInt;
 use num_bigint::Sign;
 use num_traits::ToPrimitive;
+
+use std::sync::Arc;
 
 /// Prepare descending, centered CRT coefficients for Noir witnesses.
 pub fn fhe_poly_to_crt_centered(
@@ -23,6 +29,59 @@ pub fn fhe_poly_to_crt_centered(
     crt.reverse();
     crt.center(moduli)?;
     Ok(crt)
+}
+
+/// Convert an FHE polynomial to centered CRT form and validate its circuit shape.
+pub fn fhe_poly_to_crt_centered_checked(
+    poly: &impl ToPowerBasisPoly,
+    moduli: &[u64],
+    degree: usize,
+) -> std::result::Result<CrtPolynomial, WitnessError> {
+    let crt = fhe_poly_to_crt_centered(poly, moduli)?;
+    if crt.limbs.len() != moduli.len()
+        || crt
+            .limbs
+            .iter()
+            .any(|limb| limb.coefficients().len() != degree)
+    {
+        return Err(WitnessError::Other(format!(
+            "FHE polynomial is not {} CRT limbs of {degree} coefficients",
+            moduli.len()
+        )));
+    }
+    Ok(crt)
+}
+
+/// Convert an FHE secret key to centered CRT form for circuit witnesses.
+pub fn fhe_secret_key_to_crt_centered(
+    secret_key: &SecretKey,
+    context: &Arc<Context>,
+    moduli: &[u64],
+    degree: usize,
+) -> std::result::Result<CrtPolynomial, WitnessError> {
+    if secret_key.coeffs.len() != degree {
+        return Err(WitnessError::Other(format!(
+            "secret key has {} coefficients; expected {degree}",
+            secret_key.coeffs.len()
+        )));
+    }
+    let poly = Poly::<PowerBasis>::try_convert_from(secret_key.coeffs.as_ref(), context, false)
+        .map_err(|error| WitnessError::Other(error.to_string()))?;
+    fhe_poly_to_crt_centered_checked(&poly, moduli, degree)
+}
+
+/// Verify that an FHE polynomial uses the expected ring context.
+pub fn validate_fhe_poly_context<R: RepresentationTag>(
+    poly: &Poly<R>,
+    context: &Context,
+    name: &str,
+) -> std::result::Result<(), WitnessError> {
+    if poly.ctx().degree != context.degree || poly.ctx().moduli() != context.moduli() {
+        return Err(WitnessError::Other(format!(
+            "{name} context does not match the adapter"
+        )));
+    }
+    Ok(())
 }
 
 /// Normalize to power basis and prepare only the first centered, descending CRT limb.
