@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Subscribes to `AccusationQuorumReached` events and submits committee-attested
+//! Subscribes to `AccusationQuorumReached` and `LbfvAccusationQuorumReached` events and submits committee-attested
 //! slash proposals on the SlashingManager contract. Prefers party-attributed
 //! `proposeSlashByDkgParty` when DKG anchors resolve, and falls back to
 //! operator-attributed `proposeSlash` otherwise.
@@ -33,7 +33,10 @@ use e3_events::EventType;
 use e3_events::InterfoldEvent;
 use e3_events::InterfoldEventData;
 use e3_events::Shutdown;
-use e3_events::{AccusationQuorumReached, CommitteeMemberExcluded, EType, SlashExecuted};
+use e3_events::{
+    AccusationQuorumReached, CommitteeMemberExcluded, EType, LbfvAccusationQuorumReached,
+    SlashExecuted,
+};
 use e3_evm_transactions::require_successful_receipt;
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
 use serde::{Deserialize, Serialize};
@@ -45,13 +48,17 @@ mod effects;
 #[path = "handlers.rs"]
 mod handlers;
 
-/// Submits `AccusationQuorumReached` events as slash proposals on-chain.
+/// Submits `AccusationQuorumReached` and `LbfvAccusationQuorumReached` events as slash proposals
+/// on-chain. The submission logic runs on the l-BFV form, which names the disputed proof's row; a
+/// trBFV report converts with row zero. Each path keeps its own recovery record, so the trBFV
+/// record's persisted layout does not change.
 pub struct SlashingManagerSolWriter<P> {
     provider: EthProvider<P>,
     contract_address: Address,
     bus: BusHandle,
     submissions: SlashSubmissionGate,
     recovery: Option<Persistable<SlashingWriterRecoveryState>>,
+    lbfv_recovery: Option<Persistable<LbfvSlashingWriterRecoveryState>>,
     intent_times: Option<Persistable<SlashIntentTimes>>,
 }
 
@@ -81,7 +88,11 @@ impl Default for SlashingWriterRecoveryState {
 impl SlashingWriterRecoveryState {
     pub fn record(&mut self, event: AccusationQuorumReached) -> Result<()> {
         self.pending
-            .entry(SlashIntentKey::from_quorum(&event)?)
+            .entry(SlashIntentKey::new(
+                &event.e3_id,
+                event.accused,
+                event.proof_type,
+            )?)
             .or_insert(event);
         Ok(())
     }
@@ -103,6 +114,48 @@ impl SlashingWriterRecoveryState {
     }
 
     fn pending_events(&self) -> Vec<AccusationQuorumReached> {
+        self.pending.values().cloned().collect()
+    }
+
+    /// How many slash reports this writer has not yet submitted or seen settled.
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
+}
+
+/// [`SlashingWriterRecoveryState`] of the l-BFV path: its reports name the disputed proof's row.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LbfvSlashingWriterRecoveryState {
+    pub schema_version: u32,
+    pending: BTreeMap<SlashIntentKey, LbfvAccusationQuorumReached>,
+}
+
+impl Default for LbfvSlashingWriterRecoveryState {
+    fn default() -> Self {
+        Self {
+            schema_version: SLASHING_WRITER_RECOVERY_SCHEMA_VERSION,
+            pending: BTreeMap::new(),
+        }
+    }
+}
+
+impl LbfvSlashingWriterRecoveryState {
+    pub fn record(&mut self, event: LbfvAccusationQuorumReached) -> Result<()> {
+        self.pending
+            .entry(SlashIntentKey::from_quorum(&event)?)
+            .or_insert(event);
+        Ok(())
+    }
+
+    fn acknowledge(&mut self, key: &SlashIntentKey) {
+        self.pending.remove(key);
+    }
+
+    fn holds(&self, key: &SlashIntentKey) -> bool {
+        self.pending.contains_key(key)
+    }
+
+    fn pending_events(&self) -> Vec<LbfvAccusationQuorumReached> {
         self.pending.values().cloned().collect()
     }
 
@@ -149,7 +202,7 @@ pub(super) fn now_unix_secs() -> u64 {
 #[rtype(result = "()")]
 struct SubmitSlashIntent {
     key: SlashIntentKey,
-    event: AccusationQuorumReached,
+    event: LbfvAccusationQuorumReached,
     /// A retry after a failed attempt waits the full rank delay again, so the ranks stay apart.
     retry: bool,
 }
@@ -160,7 +213,7 @@ struct SlashSubmissionFinished {
     key: SlashIntentKey,
     terminal: bool,
     acknowledge_recovery: bool,
-    retry_event: Option<AccusationQuorumReached>,
+    retry_event: Option<LbfvAccusationQuorumReached>,
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P> {
@@ -175,6 +228,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P>
             bus: bus.clone(),
             submissions: SlashSubmissionGate::new(),
             recovery: None,
+            lbfv_recovery: None,
             intent_times: None,
         })
     }
@@ -184,10 +238,14 @@ impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P>
         provider: EthProvider<P>,
         contract_address: Address,
         recovery: Persistable<SlashingWriterRecoveryState>,
+        lbfv_recovery: Persistable<LbfvSlashingWriterRecoveryState>,
         intent_times: Persistable<SlashIntentTimes>,
     ) -> Result<Self> {
         let mut submissions = SlashSubmissionGate::new();
         for event in recovery.try_get()?.pending_events() {
+            submissions.admit(event.into())?;
+        }
+        for event in lbfv_recovery.try_get()?.pending_events() {
             submissions.admit(event)?;
         }
         Ok(Self {
@@ -196,6 +254,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P>
             bus: bus.clone(),
             submissions,
             recovery: Some(recovery),
+            lbfv_recovery: Some(lbfv_recovery),
             intent_times: Some(intent_times),
         })
     }
@@ -209,6 +268,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P>
         bus.subscribe_all(
             &[
                 EventType::AccusationQuorumReached,
+                EventType::LbfvAccusationQuorumReached,
                 EventType::CommitteeMemberExcluded,
                 EventType::SlashExecuted,
                 EventType::EffectsEnabled,
@@ -224,6 +284,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P>
         provider: EthProvider<P>,
         contract_address: Address,
         repository: Repository<SlashingWriterRecoveryState>,
+        lbfv_repository: Repository<LbfvSlashingWriterRecoveryState>,
         intent_times: Repository<SlashIntentTimes>,
     ) -> Result<Addr<SlashingManagerSolWriter<P>>> {
         let recovery = repository
@@ -233,14 +294,32 @@ impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P>
             recovery.try_get()?.schema_version == SLASHING_WRITER_RECOVERY_SCHEMA_VERSION,
             "unsupported slashing-writer recovery schema"
         );
+        // The l-BFV record is written when the first l-BFV report arrives, not here: a node that
+        // runs only trBFV E3s keeps the store it had.
+        let lbfv_recovery = Persistable::new(
+            Some(lbfv_repository.read().await?.unwrap_or_default()),
+            lbfv_repository.to_connector(),
+        );
+        anyhow::ensure!(
+            lbfv_recovery.try_get()?.schema_version == SLASHING_WRITER_RECOVERY_SCHEMA_VERSION,
+            "unsupported l-BFV slashing-writer recovery schema"
+        );
         let intent_times = intent_times
             .load_or_default(SlashIntentTimes::default())
             .await?;
-        let addr =
-            Self::from_recovery(bus, provider, contract_address, recovery, intent_times)?.start();
+        let addr = Self::from_recovery(
+            bus,
+            provider,
+            contract_address,
+            recovery,
+            lbfv_recovery,
+            intent_times,
+        )?
+        .start();
         bus.subscribe_all(
             &[
                 EventType::AccusationQuorumReached,
+                EventType::LbfvAccusationQuorumReached,
                 EventType::CommitteeMemberExcluded,
                 EventType::SlashExecuted,
                 EventType::EffectsEnabled,
@@ -295,6 +374,14 @@ mod tests {
         }
     }
 
+    /// The same report on the l-BFV path, which names the disputed proof's row.
+    fn lbfv_slash_intent() -> LbfvAccusationQuorumReached {
+        LbfvAccusationQuorumReached {
+            proof_instance: 3,
+            ..slash_intent().into()
+        }
+    }
+
     #[test]
     fn outbox_coalesces_and_acknowledges() -> Result<()> {
         let intent = slash_intent();
@@ -328,7 +415,7 @@ mod tests {
     /// an acknowledged intent forgets it.
     #[test]
     fn an_intent_keeps_its_first_record_time_until_acknowledged() -> Result<()> {
-        let key = SlashIntentKey::from_quorum(&slash_intent())?;
+        let key = SlashIntentKey::from_quorum(&slash_intent().into())?;
         let mut times = SlashIntentTimes::default();
         assert_eq!(times.recorded_ago(&key, 1_000), std::time::Duration::ZERO);
 
@@ -352,6 +439,15 @@ mod tests {
     /// forgotten time back.
     #[actix::test]
     async fn a_retry_forgets_the_first_record_time_also_after_the_shutdown_drain() -> Result<()> {
+        retry_forgets_the_first_record_time(false).await
+    }
+
+    #[actix::test]
+    async fn an_lbfv_retry_forgets_the_first_record_time_and_keeps_its_own_record() -> Result<()> {
+        retry_forgets_the_first_record_time(true).await
+    }
+
+    async fn retry_forgets_the_first_record_time(lbfv: bool) -> Result<()> {
         use crate::SlashingWriterRepositoryFactory;
         use alloy::{
             network::EthereumWallet, providers::ProviderBuilder, signers::local::PrivateKeySigner,
@@ -381,20 +477,30 @@ mod tests {
         )
         .await?;
         let recovery_repository = repositories.slashing_writer_recovery(1);
+        let lbfv_recovery_repository = repositories.slashing_writer_lbfv_recovery(1);
         let times_repository = repositories.slashing_writer_intent_times(1);
         let writer = SlashingManagerSolWriter::attach_with_recovery(
             &bus,
             provider,
             Address::ZERO,
             recovery_repository.clone(),
+            lbfv_recovery_repository.clone(),
             times_repository.clone(),
         )
         .await?;
 
         // Effects are off, so the writer records the quorum and holds it.
-        let intent = slash_intent();
+        let intent: LbfvAccusationQuorumReached = if lbfv {
+            lbfv_slash_intent()
+        } else {
+            slash_intent().into()
+        };
         let key = SlashIntentKey::from_quorum(&intent)?;
-        bus.publish_without_context(intent.clone())?;
+        if lbfv {
+            bus.publish_without_context(intent.clone())?;
+        } else {
+            bus.publish_without_context(AccusationQuorumReached::try_from(intent.clone())?)?;
+        }
         bus.flush_event_pipeline().await?;
         writer
             .send(SlashSubmissionFinished {
@@ -412,9 +518,25 @@ mod tests {
             times.recorded_ago(&key, now_unix_secs() + 60),
             std::time::Duration::ZERO
         );
-        // The intent itself stays pending for the retry.
-        let recovery = recovery_repository.read().await?.expect("recovery state");
-        assert_eq!(recovery.pending_count(), 1);
+        // The intent itself stays pending for the retry, in the record of its path only.
+        let trbfv_pending = recovery_repository
+            .read()
+            .await?
+            .map_or(0, |recovery| recovery.pending_count());
+        let lbfv_pending = lbfv_recovery_repository
+            .read()
+            .await?
+            .map_or(0, |recovery| recovery.pending_count());
+        assert_eq!(
+            (trbfv_pending, lbfv_pending),
+            if lbfv { (0, 1) } else { (1, 0) }
+        );
+        // A node that runs only trBFV E3s writes no l-BFV record.
+        assert_eq!(
+            lbfv_recovery_repository.read().await?.is_some(),
+            lbfv,
+            "the l-BFV record exists only after an l-BFV report"
+        );
         Ok(())
     }
 
@@ -426,8 +548,12 @@ mod tests {
         let mut gate = SlashSubmissionGate::new();
         gate.enable_effects();
         let mut recovery = SlashingWriterRecoveryState::default();
+        let record = |recovery: &mut SlashingWriterRecoveryState,
+                      event: &LbfvAccusationQuorumReached| {
+            recovery.record(AccusationQuorumReached::try_from(event.clone())?)
+        };
         let (key, decision) =
-            gate.record_and_admit(intent.clone(), |event| recovery.record(event.clone()))?;
+            gate.record_and_admit(intent.clone().into(), |event| record(&mut recovery, event))?;
         assert_eq!(decision, SlashSubmissionDecision::Submit);
         assert_eq!(recovery.pending_count(), 1);
 
@@ -441,8 +567,22 @@ mod tests {
         gate.mark_completed(key);
 
         let (_, decision) =
-            gate.record_and_admit(intent.clone(), |event| recovery.record(event.clone()))?;
+            gate.record_and_admit(intent.clone().into(), |event| record(&mut recovery, event))?;
         assert_eq!(decision, SlashSubmissionDecision::IgnoreDuplicate);
+        assert_eq!(recovery.pending_count(), 0);
+        Ok(())
+    }
+
+    /// The l-BFV record keeps the row, coalesces equal reports and acknowledges by key.
+    #[test]
+    fn the_lbfv_outbox_keeps_the_row_and_acknowledges() -> Result<()> {
+        let intent = lbfv_slash_intent();
+        let mut recovery = LbfvSlashingWriterRecoveryState::default();
+        recovery.record(intent.clone())?;
+        recovery.record(intent.clone())?;
+        assert_eq!(recovery.pending_events(), vec![intent.clone()]);
+
+        recovery.acknowledge(&SlashIntentKey::from_quorum(&intent)?);
         assert_eq!(recovery.pending_count(), 0);
         Ok(())
     }

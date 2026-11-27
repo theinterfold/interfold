@@ -120,6 +120,7 @@ pub(super) async fn actor(
         signer,
         bfv_key: repos.threshold_keyshare_bfv_key(&e3),
         effects_enabled: false,
+        lbfv_generation: test_lbfv_generation(),
         dkg_timing_reader: Arc::new(|_| {
             Box::pin(async { anyhow::bail!("no timing effect expected") })
         }),

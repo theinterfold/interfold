@@ -658,6 +658,7 @@ async fn handle_compute(
     let fhe_inputs = FHEInputs {
         params: std::mem::take(&mut req.params),
         ciphertexts: std::mem::take(&mut req.ciphertext_inputs),
+        committee_key: req.committee_public_key.clone(),
     };
     let domain = ComputeDomain::new(
         req.chain_id,

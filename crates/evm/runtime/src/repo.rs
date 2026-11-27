@@ -7,7 +7,10 @@
 use e3_data::{Repositories, Repository};
 use e3_events::StoreKeys;
 
-use crate::{DataAvailabilityRecoveryState, SlashIntentTimes, SlashingWriterRecoveryState};
+use crate::{
+    DataAvailabilityRecoveryState, LbfvSlashingWriterRecoveryState, SlashIntentTimes,
+    SlashingWriterRecoveryState,
+};
 
 pub trait EthPrivateKeyRepositoryFactory {
     fn eth_private_key(&self) -> Repository<Vec<u8>>;
@@ -21,6 +24,10 @@ impl EthPrivateKeyRepositoryFactory for Repositories {
 
 pub trait SlashingWriterRepositoryFactory {
     fn slashing_writer_recovery(&self, chain_id: u64) -> Repository<SlashingWriterRecoveryState>;
+    fn slashing_writer_lbfv_recovery(
+        &self,
+        chain_id: u64,
+    ) -> Repository<LbfvSlashingWriterRecoveryState>;
     fn slashing_writer_intent_times(&self, chain_id: u64) -> Repository<SlashIntentTimes>;
 }
 
@@ -29,6 +36,16 @@ impl SlashingWriterRepositoryFactory for Repositories {
         Repository::new(
             self.store
                 .scope(StoreKeys::slashing_writer_recovery(chain_id)),
+        )
+    }
+
+    fn slashing_writer_lbfv_recovery(
+        &self,
+        chain_id: u64,
+    ) -> Repository<LbfvSlashingWriterRecoveryState> {
+        Repository::new(
+            self.store
+                .scope(StoreKeys::slashing_writer_lbfv_recovery(chain_id)),
         )
     }
 

@@ -23,6 +23,8 @@ mod dkg_roster;
 mod encryption_key_collection;
 #[path = "state.rs"]
 mod keyshare_state;
+#[path = "lbfv_generation_state.rs"]
+mod lbfv_generation_state;
 #[path = "generate_shares.rs"]
 mod share_generation;
 #[path = "collect_threshold_shares.rs"]
@@ -33,6 +35,7 @@ pub(crate) mod timeout_policy;
 // Public (re-exported at the crate root): the persisted state machine and its
 // per-phase data types.
 pub use keyshare_state::*;
+pub use lbfv_generation_state::*;
 
 // Crate-internal pure services consumed by the actor shells.
 pub(crate) use bfv_keygen::*;

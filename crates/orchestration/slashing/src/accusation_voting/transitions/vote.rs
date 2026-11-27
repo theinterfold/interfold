@@ -153,7 +153,7 @@ impl AccusationVoting {
     pub(crate) fn on_vote_timeout(
         &mut self,
         accusation_id: [u8; 32],
-    ) -> Option<(AccusationQuorumReached, EventContext<Sequenced>)> {
+    ) -> Option<(LbfvAccusationQuorumReached, EventContext<Sequenced>)> {
         let pending = self.pending.remove(&accusation_id)?; // Already resolved
 
         let outcome = if pending.votes_for.len() >= self.vote_quorum_h {
@@ -178,15 +178,22 @@ impl AccusationVoting {
 
         let evidence = self
             .received_data
-            .get(&(pending.accusation.accused, pending.accusation.proof_type))
+            .get(&(
+                pending.accusation.accused,
+                ProofIdentity {
+                    proof_type: pending.accusation.proof_type,
+                    instance: pending.accusation.proof_instance,
+                },
+            ))
             .map(|d| d.evidence.clone())
             .unwrap_or_default();
         Some((
-            AccusationQuorumReached {
+            LbfvAccusationQuorumReached {
                 e3_id: self.e3_id.clone(),
                 accuser: pending.accusation.accuser,
                 accused: pending.accusation.accused,
                 proof_type: pending.accusation.proof_type,
+                proof_instance: pending.accusation.proof_instance,
                 votes_for: pending.votes_for,
                 outcome,
                 evidence,
@@ -219,15 +226,22 @@ impl AccusationVoting {
 
         let evidence = self
             .received_data
-            .get(&(pending.accusation.accused, pending.accusation.proof_type))
+            .get(&(
+                pending.accusation.accused,
+                ProofIdentity {
+                    proof_type: pending.accusation.proof_type,
+                    instance: pending.accusation.proof_instance,
+                },
+            ))
             .map(|d| d.evidence.clone())
             .unwrap_or_default();
         actions.push(VoteAction::PublishQuorum {
-            quorum: AccusationQuorumReached {
+            quorum: LbfvAccusationQuorumReached {
                 e3_id: self.e3_id.clone(),
                 accuser: pending.accusation.accuser,
                 accused: pending.accusation.accused,
                 proof_type: pending.accusation.proof_type,
+                proof_instance: pending.accusation.proof_instance,
                 votes_for: pending.votes_for,
                 outcome,
                 evidence,

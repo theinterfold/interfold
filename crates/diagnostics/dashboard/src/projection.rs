@@ -657,12 +657,16 @@ fn phase(data: &InterfoldEventData) -> Option<E3Phase> {
         | E::DkgProofSigned(_)
         | E::ShareVerificationDispatched(_)
         | E::ShareVerificationComplete(_)
+        | E::LbfvShareVerificationDispatched(_)
+        | E::LbfvShareVerificationComplete(_)
         | E::DecryptionKeyShared(_)
         | E::DKGInnerProofReady(_)
         | E::DKGRecursiveAggregationComplete(_)
         | E::CommitmentConsistencyCheckRequested(_)
         | E::CommitmentConsistencyCheckComplete(_)
-        | E::CommitmentConsistencyViolation(_) => Some(P::DkgShares),
+        | E::CommitmentConsistencyViolation(_)
+        | E::LbfvCommitmentConsistencyCheckRequested(_)
+        | E::LbfvCommitmentConsistencyViolation(_) => Some(P::DkgShares),
         E::KeyshareCreated(_)
         | E::PkGenerationProofSigned(_)
         | E::PkAggregationProofPending(_)
@@ -711,8 +715,10 @@ fn phase(data: &InterfoldEventData) -> Option<E3Phase> {
             Some(proof_phase(format!("{:?}", event.proof_type).as_str()))
         }
         E::ProofFailureAccusation(_)
+        | E::LbfvProofFailureAccusation(_)
         | E::AccusationVote(_)
         | E::AccusationQuorumReached(_)
+        | E::LbfvAccusationQuorumReached(_)
         | E::SlashExecuted(_) => Some(P::DkgShares),
         E::EvmLogObserved(event) => match event.event_name.as_str() {
             "CommitteeFormed" | "CommitteeFinalized" => Some(P::Committee),
@@ -760,10 +766,13 @@ fn severity(data: &InterfoldEventData) -> EventSeverity {
         | E::ThresholdShareCollectionFailed(_)
         | E::EncryptionKeyCollectionFailed(_)
         | E::ComputeRequestError(_)
-        | E::CommitmentConsistencyViolation(_) => EventSeverity::Error,
+        | E::CommitmentConsistencyViolation(_)
+        | E::LbfvCommitmentConsistencyViolation(_) => EventSeverity::Error,
         E::ProofFailureAccusation(_)
+        | E::LbfvProofFailureAccusation(_)
         | E::AccusationVote(_)
         | E::AccusationQuorumReached(_)
+        | E::LbfvAccusationQuorumReached(_)
         | E::SlashExecuted(_)
         | E::CommitteeMemberExpelled(_) => EventSeverity::Warn,
         E::EvmLogObserved(event) if !event.known => EventSeverity::Warn,

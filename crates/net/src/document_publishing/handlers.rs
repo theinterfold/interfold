@@ -9,7 +9,10 @@ impl Actor for DocumentPublisher {
     type Context = actix::Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
-        ctx.run_interval(FETCH_QUEUE_POLL, |actor, ctx| actor.start_due_fetches(ctx));
+        ctx.run_interval(FETCH_QUEUE_POLL, |actor, ctx| {
+            actor.start_due_fetches(ctx);
+            actor.start_due_lbfv_fetches(ctx);
+        });
     }
 }
 
@@ -31,6 +34,7 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
                 // The chain history has closed the E3s that ended while the node was offline.
                 self.restorable.select(chrono::Utc::now());
                 self.restore_next_received_document(ctx);
+                self.start_due_lbfv_fetches(ctx);
             }
             InterfoldEventData::PublishDocumentRequested(data) => {
                 ctx.notify(TypedEvent::new(data, ec))
@@ -78,6 +82,9 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
                 if let Err(error) = self.handle_canonical_dkg_end(&data.e3_id, ctx) {
                     self.bus.err(EType::DocumentPublishing, error);
                 }
+            }
+            InterfoldEventData::LbfvKeyShareDocumentFetchRequested(data) => {
+                ctx.notify(TypedEvent::new(data, ec))
             }
             _ => (),
         }
@@ -250,6 +257,47 @@ impl Handler<ReplicateDocument> for DocumentPublisher {
     }
 }
 
+/// A targeted l-BFV fetch waits in a bounded queue for `SyncEnded` and a fetch slot, as a generic
+/// notification does. A request for a document that is queued or fetched joins that fetch.
+impl Handler<TypedEvent<LbfvKeyShareDocumentFetchRequested>> for DocumentPublisher {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<LbfvKeyShareDocumentFetchRequested>,
+        ctx: &mut Self::Context,
+    ) {
+        let (request, ec) = msg.into_components();
+        let id = lbfv_document_id(&request);
+        if self.closed_e3s.contains(&id.0)
+            || self.lbfv_fetching.contains(&id)
+            || self
+                .lbfv_fetch_queue
+                .iter()
+                .any(|(queued, _)| lbfv_document_id(queued) == id)
+        {
+            return;
+        }
+        if self.lbfv_fetch_queue.len() >= MAX_WAITING_FETCHES {
+            // The requester retries a failed fetch, so a full queue answers like an unavailable
+            // document and bounds the memory that peers' manifests can claim.
+            let identity = request.request().clone();
+            if let Err(error) = publish_lbfv_fetch_failure(
+                &self.bus,
+                identity,
+                e3_events::LbfvKeyShareDocumentFetchFailureClass::Unavailable,
+                0,
+                ec,
+            ) {
+                self.bus.err(EType::IO, error);
+            }
+            return;
+        }
+        self.lbfv_fetch_queue.push_back((request, ec));
+        self.start_due_lbfv_fetches(ctx);
+    }
+}
+
 /// Receiving DocumentPublishedNotification from libp2p. The fetch runs in the actor context, so
 /// the network receive loop does not wait for it.
 impl Handler<DocumentPublishedNotification> for DocumentPublisher {
@@ -273,6 +321,15 @@ impl Handler<DocumentIngress> for DocumentPublisher {
         let now = chrono::Utc::now();
         if !notification_is_valid(&msg, now) {
             debug!("Ignored an invalid or expired document notification");
+            return;
+        }
+        // l-BFV key-share documents are fetched only through the manifest-bound
+        // `LbfvKeyShareDocumentFetchRequested` path, never from a generic notification.
+        if matches!(msg.meta.kind, e3_events::DocumentKind::LbfvKeyShare) {
+            debug!(
+                e3_id = %msg.meta.e3_id,
+                "Ignoring generic l-BFV DHT document notification"
+            );
             return;
         }
         // The document is published at the notification's time, which the clock refuses beyond its
@@ -383,10 +440,42 @@ impl DocumentPublisher {
         }
     }
 
+    /// Start queued targeted l-BFV fetches, up to the concurrency limit shared with the generic
+    /// fetches. They wait for `SyncEnded` so that a replayed request of an E3 that ended while the
+    /// node was offline does not read the DHT.
+    fn start_due_lbfv_fetches(&mut self, ctx: &mut actix::Context<Self>) {
+        if !self.publishing_enabled {
+            return;
+        }
+        while self.fetching.len() + self.lbfv_fetching.len() < MAX_INFLIGHT_TRANSFERS {
+            let Some((request, ec)) = self.lbfv_fetch_queue.pop_front() else {
+                break;
+            };
+            let id = lbfv_document_id(&request);
+            if self.closed_e3s.contains(&id.0) {
+                continue;
+            }
+            self.lbfv_fetching.insert(id.clone());
+            let tx = self.tx.clone();
+            let rx = self.rx.clone();
+            let bus = self.bus.clone();
+            let fetch = trap_fut(
+                EType::IO,
+                &bus.with_ec(&ec),
+                handle_lbfv_document_fetch_requested(tx, rx, bus.clone(), request, ec),
+            );
+            ctx.spawn(fetch.into_actor(self).map(move |(), actor, ctx| {
+                actor.lbfv_fetching.remove(&id);
+                actor.start_due_lbfv_fetches(ctx);
+                actor.start_due_fetches(ctx);
+            }));
+        }
+    }
+
     /// Start waiting fetches whose retry time has passed, up to the concurrency limit.
     fn start_due_fetches(&mut self, ctx: &mut actix::Context<Self>) {
         let now = Instant::now();
-        while self.fetching.len() < MAX_INFLIGHT_TRANSFERS {
+        while self.fetching.len() + self.lbfv_fetching.len() < MAX_INFLIGHT_TRANSFERS {
             let mut in_flight = HashMap::new();
             for fetching in self.fetching.values() {
                 *in_flight.entry(fetching.peer).or_insert(0) += 1;

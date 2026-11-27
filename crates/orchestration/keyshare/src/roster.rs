@@ -15,6 +15,7 @@ use e3_events::{DkgDealer, E3id, ProofType, SignedProofPayload};
 use e3_utils::ArcBytes;
 
 pub(crate) fn dealer_identity(
+    preset: e3_fhe_params::BfvPreset,
     e3_id: &E3id,
     party_id: u64,
     pk_share: &ArcBytes,
@@ -29,12 +30,12 @@ pub(crate) fn dealer_identity(
             && c2a
                 .payload
                 .proof_type
-                .circuit_names()
+                .circuit_names_for(preset)
                 .contains(&c2a.payload.proof.circuit)
             && c2b
                 .payload
                 .proof_type
-                .circuit_names()
+                .circuit_names_for(preset)
                 .contains(&c2b.payload.proof.circuit),
         "dealer proof pair does not match the E3, C2 proof types, and circuits"
     );
@@ -63,6 +64,7 @@ pub(crate) fn dealer_identity_for_profile(
 ) -> Result<DkgDealer> {
     if profile.protocol() == e3_fhe_params::BfvDecryptionProtocol::SecretShared {
         return dealer_identity(
+            profile.threshold_preset(),
             e3_id,
             party_id,
             pk_share,
@@ -187,6 +189,9 @@ mod tests {
     use e3_events::{Proof, ProofPayload};
     use e3_zk_config::CircuitName;
 
+    // The test proofs use the l-BFV chunked C2 circuits.
+    const PRESET: e3_fhe_params::BfvPreset = e3_fhe_params::BfvPreset::InsecureThresholdLbfv;
+
     fn dealers(ids: &[u64]) -> Vec<DkgDealer> {
         ids.iter()
             .map(|&party_id| DkgDealer {
@@ -223,36 +228,36 @@ mod tests {
         let c2a_first = signed_c2(
             &e3_id,
             ProofType::C2aSkShareComputation,
-            CircuitName::SkShareComputation,
+            CircuitName::SkC2ChunkFinalize,
             &[1],
             &[10],
         );
         let c2a_second = signed_c2(
             &e3_id,
             ProofType::C2aSkShareComputation,
-            CircuitName::SkShareComputation,
+            CircuitName::SkC2ChunkFinalize,
             &[2],
             &[10],
         );
         let c2b_first = signed_c2(
             &e3_id,
             ProofType::C2bESmShareComputation,
-            CircuitName::ESmShareComputation,
+            CircuitName::ESmC2ChunkFinalize,
             &[3],
             &[20],
         );
         let c2b_second = signed_c2(
             &e3_id,
             ProofType::C2bESmShareComputation,
-            CircuitName::ESmShareComputation,
+            CircuitName::ESmC2ChunkFinalize,
             &[4],
             &[20],
         );
         let pk_share = ArcBytes::from_bytes(&[30]);
 
         assert_eq!(
-            dealer_identity(&e3_id, 0, &pk_share, &c2a_first, &c2b_first).unwrap(),
-            dealer_identity(&e3_id, 0, &pk_share, &c2a_second, &c2b_second).unwrap()
+            dealer_identity(PRESET, &e3_id, 0, &pk_share, &c2a_first, &c2b_first).unwrap(),
+            dealer_identity(PRESET, &e3_id, 0, &pk_share, &c2a_second, &c2b_second).unwrap()
         );
     }
 
@@ -262,29 +267,29 @@ mod tests {
         let c2a = signed_c2(
             &e3_id,
             ProofType::C2aSkShareComputation,
-            CircuitName::SkShareComputation,
+            CircuitName::SkC2ChunkFinalize,
             &[1],
             &[10],
         );
         let c2a_changed = signed_c2(
             &e3_id,
             ProofType::C2aSkShareComputation,
-            CircuitName::SkShareComputation,
+            CircuitName::SkC2ChunkFinalize,
             &[1],
             &[11],
         );
         let c2b = signed_c2(
             &e3_id,
             ProofType::C2bESmShareComputation,
-            CircuitName::ESmShareComputation,
+            CircuitName::ESmC2ChunkFinalize,
             &[2],
             &[20],
         );
         let pk_share = ArcBytes::from_bytes(&[30]);
 
         assert_ne!(
-            dealer_identity(&e3_id, 0, &pk_share, &c2a, &c2b).unwrap(),
-            dealer_identity(&e3_id, 0, &pk_share, &c2a_changed, &c2b).unwrap()
+            dealer_identity(PRESET, &e3_id, 0, &pk_share, &c2a, &c2b).unwrap(),
+            dealer_identity(PRESET, &e3_id, 0, &pk_share, &c2a_changed, &c2b).unwrap()
         );
     }
 

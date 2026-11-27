@@ -13,7 +13,9 @@
 use anyhow::{bail, Context, Result};
 use e3_data::{DataStore, Repositories};
 use e3_events::{E3Stage, E3id, StoreKeys};
-use e3_evm::{SlashingWriterRecoveryState, SlashingWriterRepositoryFactory};
+use e3_evm::{
+    LbfvSlashingWriterRecoveryState, SlashingWriterRecoveryState, SlashingWriterRepositoryFactory,
+};
 use e3_request::E3LifecycleRepositoryFactory;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -157,9 +159,12 @@ pub(crate) async fn pending_slash_reports(
     let mut chain_ids = BTreeSet::new();
     for key in &keys {
         let chain_id = chain_after_slashing_prefix(key)?;
-        // The slash writer stores one record per chain, at this exact key. A record under any other
-        // key would not be read below, so it fails the check instead of passing it unread.
-        if key.as_slice() != StoreKeys::slashing_writer_recovery(chain_id).as_bytes() {
+        // The slash writer stores one record per proving path and chain, at these exact keys. A
+        // record under any other key would not be read below, so it fails the check instead of
+        // passing it unread.
+        if key.as_slice() != StoreKeys::slashing_writer_recovery(chain_id).as_bytes()
+            && key.as_slice() != StoreKeys::slashing_writer_lbfv_recovery(chain_id).as_bytes()
+        {
             bail!(
                 "found a slash writer record that this binary cannot read: {}",
                 String::from_utf8_lossy(key)
@@ -174,7 +179,15 @@ pub(crate) async fn pending_slash_reports(
                 .read_checked()
                 .await
                 .with_context(|| format!("failed to read the slash reports of chain {chain_id}"))?;
-        let count = state.map_or(0, |state| state.pending_count());
+        let lbfv_state: Option<LbfvSlashingWriterRecoveryState> =
+            DataStore::from(repositories.slashing_writer_lbfv_recovery(chain_id))
+                .read_checked()
+                .await
+                .with_context(|| {
+                    format!("failed to read the l-BFV slash reports of chain {chain_id}")
+                })?;
+        let count = state.map_or(0, |state| state.pending_count())
+            + lbfv_state.map_or(0, |state| state.pending_count());
         if count > 0 {
             pending.push(PendingSlashReports { chain_id, count });
         }
@@ -402,6 +415,39 @@ mod tests {
             vec![PendingSlashReports {
                 chain_id: 1,
                 count: 1
+            }]
+        );
+        Ok(())
+    }
+
+    /// An l-BFV slash report that the node has not submitted counts like a trBFV one, in the
+    /// record of its own path, and the two records of a chain add up.
+    #[actix::test]
+    async fn finds_unsubmitted_lbfv_slash_reports() -> anyhow::Result<()> {
+        use e3_evm::{LbfvSlashingWriterRecoveryState, SlashingWriterRepositoryFactory};
+        let repositories = Repositories::in_mem();
+        let e3_id = E3id::new("4", 1);
+        let mut lbfv = LbfvSlashingWriterRecoveryState::default();
+        lbfv.record(e3_events::LbfvAccusationQuorumReached {
+            proof_instance: 2,
+            ..unsubmitted_slash_report(&e3_id).into()
+        })?;
+        repositories
+            .slashing_writer_lbfv_recovery(1)
+            .write_sync(&lbfv)
+            .await?;
+        let mut trbfv = e3_evm::SlashingWriterRecoveryState::default();
+        trbfv.record(unsubmitted_slash_report(&e3_id))?;
+        repositories
+            .slashing_writer_recovery(1)
+            .write_sync(&trbfv)
+            .await?;
+
+        assert_eq!(
+            pending_slash_reports(&repositories).await?,
+            vec![PendingSlashReports {
+                chain_id: 1,
+                count: 2
             }]
         );
         Ok(())

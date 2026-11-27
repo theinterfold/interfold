@@ -373,3 +373,50 @@ async fn recovery_gives_no_authority_to_requests_of_a_disabled_profile() -> Resu
     );
     Ok(())
 }
+
+/// Public inputs whose value at each index is that index, so a layout names the slots it reads.
+fn indexed_inputs(len: usize) -> Vec<alloy::primitives::B256> {
+    (0..len)
+        .map(|index| alloy::primitives::B256::from(alloy::primitives::U256::from(index)))
+        .collect()
+}
+
+fn indexed(index: usize) -> [u8; 32] {
+    alloy::primitives::B256::from(alloy::primitives::U256::from(index)).0
+}
+
+/// The offsets that `BfvPkVerifier` and `BfvPkVerifierV2` check on chain.
+#[test]
+fn registry_proof_layout_reads_the_slots_of_both_verifiers() {
+    let h = 2;
+
+    let trbfv = registry_proof_layout(
+        BfvPreset::InsecureThreshold,
+        h,
+        &indexed_inputs(6 + 3 * h),
+        indexed(5 + 3 * h),
+    )
+    .unwrap();
+    assert_eq!(trbfv.party_ids, vec![2, 3]);
+    assert_eq!(trbfv.sk_agg_commits, vec![indexed(7), indexed(8)]);
+    assert_eq!(trbfv.esm_agg_commits, vec![indexed(9), indexed(10)]);
+
+    let preset = BfvPreset::InsecureThresholdLbfv;
+    let rows = e3_fhe_params::lbfv_row_count(preset).unwrap();
+    let len = 39 + 3 * h + 3 * rows;
+    let lbfv = registry_proof_layout(preset, h, &indexed_inputs(len), indexed(21 + 3 * h)).unwrap();
+    assert_eq!(lbfv.party_ids, vec![1, 2]);
+    assert_eq!(lbfv.sk_agg_commits, vec![indexed(23), indexed(24)]);
+    assert_eq!(lbfv.esm_agg_commits, vec![indexed(25), indexed(26)]);
+
+    for (preset, len, commitment_index) in [
+        (BfvPreset::InsecureThreshold, 6 + 3 * h + 1, 5 + 3 * h),
+        (preset, len - 1, 21 + 3 * h),
+        (preset, len, 5 + 3 * h),
+    ] {
+        assert!(
+            registry_proof_layout(preset, h, &indexed_inputs(len), indexed(commitment_index))
+                .is_err()
+        );
+    }
+}

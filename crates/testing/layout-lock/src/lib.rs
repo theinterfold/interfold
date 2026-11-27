@@ -141,6 +141,10 @@ struct Run {
     overrides: HashMap<String, usize>,
     /// Accepted length for each byte field or sequence, as an index into its candidate list.
     lengths: HashMap<String, usize>,
+    /// Integer fields that a decoder checks against a constant, by field name.
+    pins: Vec<(String, u64)>,
+    /// Option fields that a decoder rejects as `None`, by field name.
+    present: Vec<String>,
     /// The byte field or sequence served last. A failed build retries it with the next length.
     last_length: Option<(String, &'static [usize])>,
     /// Enum choices on the current path.
@@ -202,6 +206,15 @@ impl<'a> Synth<'a> {
     }
 
     fn u64(&self) -> u64 {
+        let run = self.run.borrow();
+        if let Some((_, value)) = run
+            .pins
+            .iter()
+            .find(|(name, _)| self.path.ends_with(&format!("/{name}")))
+        {
+            return *value;
+        }
+        drop(run);
         u64::from_le_bytes(self.word()[..8].try_into().expect("8 bytes"))
     }
 
@@ -464,7 +477,13 @@ impl<'de> de::Deserializer<'de> for Synth<'_> {
     }
 
     fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, SynthError> {
-        if self.deep() || self.mode().minimal() {
+        let present = self
+            .run
+            .borrow()
+            .present
+            .iter()
+            .any(|name| self.path.ends_with(&format!("/{name}")));
+        if !present && (self.deep() || self.mode().minimal()) {
             self.trace("option none");
             return visitor.visit_none();
         }
@@ -726,7 +745,31 @@ where
     T: Serialize + DeserializeOwned,
     F: Fn(&T) -> String,
 {
-    let run = RefCell::new(Run::default());
+    sample_rows_pinned::<T, F>(root, &[], &[], extra)
+}
+
+/// [`sample_rows`] for a type whose decoder accepts one value of some fields, such as a schema
+/// version or a parameter preset that must be present. Each `(field, value)` pin gives every
+/// integer field with that name the value, and every `present` field of option type is `Some`,
+/// so the sample reaches the decoder's accepted layout.
+pub fn sample_rows_pinned<T, F>(
+    root: &str,
+    pins: &[(&str, u64)],
+    present: &[&str],
+    extra: F,
+) -> Vec<String>
+where
+    T: Serialize + DeserializeOwned,
+    F: Fn(&T) -> String,
+{
+    let run = RefCell::new(Run {
+        pins: pins
+            .iter()
+            .map(|&(name, value)| (name.to_string(), value))
+            .collect(),
+        present: present.iter().map(|name| name.to_string()).collect(),
+        ..Run::default()
+    });
     let base = row(&run, root, "-", &HashMap::new(), &extra);
     if run.borrow().discovered.is_empty() {
         return vec![base];

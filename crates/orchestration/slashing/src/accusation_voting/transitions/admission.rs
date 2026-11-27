@@ -137,8 +137,8 @@ impl AccusationVoting {
     /// A commitment violation that this node's checker found, against another committee member.
     pub(super) fn admit_violation(
         &self,
-        data: CommitmentConsistencyViolation,
-    ) -> Result<Admitted<CommitmentConsistencyViolation>, Rejection> {
+        data: LbfvCommitmentConsistencyViolation,
+    ) -> Result<Admitted<LbfvCommitmentConsistencyViolation>, Rejection> {
         if data.e3_id != self.e3_id {
             return Err(Rejection::OtherE3);
         }
@@ -159,21 +159,27 @@ impl AccusationVoting {
     /// accusation is rejected as `Own`.
     pub(super) fn admit_own_replayed_accusation(
         &self,
-        accusation: &ProofFailureAccusation,
-    ) -> Option<(Address, ProofType)> {
+        accusation: &LbfvProofFailureAccusation,
+    ) -> Option<(Address, ProofIdentity)> {
         (!self.effects_enabled
             && accusation.e3_id == self.e3_id
             && accusation.accuser == self.my_address
             && self.verify_accusation_signature(accusation))
-        .then_some((accusation.accused, accusation.proof_type))
+        .then_some((
+            accusation.accused,
+            ProofIdentity {
+                proof_type: accusation.proof_type,
+                instance: accusation.proof_instance,
+            },
+        ))
     }
 
     /// A peer's accusation. Its signature binds the addresses, not `accused_party_id`, so the
     /// self-accusation check compares addresses. Only C3 proofs can be forwarded with it.
     pub(super) fn admit_accusation(
         &self,
-        accusation: ProofFailureAccusation,
-    ) -> Result<Admitted<ProofFailureAccusation>, Rejection> {
+        accusation: LbfvProofFailureAccusation,
+    ) -> Result<Admitted<LbfvProofFailureAccusation>, Rejection> {
         if accusation.e3_id != self.e3_id {
             return Err(Rejection::OtherE3);
         }

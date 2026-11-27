@@ -12,15 +12,17 @@
 //! in the [`E3Context`] so it receives routed events.
 
 use crate::actors::commitment_consistency_checker::CommitmentConsistencyChecker;
-use crate::domain::commitment_consistency::CommitmentConsistencySnapshot;
-use crate::repo::CommitmentConsistencyRepositoryFactory;
+use crate::domain::commitment_consistency::{
+    CommitmentConsistencySnapshot, LbfvCommitmentConsistencySnapshot,
+};
+use crate::repo::{CommitmentConsistencyRepositoryFactory, PathRepository};
 use crate::CommitmentLink;
 use actix::Actor;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_data::{DataStore, RepositoriesFactory};
-use e3_events::{BusHandle, Event, InterfoldEvent, InterfoldEventData};
+use e3_events::{BusHandle, E3id, Event, InterfoldEvent, InterfoldEventData};
 use e3_fhe_params::BfvProfile;
 use e3_request::{E3Context, E3ContextSnapshot, E3Extension, META_KEY};
 use tracing::{error, info};
@@ -55,10 +57,24 @@ impl CommitmentConsistencyCheckerExtension {
         })
     }
 
+    /// The saved state of an E3, in the layout of its proving path.
+    fn snapshot_repository(
+        &self,
+        e3_id: &E3id,
+        params_profile: BfvProfile,
+    ) -> PathRepository<CommitmentConsistencySnapshot, LbfvCommitmentConsistencySnapshot> {
+        let repositories = self.store.repositories();
+        if e3_fhe_params::is_lbfv_path(params_profile.threshold_preset()) {
+            PathRepository::Lbfv(repositories.commitment_consistency_lbfv(e3_id))
+        } else {
+            PathRepository::Trbfv(repositories.commitment_consistency(e3_id))
+        }
+    }
+
     fn start_checker(
         &self,
         ctx: &mut E3Context,
-        restored: Option<CommitmentConsistencySnapshot>,
+        restored: Option<LbfvCommitmentConsistencySnapshot>,
     ) -> Result<()> {
         if ctx
             .get_event_recipient("commitment_consistency_checker")
@@ -88,10 +104,16 @@ impl CommitmentConsistencyCheckerExtension {
         // The request router owns delivery and lifetime for this per-E3 actor. Subscribing it to
         // the global bus as well would deliver every event twice and keep the actor alive after
         // the E3 context is removed.
-        let repo = self.store.repositories().commitment_consistency(&e3_id);
-        let addr = CommitmentConsistencyChecker::new(&self.bus, e3_id, links, committee_h)
-            .with_snapshot(repo, restored)?
-            .start();
+        let repo = self.snapshot_repository(&e3_id, meta.params_profile);
+        let addr = CommitmentConsistencyChecker::new(
+            &self.bus,
+            e3_id,
+            links,
+            committee_h,
+            meta.params_profile.threshold_preset(),
+        )
+        .with_snapshot(repo, restored)?
+        .start();
 
         ctx.set_event_recipient("commitment_consistency_checker", Some(addr.into()));
         Ok(())
@@ -119,12 +141,10 @@ impl E3Extension for CommitmentConsistencyCheckerExtension {
     }
 
     async fn hydrate(&self, ctx: &mut E3Context, _snapshot: &E3ContextSnapshot) -> Result<()> {
-        if ctx.get_dependency(META_KEY).is_some() {
+        if let Some(meta) = ctx.get_dependency(META_KEY) {
             let restored = self
-                .store
-                .repositories()
-                .commitment_consistency(&ctx.e3_id)
-                .read()
+                .snapshot_repository(&ctx.e3_id, meta.params_profile)
+                .read_checked()
                 .await?;
             self.start_checker(ctx, restored)?;
         }

@@ -34,12 +34,13 @@ use alloy::signers::SignerSync;
 use alloy::sol_types::SolValue;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
-    AccusationOutcome, AccusationQuorumReached, AccusationVote, CommitmentConsistencyViolation,
-    CommitteeMemberExpelled, ComputeRequest, ComputeRequestError, ComputeResponse,
-    ComputeResponseKind, CorrelationId, E3id, EventContext, PartyProofsToVerify,
-    ProofFailureAccusation, ProofType, ProofVerificationFailed, ProofVerificationPassed, Sequenced,
-    SignedProofPayload, TypedEvent, VerifyShareProofsRequest, ZkRequest, ZkResponse,
-    VOTE_DOMAIN_NAME, VOTE_DOMAIN_VERSION, VOTE_TYPEHASH_STR,
+    AccusationOutcome, AccusationVote, CommitteeMemberExpelled, ComputeRequest,
+    ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId, E3id, EventContext,
+    LbfvAccusationQuorumReached, LbfvCommitmentConsistencyViolation, LbfvProofFailureAccusation,
+    PartyProofsToVerify, ProofFailureAccusation, ProofIdentity, ProofType, ProofVerificationFailed,
+    ProofVerificationPassed, RowInstanceNotRepresentable, Sequenced, SignedProofPayload,
+    TypedEvent, VerifyShareProofsRequest, ZkRequest, ZkResponse, VOTE_DOMAIN_NAME,
+    VOTE_DOMAIN_VERSION, VOTE_TYPEHASH_STR,
 };
 use e3_utils::ArcBytes;
 use serde::{Deserialize, Serialize};

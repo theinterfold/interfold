@@ -20,7 +20,8 @@ use std::{
 use alloy::primitives::{Address, B256, U256};
 use anyhow::{Context, Result};
 use e3_events::{
-    AccusationOutcome, AccusationQuorumReached, CommitteeMemberExcluded, ProofType, SlashExecuted,
+    AccusationOutcome, CommitteeMemberExcluded, E3id, LbfvAccusationQuorumReached, ProofType,
+    SlashExecuted,
 };
 
 use crate::domain::attestation_evidence::encode_attestation_evidence;
@@ -46,16 +47,21 @@ pub(crate) struct SlashIntentKey {
 }
 
 impl SlashIntentKey {
-    pub(crate) fn from_quorum(event: &AccusationQuorumReached) -> Result<Self> {
+    pub(crate) fn from_quorum(event: &LbfvAccusationQuorumReached) -> Result<Self> {
+        Self::new(&event.e3_id, event.accused, event.proof_type)
+    }
+
+    /// The key of a report that names `operator` and `proof_type` in `e3_id`. The proof's row is
+    /// not part of it: the contract allows one submission per proof type.
+    pub(crate) fn new(e3_id: &E3id, operator: Address, proof_type: ProofType) -> Result<Self> {
         Ok(Self {
-            chain_id: event.e3_id.chain_id(),
-            e3_id: event
-                .e3_id
+            chain_id: e3_id.chain_id(),
+            e3_id: e3_id
                 .clone()
                 .try_into()
                 .context("slash intent has a non-numeric E3 id")?,
-            operator: event.accused,
-            proof_type: event.proof_type as u8,
+            operator,
+            proof_type: proof_type as u8,
         })
     }
 
@@ -73,8 +79,9 @@ impl SlashIntentKey {
     }
 
     pub(crate) fn from_execution(event: &SlashExecuted) -> Result<Option<Self>> {
-        let proof_type = (ProofType::C0PkBfv as u8..=ProofType::C7DecryptedSharesAggregation as u8)
-            .find(|proof_type| slash_reason_u8(*proof_type) == B256::from(event.reason));
+        let proof_type = ProofType::ALL
+            .into_iter()
+            .find(|proof_type| proof_type.attestation_slash_reason() == B256::from(event.reason));
         let Some(proof_type) = proof_type else {
             return Ok(None);
         };
@@ -86,7 +93,7 @@ impl SlashIntentKey {
                 .try_into()
                 .context("slash execution has a non-numeric E3 id")?,
             operator: event.operator,
-            proof_type,
+            proof_type: proof_type as u8,
         }))
     }
 }
@@ -107,7 +114,7 @@ pub(crate) enum SlashSubmissionDecision {
 #[derive(Default)]
 pub(crate) struct SlashSubmissionGate {
     effects_enabled: bool,
-    deferred: BTreeMap<SlashIntentKey, AccusationQuorumReached>,
+    deferred: BTreeMap<SlashIntentKey, LbfvAccusationQuorumReached>,
     in_flight: BTreeSet<SlashIntentKey>,
     completed: BTreeSet<SlashIntentKey>,
 }
@@ -119,7 +126,7 @@ impl SlashSubmissionGate {
 
     pub(crate) fn admit(
         &mut self,
-        event: AccusationQuorumReached,
+        event: LbfvAccusationQuorumReached,
     ) -> Result<(SlashIntentKey, SlashSubmissionDecision)> {
         let key = SlashIntentKey::from_quorum(&event)?;
         if self.completed.contains(&key)
@@ -143,8 +150,8 @@ impl SlashSubmissionGate {
     /// would leave a durable entry that no acknowledgment removes.
     pub(crate) fn record_and_admit(
         &mut self,
-        event: AccusationQuorumReached,
-        record: impl FnOnce(&AccusationQuorumReached) -> Result<()>,
+        event: LbfvAccusationQuorumReached,
+        record: impl FnOnce(&LbfvAccusationQuorumReached) -> Result<()>,
     ) -> Result<(SlashIntentKey, SlashSubmissionDecision)> {
         let key = SlashIntentKey::from_quorum(&event)?;
         if self.completed.contains(&key) {
@@ -154,7 +161,7 @@ impl SlashSubmissionGate {
         self.admit(event)
     }
 
-    pub(crate) fn enable_effects(&mut self) -> Vec<(SlashIntentKey, AccusationQuorumReached)> {
+    pub(crate) fn enable_effects(&mut self) -> Vec<(SlashIntentKey, LbfvAccusationQuorumReached)> {
         self.effects_enabled = true;
         let deferred = std::mem::take(&mut self.deferred);
         deferred
@@ -246,7 +253,7 @@ pub(crate) enum SubmissionStep {
 /// The decisions of one slash submission: policy, exclusion, submitter rank, evidence, wait and
 /// the classification of its result.
 pub(crate) struct SlashSubmission {
-    event: AccusationQuorumReached,
+    event: LbfvAccusationQuorumReached,
     rank: Option<usize>,
     /// How long ago this node first recorded the intent. A fallback submitter waits only for the
     /// rest of its delay, so a restart does not start the wait again.
@@ -257,7 +264,7 @@ impl SlashSubmission {
     /// A submission of `event` by `submitter`, which first recorded it `recorded_ago`, and its
     /// first step.
     pub(crate) fn new(
-        event: AccusationQuorumReached,
+        event: LbfvAccusationQuorumReached,
         submitter: Address,
         recorded_ago: Duration,
     ) -> (Self, SubmissionStep) {
@@ -272,7 +279,7 @@ impl SlashSubmission {
         )
     }
 
-    pub(crate) fn event(&self) -> &AccusationQuorumReached {
+    pub(crate) fn event(&self) -> &LbfvAccusationQuorumReached {
         &self.event
     }
 
@@ -401,10 +408,6 @@ pub(crate) fn slash_reason(proof_type: ProofType) -> B256 {
     proof_type.attestation_slash_reason()
 }
 
-fn slash_reason_u8(proof_type: u8) -> B256 {
-    alloy::primitives::keccak256(U256::from(proof_type).to_be_bytes::<32>())
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SlashPolicyState {
     Disabled,
@@ -468,7 +471,7 @@ pub(crate) fn slash_submission_error_is_terminal(decoded: &str) -> bool {
 mod tests {
     use super::*;
     use alloy::primitives::{keccak256, Bytes, B256};
-    use e3_events::{AccusationQuorumReached, AccusationVote, E3id, ProofType};
+    use e3_events::{AccusationVote, E3id, LbfvAccusationQuorumReached, ProofType};
     use e3_utils::ArcBytes;
 
     fn vote(voter: Address) -> AccusationVote {
@@ -483,12 +486,13 @@ mod tests {
         }
     }
 
-    fn quorum(voters: Vec<Address>) -> AccusationQuorumReached {
-        AccusationQuorumReached {
+    fn quorum(voters: Vec<Address>) -> LbfvAccusationQuorumReached {
+        LbfvAccusationQuorumReached {
             e3_id: E3id::new("1", 1),
             accuser: Address::repeat_byte(9),
             accused: Address::repeat_byte(8),
             proof_type: ProofType::C0PkBfv,
+            proof_instance: 0,
             votes_for: voters.into_iter().map(vote).collect(),
             outcome: AccusationOutcome::AccusedFaulted,
             evidence: Bytes::from_static(b"evidence"),
@@ -760,6 +764,39 @@ mod tests {
                 0, 0, 0, 1,
             ])
         );
+    }
+
+    #[test]
+    fn slash_execution_recovers_every_proof_type() {
+        for proof_type in ProofType::ALL {
+            let event = SlashExecuted {
+                e3_id: E3id::new("1", 1),
+                proposal_id: 1,
+                operator: Address::repeat_byte(8),
+                reason: proof_type.attestation_slash_reason().0,
+                ticket_amount: 0,
+                ciphernode_bond_amount: 0,
+            };
+
+            let key = SlashIntentKey::from_execution(&event)
+                .unwrap()
+                .expect("known proof type must be recovered");
+            assert_eq!(key.proof_type, proof_type as u8, "{proof_type:?}");
+        }
+    }
+
+    #[test]
+    fn slash_execution_ignores_an_unknown_reason() {
+        let event = SlashExecuted {
+            e3_id: E3id::new("1", 1),
+            proposal_id: 1,
+            operator: Address::repeat_byte(8),
+            reason: keccak256(U256::from(255).to_be_bytes::<32>()).0,
+            ticket_amount: 0,
+            ciphernode_bond_amount: 0,
+        };
+
+        assert!(SlashIntentKey::from_execution(&event).unwrap().is_none());
     }
 
     #[test]

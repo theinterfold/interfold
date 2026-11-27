@@ -21,9 +21,10 @@ use crate::{
 use actix::prelude::*;
 use anyhow::{Context, Result};
 use e3_events::{
-    prelude::*, trap, BusHandle, CiphernodeSelected, CorrelationId, DocumentMeta, DocumentReceived,
-    E3Stage, E3id, EType, EventSource, EventStoreQueryBy, EventType, InterfoldEvent,
-    InterfoldEventData, PartyId, PublishDocumentRequested, SeqAgg, TypedEvent,
+    prelude::*, trap, trap_fut, BusHandle, CiphernodeSelected, CorrelationId, DocumentMeta,
+    DocumentReceived, E3Stage, E3id, EType, EventContext, EventSource, EventStoreQueryBy,
+    EventType, InterfoldEvent, InterfoldEventData, LbfvKeyShareDocumentFetchRequested, PartyId,
+    PublishDocumentRequested, SeqAgg, Sequenced, TypedEvent,
 };
 use e3_utils::ArcBytes;
 use e3_utils::NotifySync;
@@ -77,6 +78,13 @@ const DHT_PUT_ATTEMPTS: u32 = 2;
 const REPLICATION_QUEUE_POLL: Duration = Duration::from_secs(5);
 
 type DocumentId = (E3id, ContentHash);
+
+fn lbfv_document_id(request: &LbfvKeyShareDocumentFetchRequested) -> DocumentId {
+    (
+        request.e3_id().clone(),
+        ContentHash(request.request().content_hash.as_slice().to_vec()),
+    )
+}
 
 #[derive(Default)]
 pub struct RecoveredDocumentState {
@@ -173,6 +181,10 @@ pub struct DocumentPublisher {
     fetching: HashMap<DocumentId, WaitingFetch>,
     fetch_queue: FetchQueue,
     fetch_aborts: HashMap<DocumentId, AbortHandle>,
+    /// Targeted l-BFV fetches that wait for `SyncEnded` or for a fetch slot.
+    lbfv_fetch_queue: VecDeque<(LbfvKeyShareDocumentFetchRequested, EventContext<Sequenced>)>,
+    /// The l-BFV documents that are being fetched. They share the transfer limit with `fetching`.
+    lbfv_fetching: HashSet<DocumentId>,
     early_notifications: VecDeque<DocumentIngress>,
     closed_e3s: VecDeque<E3id>,
     /// Received documents that wait for `SyncEnded` to be stored in this node's DHT store again.
@@ -241,6 +253,8 @@ impl DocumentPublisher {
             fetching: HashMap::new(),
             fetch_queue: FetchQueue::new(MAX_WAITING_FETCHES),
             fetch_aborts: HashMap::new(),
+            lbfv_fetch_queue: VecDeque::new(),
+            lbfv_fetching: HashSet::new(),
             early_notifications: VecDeque::new(),
             closed_e3s: recovered.closed_e3s,
             restorable: recovered.restorable,
@@ -270,6 +284,8 @@ impl DocumentPublisher {
                 | InterfoldEventData::ThresholdShareCreated(_)
                 | InterfoldEventData::EncryptionKeyCreated(_)
                 | InterfoldEventData::DecryptionKeyShared(_)
+                | InterfoldEventData::LbfvKeyShareDocumentCreated(_)
+                | InterfoldEventData::LbfvKeyShareDocumentFetchRequested(_)
         )
     }
 
@@ -563,6 +579,8 @@ impl DocumentPublisher {
         self.received.retain(|(id, _)| id != e3_id);
         self.fetching.retain(|(id, _), _| id != e3_id);
         self.fetch_queue.remove_e3(e3_id);
+        self.lbfv_fetch_queue
+            .retain(|(request, _)| request.e3_id() != e3_id);
         self.restorable.remove_e3(e3_id);
         if let Some((restoring, closed)) = &mut self.restoring {
             *closed |= restoring == e3_id;
@@ -635,10 +653,13 @@ mod handlers;
 mod recovery;
 
 use effects::{
-    announce_stored_document, bind_to_candidate, replicate_document, store_document_locally,
-    DocumentMetadataMismatch,
+    announce_stored_document, bind_to_candidate, publish_lbfv_fetch_failure, replicate_document,
+    store_document_locally, DocumentMetadataMismatch,
 };
-pub use effects::{handle_document_published_notification, handle_publish_document_requested};
+pub use effects::{
+    handle_document_published_notification, handle_lbfv_document_fetch_requested,
+    handle_publish_document_requested,
+};
 use recovery::read_logged_document;
 pub use recovery::recover_document_state;
 

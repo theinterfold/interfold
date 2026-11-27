@@ -14,68 +14,16 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
         let (msg, event_context) = msg.into_components();
         match msg {
             InterfoldEventData::AccusationQuorumReached(data) => {
-                // Every node evaluates the policy after quorum. Only the first three voters send
-                // a transaction when Lane A is enabled, but all nodes need the same disabled-policy
-                // decision so they can derive the same E3-scoped exclusion.
-                if self.provider.chain_id() == data.e3_id.chain_id()
-                    && is_slashable_outcome(&data.outcome)
-                {
-                    let recovery = &mut self.recovery;
-                    let intent_times = &mut self.intent_times;
-                    let decision = self.submissions.record_and_admit(data.clone(), |event| {
-                        if let Some(recovery) = recovery.as_mut() {
-                            recovery.try_mutate(&event_context, |mut recovery| {
-                                recovery.record(event.clone())?;
-                                Ok(recovery)
-                            })?;
-                        }
-                        // A missing time only makes a fallback submitter wait its full delay, so
-                        // a failed write does not stop the intent.
-                        if let Some(intent_times) = intent_times.as_mut() {
-                            let key = SlashIntentKey::from_quorum(event)?;
-                            if let Err(error) =
-                                intent_times.try_mutate_without_context(|mut times| {
-                                    times.record(key, now_unix_secs());
-                                    Ok(times)
-                                })
-                            {
-                                warn!(%error, "Could not save when the slash intent was recorded");
-                            }
-                        }
-                        Ok(())
-                    });
-                    match decision {
-                        Ok((key, SlashSubmissionDecision::Submit)) => {
-                            ctx.notify(SubmitSlashIntent {
-                                key,
-                                event: data,
-                                retry: false,
-                            });
-                        }
-                        Ok((_, SlashSubmissionDecision::Defer)) => {
-                            info!(e3_id = %data.e3_id, "Deferred slash intent until effects are enabled");
-                        }
-                        Ok((_, SlashSubmissionDecision::IgnoreDuplicate)) => {
-                            info!(e3_id = %data.e3_id, "Ignored duplicate slash intent");
-                        }
-                        Err(error) => self.bus.with_ec(&event_context).err(EType::Evm, error),
-                    }
-                }
+                self.admit_quorum(data.into(), false, &event_context, ctx)
+            }
+            InterfoldEventData::LbfvAccusationQuorumReached(data) => {
+                self.admit_quorum(data, true, &event_context, ctx)
             }
             InterfoldEventData::CommitteeMemberExcluded(data) => {
                 if data.e3_id.chain_id() == self.provider.chain_id() {
                     match SlashIntentKey::from_exclusion(&data) {
                         Ok(key) => {
-                            if let Some(recovery) = self.recovery.as_mut() {
-                                if let Err(error) =
-                                    recovery.try_mutate(&event_context, |mut recovery| {
-                                        recovery.acknowledge(&key);
-                                        Ok(recovery)
-                                    })
-                                {
-                                    self.bus.with_ec(&event_context).err(EType::Evm, error);
-                                }
-                            }
+                            self.acknowledge_recovered(&key, &event_context);
                             self.forget_intent_time(&key);
                             self.submissions.mark_completed(key);
                         }
@@ -87,16 +35,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                 if data.e3_id.chain_id() == self.provider.chain_id() {
                     match SlashIntentKey::from_execution(&data) {
                         Ok(Some(key)) => {
-                            if let Some(recovery) = self.recovery.as_mut() {
-                                if let Err(error) =
-                                    recovery.try_mutate(&event_context, |mut recovery| {
-                                        recovery.acknowledge(&key);
-                                        Ok(recovery)
-                                    })
-                                {
-                                    self.bus.with_ec(&event_context).err(EType::Evm, error);
-                                }
-                            }
+                            self.acknowledge_recovered(&key, &event_context);
                             self.forget_intent_time(&key);
                             self.submissions.mark_completed(key);
                         }
@@ -136,6 +75,124 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
             }
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
             _ => (),
+        }
+    }
+}
+
+impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P> {
+    /// Record, schedule and submit an accusation quorum of either proving path. `lbfv` names the
+    /// recovery record that keeps the report; a trBFV report keeps its trBFV layout.
+    fn admit_quorum(
+        &mut self,
+        data: LbfvAccusationQuorumReached,
+        lbfv: bool,
+        event_context: &e3_events::EventContext<e3_events::Sequenced>,
+        ctx: &mut <Self as Actor>::Context,
+    ) {
+        // Every node evaluates the policy after quorum. Only the first three voters send
+        // a transaction when Lane A is enabled, but all nodes need the same disabled-policy
+        // decision so they can derive the same E3-scoped exclusion.
+        if self.provider.chain_id() == data.e3_id.chain_id() && is_slashable_outcome(&data.outcome)
+        {
+            let recovery = &mut self.recovery;
+            let lbfv_recovery = &mut self.lbfv_recovery;
+            let intent_times = &mut self.intent_times;
+            let decision = self.submissions.record_and_admit(data.clone(), |event| {
+                if lbfv {
+                    if let Some(recovery) = lbfv_recovery.as_mut() {
+                        recovery.try_mutate(&event_context, |mut recovery| {
+                            recovery.record(event.clone())?;
+                            Ok(recovery)
+                        })?;
+                    }
+                } else if let Some(recovery) = recovery.as_mut() {
+                    recovery.try_mutate(&event_context, |mut recovery| {
+                        recovery.record(AccusationQuorumReached::try_from(event.clone())?)?;
+                        Ok(recovery)
+                    })?;
+                }
+                // A missing time only makes a fallback submitter wait its full delay, so
+                // a failed write does not stop the intent.
+                if let Some(intent_times) = intent_times.as_mut() {
+                    let key = SlashIntentKey::from_quorum(event)?;
+                    if let Err(error) = intent_times.try_mutate_without_context(|mut times| {
+                        times.record(key, now_unix_secs());
+                        Ok(times)
+                    }) {
+                        warn!(%error, "Could not save when the slash intent was recorded");
+                    }
+                }
+                Ok(())
+            });
+            match decision {
+                Ok((key, SlashSubmissionDecision::Submit)) => {
+                    ctx.notify(SubmitSlashIntent {
+                        key,
+                        event: data,
+                        retry: false,
+                    });
+                }
+                Ok((_, SlashSubmissionDecision::Defer)) => {
+                    info!(e3_id = %data.e3_id, "Deferred slash intent until effects are enabled");
+                }
+                Ok((_, SlashSubmissionDecision::IgnoreDuplicate)) => {
+                    info!(e3_id = %data.e3_id, "Ignored duplicate slash intent");
+                }
+                Err(error) => self.bus.with_ec(&event_context).err(EType::Evm, error),
+            }
+        }
+    }
+
+    /// Drop a settled intent from both recovery records. The key does not name the path, and the
+    /// intent is in at most one of them.
+    fn acknowledge_recovered(
+        &mut self,
+        key: &SlashIntentKey,
+        event_context: &e3_events::EventContext<e3_events::Sequenced>,
+    ) {
+        if let Some(recovery) = self.recovery.as_mut() {
+            if let Err(error) = recovery.try_mutate(event_context, |mut recovery| {
+                recovery.acknowledge(key);
+                Ok(recovery)
+            }) {
+                self.bus.with_ec(event_context).err(EType::Evm, error);
+            }
+        }
+        // A write creates the record, so a node without an l-BFV report writes nothing.
+        if let Some(recovery) = self
+            .lbfv_recovery
+            .as_mut()
+            .filter(|recovery| recovery.get().is_some_and(|state| state.holds(key)))
+        {
+            if let Err(error) = recovery.try_mutate(event_context, |mut recovery| {
+                recovery.acknowledge(key);
+                Ok(recovery)
+            }) {
+                self.bus.with_ec(event_context).err(EType::Evm, error);
+            }
+        }
+    }
+
+    fn acknowledge_recovered_without_context(&mut self, key: &SlashIntentKey) {
+        if let Some(recovery) = self.recovery.as_mut() {
+            if let Err(error) = recovery.try_mutate_without_context(|mut recovery| {
+                recovery.acknowledge(key);
+                Ok(recovery)
+            }) {
+                self.bus.err(EType::Evm, error);
+            }
+        }
+        if let Some(recovery) = self
+            .lbfv_recovery
+            .as_mut()
+            .filter(|recovery| recovery.get().is_some_and(|state| state.holds(key)))
+        {
+            if let Err(error) = recovery.try_mutate_without_context(|mut recovery| {
+                recovery.acknowledge(key);
+                Ok(recovery)
+            }) {
+                self.bus.err(EType::Evm, error);
+            }
         }
     }
 }
@@ -253,14 +310,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SlashSubmissionFini
 
     fn handle(&mut self, msg: SlashSubmissionFinished, ctx: &mut Self::Context) -> Self::Result {
         if msg.acknowledge_recovery {
-            if let Some(recovery) = self.recovery.as_mut() {
-                if let Err(error) = recovery.try_mutate_without_context(|mut recovery| {
-                    recovery.acknowledge(&msg.key);
-                    Ok(recovery)
-                }) {
-                    self.bus.err(EType::Evm, error);
-                }
-            }
+            self.acknowledge_recovered_without_context(&msg.key);
             self.forget_intent_time(&msg.key);
         }
         self.submissions.finish(&msg.key, msg.terminal);

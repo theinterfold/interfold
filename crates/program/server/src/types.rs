@@ -24,6 +24,8 @@ pub struct ComputeRequest {
     pub encryption_scheme_id: Vec<u8>,
     #[serde(deserialize_with = "deserialize_hex_string")]
     pub committee_public_key_hash: Vec<u8>,
+    #[serde(default, deserialize_with = "deserialize_hex_string")]
+    pub committee_public_key: Vec<u8>,
     #[serde(deserialize_with = "deserialize_hex_string")]
     pub params: Vec<u8>,
     #[serde(deserialize_with = "deserialize_hex_tuple")]

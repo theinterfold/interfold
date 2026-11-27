@@ -32,18 +32,24 @@
 //! [`CommitmentConsistencyCheckComplete`]: e3_events::CommitmentConsistencyCheckComplete
 //! [`CommitmentConsistencyViolation`]: e3_events::CommitmentConsistencyViolation
 
+use crate::domain::commitment_consistency::{
+    CommitmentConsistency, CommitmentConsistencySnapshot, LbfvCommitmentConsistencySnapshot,
+};
+use crate::repo::PathRepository;
 use crate::CommitmentLink;
 use actix::{Actor, Addr, Context, Handler};
-use e3_data::Repository;
 use e3_events::{
-    BusHandle, CommitmentConsistencyCheckRequested, CommitmentRosterSelected, E3RequestComplete,
-    E3id, EventContext, EventPublisher, EventSubscriber, EventType, InterfoldEvent,
-    InterfoldEventData, ProofVerificationPassed, Sequenced, TypedEvent,
+    BusHandle, CommitmentConsistencyViolation, CommitmentRosterSelected, E3RequestComplete, E3id,
+    EventContext, EventPublisher, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData,
+    LbfvCommitmentConsistencyCheckRequested, LbfvCommitmentConsistencyViolation,
+    ProofVerificationPassed, Sequenced, TypedEvent,
 };
+use e3_fhe_params::BfvPreset;
 use e3_utils::NotifySync;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
-use crate::domain::commitment_consistency::{CommitmentConsistency, CommitmentConsistencySnapshot};
+type SnapshotRepository =
+    PathRepository<CommitmentConsistencySnapshot, LbfvCommitmentConsistencySnapshot>;
 
 /// Per-E3 actor that enforces cross-circuit commitment consistency.
 ///
@@ -54,8 +60,11 @@ pub struct CommitmentConsistencyChecker {
     e3_id: E3id,
     /// Plain, synchronous consistency core. Owns the proof cache and links.
     consistency: CommitmentConsistency,
+    /// Whether this E3 proves on the l-BFV path. Its events and saved state name each proof by its
+    /// row; a trBFV E3 uses the trBFV forms, whose persisted and wire layouts do not change.
+    lbfv: bool,
     /// Durable state written atomically with each event that changes the checker.
-    snapshot_repo: Option<Repository<CommitmentConsistencySnapshot>>,
+    snapshot_repo: Option<SnapshotRepository>,
 }
 
 impl CommitmentConsistencyChecker {
@@ -64,19 +73,26 @@ impl CommitmentConsistencyChecker {
         e3_id: E3id,
         links: Vec<Box<dyn CommitmentLink>>,
         committee_h: usize,
+        params_preset: BfvPreset,
     ) -> Self {
         Self {
             bus: bus.clone(),
             e3_id: e3_id.clone(),
-            consistency: CommitmentConsistency::new(e3_id, links, committee_h),
+            consistency: CommitmentConsistency::new_for_preset(
+                e3_id,
+                links,
+                committee_h,
+                params_preset,
+            ),
+            lbfv: e3_fhe_params::is_lbfv_path(params_preset),
             snapshot_repo: None,
         }
     }
 
     pub(crate) fn with_snapshot(
         mut self,
-        repo: Repository<CommitmentConsistencySnapshot>,
-        restored: Option<CommitmentConsistencySnapshot>,
+        repo: SnapshotRepository,
+        restored: Option<LbfvCommitmentConsistencySnapshot>,
     ) -> anyhow::Result<Self> {
         if let Some(snapshot) = restored {
             self.consistency.restore(snapshot)?;
@@ -111,15 +127,36 @@ impl CommitmentConsistencyChecker {
         let Some(repo) = &self.snapshot_repo else {
             return;
         };
-        let store = e3_data::DataStore::from(repo);
-        if let Err(err) =
-            store.write_with_context(Option::<CommitmentConsistencySnapshot>::None, context)
-        {
+        if let Err(err) = repo.clear_with_context(context) {
             error!(
                 e3_id = %self.e3_id,
                 error = %err,
                 "Failed to clear completed commitment-consistency state"
             );
+        }
+    }
+
+    /// Publish each violation in the form of the E3's proving path.
+    fn publish_violations(
+        &self,
+        violations: Vec<LbfvCommitmentConsistencyViolation>,
+        ec: &EventContext<Sequenced>,
+    ) {
+        for violation in violations {
+            let published = if self.lbfv {
+                self.bus.publish(violation, ec.clone())
+            } else {
+                match CommitmentConsistencyViolation::try_from(violation) {
+                    Ok(violation) => self.bus.publish(violation, ec.clone()),
+                    Err(err) => {
+                        error!("A trBFV E3 found a violation of an l-BFV row: {err}");
+                        continue;
+                    }
+                }
+            };
+            if let Err(err) = published {
+                error!("Failed to publish CommitmentConsistencyViolation: {err}");
+            }
         }
     }
 
@@ -138,11 +175,16 @@ impl CommitmentConsistencyChecker {
         e3_id: E3id,
         links: Vec<Box<dyn CommitmentLink>>,
         committee_h: usize,
+        params_preset: BfvPreset,
     ) -> Addr<Self> {
-        let actor = Self::new(bus, e3_id, links, committee_h);
+        let actor = Self::new(bus, e3_id, links, committee_h, params_preset);
         let addr = actor.start();
         bus.subscribe(
             EventType::CommitmentConsistencyCheckRequested,
+            addr.clone().into(),
+        );
+        bus.subscribe(
+            EventType::LbfvCommitmentConsistencyCheckRequested,
             addr.clone().into(),
         );
         bus.subscribe(EventType::ProofVerificationPassed, addr.clone().into());
@@ -169,8 +211,21 @@ impl Handler<InterfoldEvent> for CommitmentConsistencyChecker {
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (msg, ec) = msg.into_components();
         match msg {
-            InterfoldEventData::CommitmentConsistencyCheckRequested(data) => {
+            InterfoldEventData::CommitmentConsistencyCheckRequested(data) if !self.lbfv => self
+                .notify_sync(
+                    ctx,
+                    TypedEvent::new(LbfvCommitmentConsistencyCheckRequested::from(data), ec),
+                ),
+            InterfoldEventData::LbfvCommitmentConsistencyCheckRequested(data) if self.lbfv => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::CommitmentConsistencyCheckRequested(_)
+            | InterfoldEventData::LbfvCommitmentConsistencyCheckRequested(_) => {
+                warn!(
+                    e3_id = %self.e3_id,
+                    lbfv = self.lbfv,
+                    "Ignoring a consistency check request of the other proving path"
+                );
             }
             InterfoldEventData::ProofVerificationPassed(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
@@ -212,11 +267,7 @@ impl Handler<TypedEvent<CommitmentRosterSelected>> for CommitmentConsistencyChec
         let (data, ec) = msg.into_components();
         let violations = self.consistency.on_roster_selected(data);
         self.persist(&ec);
-        for violation in violations {
-            if let Err(err) = self.bus.publish(violation, ec.clone()) {
-                error!("Failed to publish CommitmentConsistencyViolation: {err}");
-            }
-        }
+        self.publish_violations(violations, &ec);
     }
 }
 
@@ -231,20 +282,16 @@ impl Handler<TypedEvent<ProofVerificationPassed>> for CommitmentConsistencyCheck
         let (data, ec) = msg.into_components();
         let violations = self.consistency.on_proof_verified(data);
         self.persist(&ec);
-        for violation in violations {
-            if let Err(err) = self.bus.publish(violation, ec.clone()) {
-                error!("Failed to publish CommitmentConsistencyViolation: {err}");
-            }
-        }
+        self.publish_violations(violations, &ec);
     }
 }
 
-impl Handler<TypedEvent<CommitmentConsistencyCheckRequested>> for CommitmentConsistencyChecker {
+impl Handler<TypedEvent<LbfvCommitmentConsistencyCheckRequested>> for CommitmentConsistencyChecker {
     type Result = ();
 
     fn handle(
         &mut self,
-        msg: TypedEvent<CommitmentConsistencyCheckRequested>,
+        msg: TypedEvent<LbfvCommitmentConsistencyCheckRequested>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         let (data, ec) = msg.into_components();
@@ -253,11 +300,7 @@ impl Handler<TypedEvent<CommitmentConsistencyCheckRequested>> for CommitmentCons
         };
         self.persist(&ec);
 
-        for violation in outcome.violations {
-            if let Err(err) = self.bus.publish(violation, ec.clone()) {
-                error!("Failed to publish CommitmentConsistencyViolation: {err}");
-            }
-        }
+        self.publish_violations(outcome.violations, &ec);
 
         // Respond to ShareVerificationActor.
         if let Err(err) = self.bus.publish(outcome.complete, ec) {

@@ -8,7 +8,7 @@ impl AccusationVoting {
     /// Called when we receive an accusation from another node via gossip.
     pub(crate) fn on_accusation_received(
         &mut self,
-        accusation: ProofFailureAccusation,
+        accusation: LbfvProofFailureAccusation,
         ec: &EventContext<Sequenced>,
     ) -> Vec<VoteAction> {
         let mut actions = Vec::new();
@@ -18,7 +18,7 @@ impl AccusationVoting {
 
     pub(super) fn on_accusation_received_inner(
         &mut self,
-        accusation: ProofFailureAccusation,
+        accusation: LbfvProofFailureAccusation,
         ec: &EventContext<Sequenced>,
         actions: &mut Vec<VoteAction>,
     ) {
@@ -36,6 +36,12 @@ impl AccusationVoting {
             }
         };
 
+        // Only multirow proof types (l-BFV row proofs) carry a non-zero proof instance.
+        if !accusation.proof_type.is_multirow() && accusation.proof_instance != 0 {
+            warn!("Ignoring accusation with an invalid proof instance");
+            return;
+        }
+
         let accusation_id = Self::accusation_id(&accusation);
 
         // Peers that detect the same fault accuse with their own windows; converge on the latest.
@@ -45,7 +51,11 @@ impl AccusationVoting {
         }
 
         // Determine our position based on our local verification state.
-        let key = (accusation.accused, accusation.proof_type);
+        let identity = ProofIdentity {
+            proof_type: accusation.proof_type,
+            instance: accusation.proof_instance,
+        };
+        let key = (accusation.accused, identity);
         let our_data_hash = if let Some(received) = self.received_data.get(&key) {
             if received.verification_passed {
                 info!(
@@ -70,7 +80,10 @@ impl AccusationVoting {
                         warn!("Forwarded C3a/C3b payload e3_id mismatch — cannot verify");
                         false
                     } else {
-                        let expected = forwarded.payload.proof_type.circuit_names();
+                        let expected = forwarded
+                            .payload
+                            .proof_type
+                            .circuit_names_for(self.params_profile.threshold_preset());
                         expected.contains(&forwarded.payload.proof.circuit)
                     }
                 }
@@ -159,7 +172,8 @@ impl AccusationVoting {
                     accusation_id,
                     data_hash,
                     accused: key.0,
-                    proof_type: key.1,
+                    proof_type: key.1.proof_type,
+                    proof_instance: key.1.instance,
                     evidence,
                 },
             );
@@ -252,7 +266,7 @@ impl AccusationVoting {
     fn adopt_later_vote_window(
         &mut self,
         accusation_id: [u8; 32],
-        incoming: ProofFailureAccusation,
+        incoming: LbfvProofFailureAccusation,
         ec: &EventContext<Sequenced>,
         actions: &mut Vec<VoteAction>,
     ) {

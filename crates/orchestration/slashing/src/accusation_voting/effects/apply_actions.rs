@@ -21,7 +21,7 @@ impl AccusationManager {
                     ec,
                     dedup_key,
                 } => {
-                    if let Err(err) = self.bus.publish(accusation, ec) {
+                    if let Err(err) = self.publish_accusation(accusation, ec) {
                         error!("Failed to broadcast ProofFailureAccusation: {err}");
                         // Preserve the original rollback: re-allow this
                         // (accused, proof_type) accusation on a dead bus.
@@ -34,7 +34,7 @@ impl AccusationManager {
                     }
                 }
                 VoteAction::PublishQuorum { quorum, ec } => {
-                    if let Err(err) = self.bus.publish(quorum, ec) {
+                    if let Err(err) = self.publish_quorum(quorum, ec) {
                         error!("Failed to publish AccusationQuorumReached: {err}");
                     }
                 }
@@ -57,7 +57,7 @@ impl AccusationManager {
                         if let Some((quorum, ec)) = act.voting.on_vote_timeout(accusation_id) {
                             // The quorum event comes back to this manager, which then saves the
                             // state with that event's context.
-                            if let Err(err) = act.bus.publish(quorum, ec) {
+                            if let Err(err) = act.publish_quorum(quorum, ec) {
                                 error!(
                                     "Failed to publish AccusationQuorumReached on timeout: {err}"
                                 );
@@ -74,6 +74,34 @@ impl AccusationManager {
                     }
                 }
             }
+        }
+    }
+
+    /// Publish an accusation in the form of the E3's proving path.
+    fn publish_accusation(
+        &self,
+        accusation: LbfvProofFailureAccusation,
+        ec: EventContext<Sequenced>,
+    ) -> anyhow::Result<()> {
+        if self.voting.is_lbfv_path() {
+            self.bus.publish(accusation, ec)
+        } else {
+            self.bus
+                .publish(ProofFailureAccusation::try_from(accusation)?, ec)
+        }
+    }
+
+    /// Publish a quorum decision in the form of the E3's proving path.
+    fn publish_quorum(
+        &self,
+        quorum: LbfvAccusationQuorumReached,
+        ec: EventContext<Sequenced>,
+    ) -> anyhow::Result<()> {
+        if self.voting.is_lbfv_path() {
+            self.bus.publish(quorum, ec)
+        } else {
+            self.bus
+                .publish(AccusationQuorumReached::try_from(quorum)?, ec)
         }
     }
 
@@ -103,8 +131,7 @@ impl AccusationManager {
         let Some(repo) = self.votes_repo.take() else {
             return;
         };
-        let store = e3_data::DataStore::from(&repo);
-        if let Err(err) = store.write_with_context(Option::<AccusationVotesSnapshot>::None, ec) {
+        if let Err(err) = repo.clear_with_context(ec) {
             error!("Failed to clear the accusation votes of a completed E3: {err}");
         }
     }

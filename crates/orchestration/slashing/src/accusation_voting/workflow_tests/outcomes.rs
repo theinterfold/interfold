@@ -177,11 +177,12 @@ fn a_restored_accusation_keeps_its_votes_and_its_timeout() {
     let committee = vec![me.address(), accused.address(), signer(3).address()];
     let mut before = voting_with(&me, committee.clone(), 1, 2);
     before.on_consistency_violation(
-        CommitmentConsistencyViolation {
+        LbfvCommitmentConsistencyViolation {
             e3_id: before.e3_id.clone(),
             accused_address: accused.address(),
             accused_party_id: 1,
             proof_type: ProofType::C1PkGeneration,
+            proof_instance: 0,
             data_hash: [7; 32],
             evidence: Bytes::from(vec![0x11; 32]),
         },

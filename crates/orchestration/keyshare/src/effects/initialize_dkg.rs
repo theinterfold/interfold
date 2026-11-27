@@ -286,32 +286,40 @@ impl ThresholdKeyshare {
             .search_defaults()
             .ok_or_else(|| anyhow!("No search defaults for {:?}", threshold_preset))?;
 
-        let event = ComputeRequest::trbfv(
-            TrBFVRequest::GenPkShareAndSkSss(GenPkShareAndSkSssRequest {
-                trbfv_config,
-                crp,
-                lambda: threshold_preset.lambda_config(),
-                num_ciphertexts: defaults.z as usize,
-                synchronized: if self.params_profile.protocol()
-                    == e3_fhe_params::BfvDecryptionProtocol::Synchronized
-                {
-                    let context =
-                        crate::synchronized::proof_context(&selected, self.interfold_address)?;
-                    Some(
-                        e3_trbfv::gen_pk_share_and_sk_sss::SynchronizedDkgGeneration {
-                            profile: self.params_profile,
-                            committee: state.committee_size()?,
-                            owner: context.party_id,
-                            setup_binding: crate::synchronized::setup_binding(&context, &e3_id)?,
-                        },
-                    )
-                } else {
-                    None
-                },
-            }),
-            CorrelationId::new(),
-            e3_id,
-        );
+        let request = GenPkShareAndSkSssRequest {
+            trbfv_config,
+            crp,
+            lambda: threshold_preset.lambda_config(),
+            num_ciphertexts: defaults.z as usize,
+            synchronized: if self.params_profile.protocol()
+                == e3_fhe_params::BfvDecryptionProtocol::Synchronized
+            {
+                let context =
+                    crate::synchronized::proof_context(&selected, self.interfold_address)?;
+                Some(
+                    e3_trbfv::gen_pk_share_and_sk_sss::SynchronizedDkgGeneration {
+                        profile: self.params_profile,
+                        committee: state.committee_size()?,
+                        owner: context.party_id,
+                        setup_binding: crate::synchronized::setup_binding(&context, &e3_id)?,
+                    },
+                )
+            } else {
+                None
+            },
+        };
+        // An l-BFV E3 sizes its smudging noise with the l-BFV depth and noise model, which its
+        // request carries. A trBFV E3 keeps the request that earlier releases stored.
+        let request = if e3_fhe_params::is_lbfv_path(threshold_preset) {
+            TrBFVRequest::GenLbfvPkShareAndSkSss(GenLbfvPkShareAndSkSssRequest {
+                request,
+                mult_depth: defaults.mult_depth,
+                preset: threshold_preset,
+            })
+        } else {
+            TrBFVRequest::GenPkShareAndSkSss(request)
+        };
+        let event = ComputeRequest::trbfv(request, CorrelationId::new(), e3_id);
 
         self.bus.publish(event, ec)?;
         Ok(())
@@ -342,13 +350,19 @@ impl ThresholdKeyshare {
         } else {
             None
         };
+        let ec = res.get_ctx().clone();
         match &state.state {
             KeyshareState::GeneratingThresholdShare(data)
                 if data.pk_share.is_none()
                     && data.sk_sss.is_none()
                     && data.e_sm_raw.is_none()
                     && data.proof_request_data.is_none() => {}
-            KeyshareState::GeneratingThresholdShare(_) => {
+            KeyshareState::GeneratingThresholdShare(data) => {
+                if let Some(proof_data) = data.proof_request_data.clone() {
+                    if let Err(error) = self.start_lbfv_generation(proof_data.sk_raw, ec) {
+                        error!("Failed to start local l-BFV generation: {error}");
+                    }
+                }
                 info!("Ignoring duplicate GenPkShareAndSkSss response");
                 return Ok(());
             }
@@ -428,6 +442,7 @@ impl ThresholdKeyshare {
             })?;
         }
 
+        let lbfv_secret_key = output.sk_raw.clone();
         let (pk_share, sk_sss, e_sm_raw) = (
             output.pk_share.clone(),
             output.sk_sss,
@@ -464,6 +479,12 @@ impl ThresholdKeyshare {
             let current: GeneratingThresholdShareData = self.state.try_get()?.try_into()?;
             return self.resume_generating_threshold_share(current, ec);
         }
+        // A local failure keeps the durable state; a restart resumes the generation and the DKG
+        // timeout ends the E3 without slashing when it never completes.
+        if let Err(error) = self.start_lbfv_generation(lbfv_secret_key, ec.clone()) {
+            error!("Failed to start local l-BFV generation: {error}");
+        }
+
         if let Some(response) = self.pending.gen_esi_response.take() {
             self.handle_gen_esi_sss_response(response)?;
         } else {

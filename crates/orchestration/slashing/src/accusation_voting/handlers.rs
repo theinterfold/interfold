@@ -25,8 +25,17 @@ impl Handler<InterfoldEvent> for AccusationManager {
             InterfoldEventData::ProofVerificationPassed(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            InterfoldEventData::ProofFailureAccusation(data) => {
+            InterfoldEventData::ProofFailureAccusation(data) if !self.voting.is_lbfv_path() => self
+                .notify_sync(
+                    ctx,
+                    TypedEvent::new(LbfvProofFailureAccusation::from(data), ec),
+                ),
+            InterfoldEventData::LbfvProofFailureAccusation(data) if self.voting.is_lbfv_path() => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::ProofFailureAccusation(_)
+            | InterfoldEventData::LbfvProofFailureAccusation(_) => {
+                warn!("Ignoring an accusation of the other proving path");
             }
             InterfoldEventData::AccusationVote(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
@@ -44,11 +53,26 @@ impl Handler<InterfoldEvent> for AccusationManager {
                 let actions = self.voting.on_effects_enabled();
                 self.apply_actions(actions, ctx);
             }
-            InterfoldEventData::CommitmentConsistencyViolation(data) => {
+            InterfoldEventData::CommitmentConsistencyViolation(data)
+                if !self.voting.is_lbfv_path() =>
+            {
+                self.notify_sync(
+                    ctx,
+                    TypedEvent::new(LbfvCommitmentConsistencyViolation::from(data), ec),
+                )
+            }
+            InterfoldEventData::LbfvCommitmentConsistencyViolation(data)
+                if self.voting.is_lbfv_path() =>
+            {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::CommitmentConsistencyViolation(_)
+            | InterfoldEventData::LbfvCommitmentConsistencyViolation(_) => {
+                warn!("Ignoring a commitment violation of the other proving path");
+            }
             // A vote timeout publishes this; it changed the state before.
-            InterfoldEventData::AccusationQuorumReached(_) => {}
+            InterfoldEventData::AccusationQuorumReached(_)
+            | InterfoldEventData::LbfvAccusationQuorumReached(_) => {}
             InterfoldEventData::E3RequestComplete(data) => {
                 if data.e3_id == *self.voting.e3_id() {
                     self.end_e3(&ec, ctx);
@@ -89,12 +113,12 @@ impl Handler<TypedEvent<ProofVerificationPassed>> for AccusationManager {
     }
 }
 
-impl Handler<TypedEvent<ProofFailureAccusation>> for AccusationManager {
+impl Handler<TypedEvent<LbfvProofFailureAccusation>> for AccusationManager {
     type Result = ();
 
     fn handle(
         &mut self,
-        msg: TypedEvent<ProofFailureAccusation>,
+        msg: TypedEvent<LbfvProofFailureAccusation>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
         let (data, ec) = msg.into_components();
@@ -138,12 +162,12 @@ impl Handler<TypedEvent<ComputeRequestError>> for AccusationManager {
     }
 }
 
-impl Handler<TypedEvent<CommitmentConsistencyViolation>> for AccusationManager {
+impl Handler<TypedEvent<LbfvCommitmentConsistencyViolation>> for AccusationManager {
     type Result = ();
 
     fn handle(
         &mut self,
-        msg: TypedEvent<CommitmentConsistencyViolation>,
+        msg: TypedEvent<LbfvCommitmentConsistencyViolation>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
         let (data, ec) = msg.into_components();

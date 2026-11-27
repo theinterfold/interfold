@@ -327,10 +327,13 @@ fn run_natively(
         fhe_inputs: inputs,
         published,
     };
+    // The guest binds the committee key to the same hash, so the host predicts its journal only
+    // when it binds the key too.
     let (result, ciphertext, selected) = input
-        .run_selected(
+        .run_bound_selected(
             processor,
             policy,
+            Some(domain.committee_public_key_hash),
             Batching::Parallel {
                 batch_size: COMMITMENT_BATCH,
             },
@@ -345,6 +348,13 @@ fn run_natively(
     let header = GuestHeader {
         domain,
         params: fhe_inputs.params,
+        // Only an l-BFV key envelope changes what the guest computes. Any other committee key is
+        // left out, so a trBFV round does not stream its public key into the guest.
+        committee_key: if e3_bfv_client::is_lbfv_key_envelope(&fhe_inputs.committee_key) {
+            fhe_inputs.committee_key
+        } else {
+            Vec::new()
+        },
         indices: fhe_inputs
             .ciphertexts
             .iter()

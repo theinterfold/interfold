@@ -646,6 +646,12 @@ mod task_group_tests {
             ))),
             zk_request.clone(),
         );
+        let lbfv_generation = ComputeRequestError::new(
+            ComputeRequestErrorKind::TrBFV(TrBFVError::GenLbfvKeyShares(TrBFVFailure::from(
+                "worker panic",
+            ))),
+            zk_request.clone(),
+        );
         let threshold_decryption = ComputeRequestError::new(
             ComputeRequestErrorKind::TrBFV(TrBFVError::CalculateThresholdDecryption(
                 TrBFVFailure::from("invalid threshold shares"),
@@ -665,6 +671,7 @@ mod task_group_tests {
 
         assert!(is_retryable_compute_error(&retryable));
         assert!(is_retryable_compute_error(&trbfv));
+        assert!(is_retryable_compute_error(&lbfv_generation));
         assert!(!is_retryable_compute_error(&invalid));
         assert!(!is_retryable_compute_error(&threshold_decryption));
         assert!(is_retryable_trbfv_request(&keyshare_request));
@@ -1062,6 +1069,7 @@ fn is_retryable_compute_error(error: &ComputeRequestError) -> bool {
         ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(_))
             | ComputeRequestErrorKind::TrBFV(
                 TrBFVError::GenPkShareAndSkSss(_)
+                    | TrBFVError::GenLbfvKeyShares(_)
                     | TrBFVError::GenEsiSss(_)
                     | TrBFVError::CalculateDecryptionKey(_)
                     | TrBFVError::CalculateDecryptionShare(_)
@@ -1074,6 +1082,8 @@ fn is_retryable_trbfv_request(request: &ComputeRequestKind) -> bool {
         request,
         ComputeRequestKind::TrBFV(
             TrBFVRequest::GenPkShareAndSkSss(_)
+                | TrBFVRequest::GenLbfvPkShareAndSkSss(_)
+                | TrBFVRequest::GenLbfvKeyShares(_)
                 | TrBFVRequest::GenEsiSss(_)
                 | TrBFVRequest::CalculateDecryptionKey(_)
                 | TrBFVRequest::CalculateDecryptionShare(_)

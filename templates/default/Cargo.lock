@@ -1328,10 +1328,11 @@ dependencies = [
  "e3-bfv-client",
  "e3-fhe-params",
  "fhe",
+ "fhe-traits",
  "hex",
  "lean-imt",
  "light-poseidon",
- "num-bigint 0.4.6",
+ "num-bigint 0.5.1",
  "num-traits",
  "openvm-keccak256",
  "rayon",
@@ -1367,6 +1368,7 @@ name = "e3-openvm-host"
 version = "0.20.0"
 dependencies = [
  "anyhow",
+ "e3-bfv-client",
  "e3-compute-provider",
  "e3-openvm-types",
  "libc",

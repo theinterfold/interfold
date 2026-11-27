@@ -80,6 +80,9 @@ const AGGREGATOR_PROGRESS_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// publish. Those proofs can arrive long after the key shares that start the budget, so this phase
 /// gets a longer budget than the others.
 const PUBLIC_KEY_PROGRESS_TIMEOUT: Duration = Duration::from_secs(40 * 60);
+/// l-BFV rounds prove per-row key-share and recursive fold circuits, so every phase gets the full
+/// proof budget.
+const LBFV_PROGRESS_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 trait Clock: Send + Sync {
     fn now_unix_secs(&self) -> u64;
@@ -110,6 +113,7 @@ pub struct CiphernodeSelector {
     terminal_e3s: HashSet<E3id>,
     effects_enabled: bool,
     failover_policy: FailoverPolicy,
+    lbfv_failover_policy: FailoverPolicy,
     clock: Arc<dyn Clock>,
 }
 
@@ -174,6 +178,7 @@ impl CiphernodeSelector {
             effects_enabled: false,
             failover_policy: FailoverPolicy::new(AGGREGATOR_PROGRESS_TIMEOUT)
                 .with_public_key_timeout(PUBLIC_KEY_PROGRESS_TIMEOUT),
+            lbfv_failover_policy: FailoverPolicy::new(LBFV_PROGRESS_TIMEOUT),
             clock,
         }
     }
@@ -424,7 +429,7 @@ impl CiphernodeSelector {
         let ready = phase.is_some_and(|phase| self.ready_phases.get(&e3_id) == Some(&phase));
         if phase_changed || phase.is_none() || ready {
             let now = self.clock.now_unix_secs();
-            let policy = self.failover_policy;
+            let policy = self.failover_policy_for(&e3_id);
             self.failover.try_mutate(ec, |mut state| {
                 if phase_changed || phase.is_none() {
                     reconcile_phase(&mut state, &e3_id, None, now, &policy);
@@ -463,7 +468,7 @@ impl CiphernodeSelector {
         }
 
         let now = self.clock.now_unix_secs();
-        let policy = self.failover_policy;
+        let policy = self.failover_policy_for(&e3_id);
         self.failover.try_mutate(ec, |mut state| {
             reconcile_phase(&mut state, &e3_id, Some(phase), now, &policy);
             Ok(state)
@@ -494,19 +499,42 @@ impl CiphernodeSelector {
         self.observe_phase(e3_id, Some(AggregatorPhase::PublicKey), false, ec, ctx)
     }
 
+    /// The failover budgets of one E3: l-BFV rounds keep their own, every other profile uses the
+    /// shared ones.
+    fn failover_policy_for(&self, e3_id: &E3id) -> FailoverPolicy {
+        let is_lbfv =
+            self.state
+                .get()
+                .and_then(|state| {
+                    state.e3_cache.get(e3_id).map(|meta| {
+                        e3_fhe_params::is_lbfv_path(meta.params_profile.threshold_preset())
+                    })
+                })
+                .unwrap_or(false);
+        if is_lbfv {
+            self.lbfv_failover_policy
+        } else {
+            self.failover_policy
+        }
+    }
+
     fn reconcile_after_replay(&mut self, ctx: &mut Context<Self>) -> Result<()> {
         self.effects_enabled = true;
         let now = self.clock.now_unix_secs();
-        let policy = self.failover_policy;
         let mut e3_ids: HashSet<E3id> = self.observed_phases.keys().cloned().collect();
         e3_ids.extend(self.ready_phases.keys().cloned());
         if let Some(state) = self.failover.get() {
             e3_ids.extend(state.rounds.keys().cloned());
             e3_ids.extend(state.unresponsive.keys().cloned());
         }
+        let policies: HashMap<E3id, FailoverPolicy> = e3_ids
+            .iter()
+            .map(|e3_id| (e3_id.clone(), self.failover_policy_for(e3_id)))
+            .collect();
 
         self.failover.try_mutate_without_context(|mut state| {
             for e3_id in &e3_ids {
+                let policy = policies[e3_id];
                 let observed = self.observed_phases.get(e3_id).copied();
                 let ready =
                     observed.is_some_and(|phase| self.ready_phases.get(e3_id) == Some(&phase));
@@ -576,7 +604,7 @@ impl CiphernodeSelector {
         }
         let active_party_id = self.active_aggregator_party_id(e3_id);
         let now = self.clock.now_unix_secs();
-        let policy = self.failover_policy;
+        let policy = self.failover_policy_for(e3_id);
         let mutate = |mut state: AggregatorFailoverState| {
             reconcile_active_party(&mut state, e3_id, active_party_id, now, &policy);
             Ok(state)
@@ -638,7 +666,7 @@ impl CiphernodeSelector {
             };
             let expelled = selector.expelled.get(&e3_id).cloned().unwrap_or_default();
             let now = self.clock.now_unix_secs();
-            let policy = self.failover_policy;
+            let policy = self.failover_policy_for(&e3_id);
             let mut decision = FailoverDecision::Hold;
             self.failover.try_mutate_without_context(|mut state| {
                 decision = apply_due_timeout(

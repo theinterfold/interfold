@@ -309,20 +309,20 @@ mod tests {
     use e3_ciphernode_config::NetworkProfile;
     use e3_events::AggregateId;
 
-    // The locked wire bytes for gossip wire 7 and sync wire 6.
+    // The locked wire bytes for gossip wire 8 and sync wire 7.
     const GOSSIP_LEN: usize = 390;
-    const GOSSIP_DIGEST: &str = "6e91ec19393af9c6cf90a75bb1b4e76fe37fa6a29fc507d0457df1aa06848740";
+    const GOSSIP_DIGEST: &str = "5b49aca90736de8b8686641a2ae9a1cc5af1f9d80e6d26c0b871a55ffb713c7d";
     const FETCH_LEN: usize = 82;
-    const FETCH_DIGEST: &str = "f9e25acfde72a00af1e9d6b6f244bb6d691d0c083b55188fdf190965023ca23b";
+    const FETCH_DIGEST: &str = "b60dc42e62e883e6e77ed5d8ea854ec68771adb58d077e43aab918fed77aa673";
     const BATCH_LEN: usize = 314;
-    const BATCH_DIGEST: &str = "2a493ec5fbda77f2d6f5dbccd85b77096d248b6358508726db173fda9902021e";
+    const BATCH_DIGEST: &str = "5d8b762e1f1a26a8f8672a25d2e4419efc2842ff34d4e617ee8f107675dc8e68";
     const REQUEST_FRAME: (usize, &str) = (
         119,
-        "cc5603bce3d6eb6a12e1f6ad28a25102c0c040033df602529cc675144523927c",
+        "959cb88a7ab282655010ad49e5e708625c99b6fdbb71bf5d3d64f117cdd6f026",
     );
     const OK_FRAME: (usize, &str) = (
         88,
-        "fd3dc5932b5a3068d9f2d04b4ccb513a658392bb2bfc366e525ca9480096de51",
+        "9726d172d8e987aed66d22f0a8b265296696d9ae32fb141640179ecfef81cf7c",
     );
     const BAD_REQUEST_FRAME: (usize, &str) = (
         24,
