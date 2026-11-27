@@ -43,6 +43,22 @@ test('failed promotion restores the previous verified installation', () => {
   }
 })
 
+test('l-BFV pairs require row, chunk and v2 artifacts, but secure8192 does not', () => {
+  for (const preset of ['insecure-lbfv', 'secure-16384']) {
+    const markers = requiredArtifactMarkers(preset, 'minimum')
+    for (const circuit of ['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_aggregation']) {
+      for (const variant of ['default', 'recursive', 'evm']) {
+        for (const extension of ['json', 'vk', 'vk_hash']) {
+          assert.ok(markers.includes(`${preset}/minimum/${variant}/threshold/${circuit}/${circuit}.${extension}`))
+        }
+      }
+    }
+    assert.ok(markers.includes(`${preset}/minimum/evm/recursive_aggregation/dkg_aggregator_v2/dkg_aggregator_v2.vk`))
+    assert.ok(markers.includes(`${preset}/minimum/recursive/dkg/esm_share_computation_chunk/esm_share_computation_chunk.vk`))
+  }
+  assert.ok(!requiredArtifactMarkers('secure-8192', 'minimum').some((path) => path.includes('/rlk_generation/')))
+})
+
 test('build tooling excludes a disabled pair from the shared policy', () => {
   const dir = mkdtempSync(join(tmpdir(), 'interfold-build-policy-'))
   try {
@@ -98,8 +114,9 @@ function makeCompleteMatrix(): string {
 test('checksums command covers exactly the staged circuit configurations', () => {
   const dir = makeCompleteMatrix()
   try {
-    for (const preset of ['insecure-64', 'secure-8192']) {
-      for (const committee of ['micro', 'small', 'large']) rmSync(join(dir, preset, committee), { recursive: true })
+    const staged = new Set(['insecure-64/minimum', 'secure-8192/minimum'])
+    for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+      if (!staged.has(`${preset}/${committee}`)) rmSync(join(dir, preset, committee), { recursive: true })
     }
     execFileSync('pnpm', ['tsx', 'scripts/circuits/artifacts.ts', 'checksums', '--dir', dir])
     const manifest = JSON.parse(readFileSync(join(dir, 'checksums.json'), 'utf8'))
@@ -147,6 +164,8 @@ test('partial push publishes the staged catalogue and does not advance the ref i
   for (const file of [
     'scripts/circuits/artifacts.ts',
     'crates/zk/prover/required-artifacts.json',
+    'crates/zk/prover/required-artifacts-trbfv.json',
+    'crates/zk/prover/required-artifacts-lbfv.json',
     'crates/zk/prover/supported-configurations.json',
   ]) {
     mkdirSync(join(checkout, file, '..'), { recursive: true })

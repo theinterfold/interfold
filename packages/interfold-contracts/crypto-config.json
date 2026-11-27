@@ -82,6 +82,87 @@
           "multDepth": 0,
           "minPrimeBits": 50
         }
+      },
+      {
+        "preset": "secure-16384",
+        "paramSet": 5,
+        "threshold": {
+          "name": "SECURE_THRESHOLD_16384",
+          "degree": "16384",
+          "plaintextModulus": "65537",
+          "moduli": [
+            "4503599637200897",
+            "4503599635628033",
+            "4503599634644993",
+            "4503599634579457",
+            "4503599633989633",
+            "4503599632613377"
+          ],
+          "error1Variance": "63980174197113950682582616558744119541760"
+        },
+        "dkg": {
+          "name": "SECURE_DKG_16384",
+          "degree": "16384",
+          "plaintextModulus": "4503599637200897",
+          "moduli": [
+            "18014398510661633",
+            "18014398511382529"
+          ],
+          "error1Variance": "10"
+        },
+        "parameterHash": "0x1e4103227986f7801110cccd39f6a353f888bd5f2583a5347a67bf814402cad3",
+        "search": {
+          "n": "19",
+          "z": "5000",
+          "k": "65537",
+          "lambda": 45,
+          "b": "20",
+          "bChi": "1",
+          "minMargin": 2,
+          "d": null,
+          "insecure": false,
+          "multDepth": 3,
+          "minPrimeBits": 50
+        }
+      },
+      {
+        "preset": "insecure-lbfv",
+        "paramSet": 6,
+        "threshold": {
+          "name": "INSECURE_THRESHOLD_LBFV",
+          "degree": "128",
+          "plaintextModulus": "100",
+          "moduli": [
+            "72057594037913089",
+            "72057594037912321",
+            "72057594037904641"
+          ],
+          "error1Variance": "50471587840"
+        },
+        "dkg": {
+          "name": "INSECURE_DKG_LBFV",
+          "degree": "128",
+          "plaintextModulus": "72057594037913089",
+          "moduli": [
+            "144115188075827201",
+            "144115188075828481"
+          ],
+          "error1Variance": "10"
+        },
+        "parameterHash": "0x0619925361a4d022377f93ccd0022c0164257ffb889b979eb382aa06d401e258",
+        "search": {
+          "n": "19",
+          "z": "3",
+          "k": "100",
+          "lambda": 2,
+          "b": "20",
+          "bChi": "1",
+          "minMargin": 2,
+          "d": "128",
+          "insecure": true,
+          "multDepth": 3,
+          "minPrimeBits": 12
+        }
       }
     ],
     "profileConfigDomain": "interfold:bfv:crypto-config:v1",
@@ -269,6 +350,107 @@
             "admissionEnabled": false
           }
         ]
+      },
+      {
+        "profile": "ss-insecure-lbfv",
+        "protocol": "secret-shared",
+        "statementVersion": "interfold-bfv-v5",
+        "paramSet": 6,
+        "threshold": {
+          "name": "INSECURE_THRESHOLD_LBFV",
+          "degree": "128",
+          "plaintextModulus": "100",
+          "moduli": [
+            "72057594037913089",
+            "72057594037912321",
+            "72057594037904641"
+          ],
+          "error1Variance": "50471587840"
+        },
+        "dkg": {
+          "name": "INSECURE_DKG_LBFV",
+          "degree": "128",
+          "plaintextModulus": "72057594037913089",
+          "moduli": [
+            "144115188075827201",
+            "144115188075828481"
+          ],
+          "error1Variance": "10"
+        },
+        "thresholdParameterHash": "0x0619925361a4d022377f93ccd0022c0164257ffb889b979eb382aa06d401e258",
+        "dkgParameterHash": "0xfe3cf84880da79e9f44c9a961d8d8444f7e2395c842f0e4fb5f79f2e16325366",
+        "configurations": [
+          {
+            "committee": "minimum",
+            "cryptoConfigId": "0x7545e5c0d047c06db4efd5343f81f3f994d924561bbddc1b8f09fa3f06ddb429",
+            "artifactsDir": "insecure-lbfv/minimum",
+            "admissionEnabled": true
+          },
+          {
+            "committee": "micro",
+            "cryptoConfigId": "0xc1fd85f6d32190afe27b3bde7c7b0787a47161ba1f376caaa84e7d87642a4283",
+            "artifactsDir": "insecure-lbfv/micro",
+            "admissionEnabled": true
+          },
+          {
+            "committee": "small",
+            "cryptoConfigId": "0x15d611bc2fa0defb4b06a807512af5e1448b37b7f7610fc94092fc2f137b6760",
+            "artifactsDir": "insecure-lbfv/small",
+            "admissionEnabled": true
+          }
+        ]
+      },
+      {
+        "profile": "ss-secure-16384",
+        "protocol": "secret-shared",
+        "statementVersion": "interfold-bfv-v5",
+        "paramSet": 5,
+        "threshold": {
+          "name": "SECURE_THRESHOLD_16384",
+          "degree": "16384",
+          "plaintextModulus": "65537",
+          "moduli": [
+            "4503599637200897",
+            "4503599635628033",
+            "4503599634644993",
+            "4503599634579457",
+            "4503599633989633",
+            "4503599632613377"
+          ],
+          "error1Variance": "63980174197113950682582616558744119541760"
+        },
+        "dkg": {
+          "name": "SECURE_DKG_16384",
+          "degree": "16384",
+          "plaintextModulus": "4503599637200897",
+          "moduli": [
+            "18014398510661633",
+            "18014398511382529"
+          ],
+          "error1Variance": "10"
+        },
+        "thresholdParameterHash": "0x1e4103227986f7801110cccd39f6a353f888bd5f2583a5347a67bf814402cad3",
+        "dkgParameterHash": "0x5d332809853d5f91843cd2188e4463c8983ad30a0234af12fb34e2851c54f6d6",
+        "configurations": [
+          {
+            "committee": "minimum",
+            "cryptoConfigId": "0xe30398f918761e6d80dcc8fcebcb4c25eaf050414c09c820f55f9af76f998823",
+            "artifactsDir": "secure-16384/minimum",
+            "admissionEnabled": true
+          },
+          {
+            "committee": "micro",
+            "cryptoConfigId": "0x561058c52807d58c7576cf5fb62af5480d6c8d06c5ead4fc21bcc4cca0b2d43b",
+            "artifactsDir": "secure-16384/micro",
+            "admissionEnabled": true
+          },
+          {
+            "committee": "small",
+            "cryptoConfigId": "0x1d9b02a8add4d4c8e0aed690532ff5c93fcb01a88db1c2dd94abd3c061e8a941",
+            "artifactsDir": "secure-16384/small",
+            "admissionEnabled": true
+          }
+        ]
       }
     ]
   },
@@ -367,6 +549,18 @@
       "large"
     ],
     [
+      "insecure-lbfv",
+      "minimum"
+    ],
+    [
+      "insecure-lbfv",
+      "micro"
+    ],
+    [
+      "insecure-lbfv",
+      "small"
+    ],
+    [
       "secure-8192",
       "minimum"
     ],
@@ -381,6 +575,18 @@
     [
       "secure-8192",
       "large"
+    ],
+    [
+      "secure-16384",
+      "minimum"
+    ],
+    [
+      "secure-16384",
+      "micro"
+    ],
+    [
+      "secure-16384",
+      "small"
     ]
   ]
 }

@@ -68,6 +68,12 @@ Pre-configured BFV parameter sets for PVSS (Public Verifiable Secret Sharing) pr
 - **`BfvPreset::SecureSyncDkg8192`**: Disabled Minimum qualification transport, using the reference
   synchronized pair with plaintext `2*q0`. Sharing the secure SS threshold tuple does not share an
   identity, a transport VK, or admission.
+- **`BfvPreset::SecureThreshold16384`** / **`BfvPreset::SecureDkg16384`**: l-BFV parameters
+  (degree 16384) with multiplicative depth up to 3.
+- **`BfvPreset::InsecureThresholdLbfv`** / **`BfvPreset::InsecureDkgLbfv`**: Testing-only l-BFV
+  parameters (degree 128). They share every parameter with the trBFV-path
+  **`BfvPreset::InsecureThreshold`** / **`BfvPreset::InsecureDkg`**, so one insecure set tests both
+  protocol paths; only the l-BFV labels carry CRS/URS seeds (`supports_lbfv`).
 
 The insecure-64 and secure-8192 threshold presets use plaintext modulus 17,000,000, three CRT limbs,
 and `SEARCH_Z = 100,000`. Degree 64 is not secure and is only for development/tests. Reusing the old

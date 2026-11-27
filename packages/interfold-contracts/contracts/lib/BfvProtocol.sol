@@ -18,6 +18,14 @@ library BfvProtocol {
     bytes32 internal constant SECURE_PARAM_SET_HASH =
         0x4f4025982214c2149028270dccc0ad45c24c2441a3496cdf1a29f5d1e1b908c3;
 
+    uint8 internal constant SECURE_16384_PARAM_SET = 5;
+    bytes32 internal constant SECURE_16384_PARAM_SET_HASH =
+        0x1e4103227986f7801110cccd39f6a353f888bd5f2583a5347a67bf814402cad3;
+
+    uint8 internal constant INSECURE_LBFV_PARAM_SET = 6;
+    bytes32 internal constant INSECURE_LBFV_PARAM_SET_HASH =
+        0x0619925361a4d022377f93ccd0022c0164257ffb889b979eb382aa06d401e258;
+
     bytes32 internal constant SS_INSECURE_64_MINIMUM_CONFIG_ID =
         0xd76c4f521394e6cbe1df28036cc5dd5590c6630a403525b5c2b052f9b91507f4;
 
@@ -47,6 +55,24 @@ library BfvProtocol {
 
     bytes32 internal constant SYNC_SECURE_8192_MINIMUM_CONFIG_ID =
         0xe3996b372327803ad96baca6ffd6f0b506ee6015d2d7241818bfb20117cc09f7;
+
+    bytes32 internal constant SS_INSECURE_LBFV_MINIMUM_CONFIG_ID =
+        0x7545e5c0d047c06db4efd5343f81f3f994d924561bbddc1b8f09fa3f06ddb429;
+
+    bytes32 internal constant SS_INSECURE_LBFV_MICRO_CONFIG_ID =
+        0xc1fd85f6d32190afe27b3bde7c7b0787a47161ba1f376caaa84e7d87642a4283;
+
+    bytes32 internal constant SS_INSECURE_LBFV_SMALL_CONFIG_ID =
+        0x15d611bc2fa0defb4b06a807512af5e1448b37b7f7610fc94092fc2f137b6760;
+
+    bytes32 internal constant SS_SECURE_16384_MINIMUM_CONFIG_ID =
+        0xe30398f918761e6d80dcc8fcebcb4c25eaf050414c09c820f55f9af76f998823;
+
+    bytes32 internal constant SS_SECURE_16384_MICRO_CONFIG_ID =
+        0x561058c52807d58c7576cf5fb62af5480d6c8d06c5ead4fc21bcc4cca0b2d43b;
+
+    bytes32 internal constant SS_SECURE_16384_SMALL_CONFIG_ID =
+        0x1d9b02a8add4d4c8e0aed690532ff5c93fcb01a88db1c2dd94abd3c061e8a941;
 
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = 0;
     uint32 internal constant MINIMUM_T = 1;

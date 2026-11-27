@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "share_encryption_chunked",
+    "share_decryption_chunked",
+    "sk_share_computation_chunk",
+    "esm_share_computation_chunk",
+]

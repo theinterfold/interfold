@@ -171,7 +171,8 @@ NODE
 
   noir_degree=$(grep -E '^pub global N: u32 = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_plaintext=$(grep -E '^pub global PLAINTEXT_MODULUS: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
-  noir_moduli=$(grep -E '^pub global QIS:' "$noir_file" | sed -E 's/.*= \[([^]]+)\];/\1/' | tr -d ' ')
+  # The formatter may wrap QIS across lines; read the numbers after `=` in declaration order.
+  noir_moduli=$(awk '/^pub global QIS:/,/];/' "$noir_file" | sed -E '1s/^[^=]*=//' | grep -oE '[0-9]+' | paste -sd, -)
   noir_error_bound=$(grep -E '^pub global PK_GENERATION_B_ENC: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_q_mod_t=$(grep -E '^pub global Q_MOD_T: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_q_inverse_mod_t=$(grep -E '^pub global Q_INVERSE_MOD_T: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
@@ -203,7 +204,9 @@ process.stdout.write(`${qModT},${(x % t + t) % t}\n`);
 }
 
 check_bfv_preset insecure-64 insecure
+check_bfv_preset insecure-lbfv insecure_lbfv
 check_bfv_preset secure-8192 secure
+check_bfv_preset secure-16384 secure_16384
 
 # 6. The owner snapshot must match the parameter/configuration hashes in BfvProtocol.sol.
 #    Consumer behavior is covered by binding, SDK, contract, and native tests. Keep this check
@@ -215,7 +218,8 @@ sol_bytes32() {
     | head -n1
 }
 
-for prefix_and_preset in INSECURE:insecure-64 SECURE:secure-8192; do
+for prefix_and_preset in INSECURE:insecure-64 SECURE:secure-8192 SECURE_16384:secure-16384 \
+  INSECURE_LBFV:insecure-lbfv; do
   prefix="${prefix_and_preset%%:*}"
   preset="${prefix_and_preset#*:}"
   utils_param_hash=$(node --input-type=module - "$CRYPTO_CONFIG_JSON" "$preset" <<'NODE'
@@ -275,6 +279,10 @@ while IFS=';' read -r label binding_id admission_enabled; do
   fi
 done <<< "$PROFILE_CONFIGS"
 
+ORIGIN_V1_INSECURE_CONFIG_ID="0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78"
+[[ "$(sol_bytes32 INSECURE_CONFIG_ID)" != "$ORIGIN_V1_INSECURE_CONFIG_ID" ]] \
+  || fail "$PROTOCOL_SOL insecure configuration ID must differ from the origin interfold-bfv-v1 ID"
+
 check_utils_route() {
   local symbol="$1"
   local preset="$2"
@@ -292,22 +300,28 @@ check_utils_route INSECURE_MINIMUM insecure-64 minimum
 check_utils_route INSECURE_MICRO insecure-64 micro
 check_utils_route INSECURE_SMALL insecure-64 small
 check_utils_route INSECURE_LARGE insecure-64 large
+check_utils_route INSECURE_LBFV_MINIMUM insecure-lbfv minimum
+check_utils_route INSECURE_LBFV_MICRO insecure-lbfv micro
+check_utils_route INSECURE_LBFV_SMALL insecure-lbfv small
 check_utils_route SECURE_MINIMUM secure-8192 minimum
 check_utils_route SECURE_MICRO secure-8192 micro
 check_utils_route SECURE_SMALL secure-8192 small
 check_utils_route SECURE_LARGE secure-8192 large
+check_utils_route SECURE_16384_MINIMUM secure-16384 minimum
+check_utils_route SECURE_16384_MICRO secure-16384 micro
+check_utils_route SECURE_16384_SMALL secure-16384 small
 
 route_list() {
   local array_name="$1"
   sed -n "/^export const ${array_name}:.*= \[/,/^\] as const;/p" "$UTILS_TS" \
-    | grep -oE '(INSECURE|SECURE)_(MINIMUM|MICRO|SMALL|LARGE)_BFV_CONFIG' \
+    | grep -oE '(INSECURE(_LBFV)?|SECURE(_16384)?)_(MINIMUM|MICRO|SMALL|LARGE)_BFV_CONFIG' \
     | paste -sd, -
 }
 
 TESTNET_ROUTES=$(route_list TESTNET_BFV_CONFIGS)
-EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,INSECURE_LARGE_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_LARGE_BFV_CONFIG"
+EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,INSECURE_LARGE_BFV_CONFIG,INSECURE_LBFV_MINIMUM_BFV_CONFIG,INSECURE_LBFV_MICRO_BFV_CONFIG,INSECURE_LBFV_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_LARGE_BFV_CONFIG,SECURE_16384_MINIMUM_BFV_CONFIG,SECURE_16384_MICRO_BFV_CONFIG,SECURE_16384_SMALL_BFV_CONFIG"
 [[ "$TESTNET_ROUTES" == "$EXPECTED_TESTNET_ROUTES" ]] \
-  || fail "$UTILS_TS testnet routes must contain the exact eight-pair matrix; got $TESTNET_ROUTES"
+  || fail "$UTILS_TS testnet routes must contain the exact supported-pair matrix; got $TESTNET_ROUTES"
 
 MAINNET_ROUTES=$(route_list MAINNET_BFV_CONFIGS)
 EXPECTED_MAINNET_ROUTES="SECURE_SMALL_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG"

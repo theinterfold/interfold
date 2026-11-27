@@ -6,7 +6,9 @@ mod configuration;
 mod decryption_candidate;
 mod identity;
 mod layouts;
+mod lbfv;
 pub mod metadata;
+mod policy;
 mod toolchain;
 mod vk_commitments;
 mod vk_tree;
@@ -15,6 +17,7 @@ pub use artifacts::{
     bin_current, checksums as write_checksums, dist_current, read_active_stamp, stage_bin, Stamp,
 };
 pub use identity::checksum;
+pub use policy::required_artifacts;
 pub use toolchain::{pinned_noir_version, reports_version};
 
 use anyhow::{bail, Context, Result};
@@ -29,6 +32,43 @@ use std::{
 };
 
 const COMMITTEES: &[&str] = &["minimum", "micro", "small", "large"];
+// One preset per artifact archive and Noir configuration module.
+const ARTIFACT_PRESETS: [BfvPreset; 4] = [
+    BfvPreset::InsecureThreshold64,
+    BfvPreset::InsecureThreshold,
+    BfvPreset::SecureThreshold8192,
+    BfvPreset::SecureThreshold16384,
+];
+// The `large` committee serves the trBFV presets only.
+#[cfg(test)]
+const TRBFV_ARTIFACT_PRESETS: [BfvPreset; 2] = [
+    BfvPreset::InsecureThreshold64,
+    BfvPreset::SecureThreshold8192,
+];
+
+/// The artifact presets whose circuits are built for `committee`.
+#[cfg(test)]
+fn committee_presets(committee: CiphernodesCommitteeSize) -> &'static [BfvPreset] {
+    if committee == CiphernodesCommitteeSize::Large {
+        &TRBFV_ARTIFACT_PRESETS
+    } else {
+        &ARTIFACT_PRESETS
+    }
+}
+
+// The development/CI pair whose Honk verifiers occupy `honk/` itself; other pairs coexist below it
+// as `honk/<preset>/<committee>/`. `scripts/circuits/verifiers.ts` pins the same pair.
+const CANONICAL_VERIFIER_PAIR: [&str; 2] = ["insecure-64", "minimum"];
+
+/// The directory that holds a pair's generated Honk Solidity verifiers.
+fn honk_verifier_dir(root: &Path, preset: &str, committee: &str) -> PathBuf {
+    let base = root.join("packages/interfold-contracts/contracts/verifiers/bfv/honk");
+    if [preset, committee] == CANONICAL_VERIFIER_PAIR {
+        base
+    } else {
+        base.join(preset).join(committee)
+    }
+}
 
 pub fn build_pairs(root: &Path) -> Result<Vec<[String; 2]>> {
     let path = root.join("scripts/circuits/build-pairs.json");
@@ -412,7 +452,9 @@ impl fmt::Display for CommitteeSelection {
 fn preset(value: &str) -> Result<BfvPreset> {
     match value {
         "insecure-64" => Ok(BfvPreset::InsecureThreshold64),
+        "insecure-lbfv" => Ok(BfvPreset::InsecureThresholdLbfv),
         "secure-8192" => Ok(BfvPreset::SecureThreshold8192),
+        "secure-16384" => Ok(BfvPreset::SecureThreshold16384),
         _ => bail!("Select one supported preset, not {value}"),
     }
 }
@@ -420,20 +462,27 @@ fn profile(value: &str) -> Result<BfvProfile> {
     match value {
         "insecure-64" => Ok(BfvProfile::SsInsecure64),
         "secure-8192" => Ok(BfvProfile::SsSecure8192),
+        "insecure-lbfv" => Ok(BfvProfile::SsInsecureLbfv),
+        "secure-16384" => Ok(BfvProfile::SsSecure16384),
         other => other.parse().map_err(anyhow::Error::from),
     }
 }
 fn tier(preset: BfvPreset) -> &'static str {
     match preset {
-        BfvPreset::InsecureThreshold64 => "insecure",
-        BfvPreset::SecureThreshold8192 => "secure",
+        BfvPreset::InsecureThreshold64
+        | BfvPreset::InsecureThreshold
+        | BfvPreset::InsecureThresholdLbfv
+        | BfvPreset::SecureThreshold8192
+        | BfvPreset::SecureThreshold16384 => preset.noir_config_module(),
         _ => unreachable!("build selects threshold presets"),
     }
 }
 fn preset_name(preset: BfvPreset) -> &'static str {
     match preset {
         BfvPreset::InsecureThreshold64 => "insecure-64",
+        BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => "insecure-lbfv",
         BfvPreset::SecureThreshold8192 => "secure-8192",
+        BfvPreset::SecureThreshold16384 => "secure-16384",
         _ => unreachable!("build selects threshold presets"),
     }
 }

@@ -39,9 +39,17 @@ export const BFV_PRESETS = {
     ...preset("insecure-64"),
     profile: "ss-insecure-64" as const,
   },
+  "insecure-lbfv": {
+    ...preset("insecure-lbfv"),
+    profile: "ss-insecure-lbfv" as const,
+  },
   "secure-8192": {
     ...preset("secure-8192"),
     profile: "ss-secure-8192" as const,
+  },
+  "secure-16384": {
+    ...preset("secure-16384"),
+    profile: "ss-secure-16384" as const,
   },
 };
 
@@ -56,6 +64,8 @@ export const BFV_PROFILES = {
   "ss-secure-8192": profile("ss-secure-8192"),
   "sync-insecure-64": profile("sync-insecure-64"),
   "sync-secure-8192": profile("sync-secure-8192"),
+  "ss-insecure-lbfv": profile("ss-insecure-lbfv"),
+  "ss-secure-16384": profile("ss-secure-16384"),
 };
 export type BfvProfile = keyof typeof BFV_PROFILES;
 

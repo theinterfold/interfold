@@ -134,7 +134,8 @@ hand; the check will reject pushes where they drift from what the generator woul
 
 ### What it does
 
-1. **Discovers circuits** in `circuits/bin/{dkg,threshold,chonk,recursive_aggregation}/`
+1. **Discovers circuits** in `circuits/bin/{dkg,threshold,chonk,recursive_aggregation}/` and
+   `circuits/bin/lbfv/{dkg,threshold,recursive_aggregation}/` (l-BFV presets only)
 2. **Compiles** each circuit using `nargo compile`
 3. **Generates verification keys** using `bb write_vk` (`--scheme chonk` for the `chonk` group)
 4. **Sanitizes paths** in compiled JSON (removes local filesystem paths for opsec)
@@ -143,9 +144,12 @@ hand; the check will reject pushes where they drift from what the generator woul
 
 ### Options
 
-- `--preset <name>` - Profile namespace: `insecure-64` (default), `secure-8192`, or `all` under the
-  live policy
-- `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`, `large`
+- `--preset <name>` - Parameter preset: `insecure-64` (default; degree 64, trBFV only),
+  `insecure-lbfv` (degree 128, l-BFV parameter set 6), `secure-8192`, `secure-16384` (l-BFV only),
+  or `all` under the live policy. Secure-16384 supports minimum, micro, and small; its build
+  excludes trBFV-only circuits.
+- `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`, `large` (trBFV
+  presets `insecure-64` and `secure-8192` only)
 - `--skip-utils-patch` - Skip selecting deployment preset/committee names in
   `packages/interfold-contracts/scripts/utils.ts`
 - `--group <groups>` - Circuit groups (comma-separated: dkg,threshold,chonk,recursive_aggregation)
@@ -162,11 +166,11 @@ hand; the check will reject pushes where they drift from what the generator woul
 Hydration accepts a different source hash, reports it, and records the original artifact hash in the
 active stamp. It never restamps the archive. `--skip-if-built` still requires a source match.
 
-Only a complete build with verification keys writes the `nodes_fold.vk_tree_hash` and
-`c6_fold.vk_tree_hash` anchors. A build with `--group`, `--circuit`, or `--skip-vk`, or a build with
-a failed circuit, removes both anchors from the pair and from `circuits/bin/`. An old anchor can
-hash a key that no longer matches the compiled circuits. Run a complete build before you deploy the
-BFV verifiers or aggregate proofs.
+Only a complete build with verification keys writes the `nodes_fold.vk_tree_hash`,
+`c6_fold.vk_tree_hash` and (for l-BFV pairs) `c3ab_fold_chunked.vk_tree_hash` anchors. A build with
+`--group`, `--circuit`, or `--skip-vk`, or a build with a failed circuit, removes every anchor from
+the pair and from `circuits/bin/`. An old anchor can hash a key that no longer matches the compiled
+circuits. Run a complete build before you deploy the BFV verifiers or aggregate proofs.
 
 After preparing every build-policy pair, run `pnpm generate:vk-commitments`. Partial or failed
 builds invalidate affected archive metadata, not the committed catalogue. Generation preserves old
@@ -213,10 +217,16 @@ pnpm build:circuits --preset insecure-64 --committee minimum
 pnpm build:circuits --preset insecure-64 --committee micro
 pnpm build:circuits --preset insecure-64 --committee small
 pnpm build:circuits --preset insecure-64 --committee large
+pnpm build:circuits --preset insecure-lbfv --committee minimum
+pnpm build:circuits --preset insecure-lbfv --committee micro
+pnpm build:circuits --preset insecure-lbfv --committee small
 pnpm build:circuits --preset secure-8192 --committee minimum
 pnpm build:circuits --preset secure-8192 --committee micro
 pnpm build:circuits --preset secure-8192 --committee small
 pnpm build:circuits --preset secure-8192 --committee large
+pnpm build:circuits --preset secure-16384 --committee minimum
+pnpm build:circuits --preset secure-16384 --committee micro
+pnpm build:circuits --preset secure-16384 --committee small
 pnpm store:circuits push
 
 # Pull circuits from git branch (used by releases)
@@ -268,7 +278,7 @@ Circuits are built locally and stored in a git branch:
 
 1. **Local**: Build circuits and push to branch
 
-`push` runs `prepare-vk-commitments` on the staged eight-pair tree before hashing it. If a pair
+`push` runs `prepare-vk-commitments` on the staged fourteen-pair tree before hashing it. If a pair
 disagrees with the committed catalogue, rebuild the matching artifacts.
 
 ```bash
@@ -276,6 +286,9 @@ pnpm build:circuits --preset insecure-64 --committee minimum
 pnpm build:circuits --preset insecure-64 --committee micro
 pnpm build:circuits --preset insecure-64 --committee small
 pnpm build:circuits --preset insecure-64 --committee large
+pnpm build:circuits --preset insecure-lbfv --committee minimum
+pnpm build:circuits --preset insecure-lbfv --committee micro
+pnpm build:circuits --preset insecure-lbfv --committee small
 pnpm build:circuits --preset secure-8192 --committee minimum
 pnpm build:circuits --preset secure-8192 --committee micro
 pnpm build:circuits --preset secure-8192 --committee small
@@ -290,8 +303,10 @@ pnpm store:circuits push
 The release archive must include:
 
 - `insecure-64/{minimum,micro,small,large}` for Sepolia and local rehearsals
+- `insecure-lbfv/{minimum,micro,small}` for the l-BFV rehearsals
 - `secure-8192/{minimum,micro,small,large}` for Sepolia secure-parameter tests. Mainnet committees
   use only `minimum`, `micro` and `small`
+- `secure-16384/{minimum,micro,small}` for the l-BFV V2 configurations
 
 Nodes download one archive and select the artifact directory from the E3's on-chain BFV parameter
 set and committee size.
@@ -324,20 +339,26 @@ The script has two modes:
 
 - **`--check` (used by test and CI flows)** — regenerate in memory and diff against the committed
   files. Exits non-zero on drift without touching the working tree.
-  `tests/integration/lib/prebuild.sh`, `pnpm check:verifiers` in CI, and the pre-push hook invoke
-  the script this way — so accidental drift between committed verifiers and current circuit VKs
-  surfaces as a failure rather than a silent rewrite mid-test.
+  `tests/integration/lib/prebuild.sh`, `pnpm check:verifiers` (`--on-chain --check`) in CI, and the
+  pre-push hook invoke the script this way — so accidental drift between committed verifiers and
+  current circuit VKs surfaces as a failure rather than a silent rewrite mid-test.
 - **`--write` (default for manual runs)** — regenerate and overwrite the committed files. Use this
   when you intentionally bump the canonical-preset circuits or the Noir/bb toolchain.
 
 ### Usage
 
 ```bash
-# Verify committed verifiers match current circuit VKs (CI/tests use this)
-pnpm generate:verifiers --check
+# Verify the on-chain verifiers of one pair match its current circuit VKs (CI/tests use this).
+# Without --preset it checks insecure-64; add --preset/--committee for another pair.
+pnpm check:verifiers
 
-# Regenerate (default; equivalent to --write)
+# Regenerate every supported pair from a complete dist/circuits matrix (no arguments).
+# Fetch it with `pnpm store:circuits pull` or build each pair first.
 pnpm generate:verifiers
+
+# Check or regenerate every supported pair against dist/circuits
+pnpm generate:verifiers --check
+pnpm generate:verifiers --all-supported --write
 
 # Generate for non-canonical pairs
 pnpm build:circuits --preset secure-8192 --committee minimum
@@ -346,13 +367,16 @@ pnpm generate:verifiers --preset secure-8192 --committee minimum --write
 pnpm build:circuits --preset secure-8192 --committee small
 pnpm generate:verifiers --preset secure-8192 --committee small --write
 
-# Generate all circuits in a group, without the root alias's on-chain circuit filter
+# Generate all circuits in a group, without the on-chain circuit filter
 pnpm exec tsx scripts/circuits/verifiers.ts --group dkg
 pnpm exec tsx scripts/circuits/verifiers.ts --group threshold
 
 # Generate for specific circuit(s)
 pnpm generate:verifiers --circuits pk
 pnpm generate:verifiers --circuits dkg_aggregator,decryption_aggregator
+
+# Generate the on-chain verifier circuits of one pair
+pnpm generate:verifiers --on-chain --preset insecure-lbfv --committee minimum
 
 # Clean existing verifier directory first (write mode only)
 pnpm generate:verifiers --clean
@@ -430,12 +454,18 @@ To fix:
 
 ### Options
 
-The `generate:verifiers` script in package.json passes `--circuits` with the on-chain used list.
+The `generate:verifiers` script in package.json passes no arguments: it processes every supported
+pair from `dist/circuits`. `check:verifiers` passes `--on-chain --check`, which selects the on-chain
+verifier circuits of one pair (`dkg_aggregator`, `decryption_aggregator`, and `dkg_aggregator_v2`
+for the l-BFV pairs).
 
 - `--check` - Verify committed verifiers match current VKs (no writes). Exits non-zero on drift.
 - `--write` - Write/overwrite committed verifiers. Default when neither `--check` nor `--write` is
   passed.
-- `--circuits <list>` - Circuit names, comma-separated. Omit to generate all.
+- `--circuits <list>` - Circuit names, comma-separated. Selects one pair. Without a pair or circuit
+  selection the command processes every supported pair.
+- `--on-chain` - Select the on-chain verifier circuits of one pair.
+- `--all-supported` - Process every supported pair from `dist/circuits`.
 - `--group <groups>` - Circuit groups (comma-separated: dkg,threshold,recursive_aggregation)
 - `--clean` - Remove existing verifier directory before generating (write mode only)
 - `--no-compile` - Don't compile circuits automatically (fail if not already compiled)

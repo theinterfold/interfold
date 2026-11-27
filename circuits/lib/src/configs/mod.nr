@@ -7,6 +7,8 @@
 pub mod default;
 pub mod committee;
 pub mod insecure;
+pub mod insecure_lbfv;
 pub mod secure;
+pub mod secure_16384;
 pub mod protocol;
 pub mod synchronized;

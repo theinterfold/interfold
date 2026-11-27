@@ -127,6 +127,16 @@ mod tests {
                 CiphernodesCommitteeSize::Small,
                 CiphernodesCommitteeSize::Large,
             ] {
+                // The `large` committee serves the trBFV presets only; the l-BFV presets have no
+                // smudging widths for it (`e3_zk_build::committee_has_smudging`).
+                if committee == CiphernodesCommitteeSize::Large
+                    && !matches!(
+                        preset,
+                        BfvPreset::InsecureThreshold64 | BfvPreset::SecureThreshold8192
+                    )
+                {
+                    continue;
+                }
                 let c1 =
                     threshold::pk_generation::Configs::new(preset, &params, committee).unwrap();
                 let c2 = dkg::share_computation::Configs::new(preset, &params, committee).unwrap();

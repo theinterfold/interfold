@@ -22,12 +22,26 @@ fn sampler_matches(preset: BfvPreset, params: &BfvParameters) -> bool {
     // explicitly selects its smaller CBD variance, which also selects error1 variance.
     let standard = params.variance() == constants::defaults::VARIANCE
         && params.get_error1_variance() == &error1;
-    let insecure_pair = preset == BfvPreset::InsecureDkg64
-        && params.variance() == constants::insecure_64::dkg::VARIANCE as usize
-        && params.get_error1_variance() == &BigUint::from(constants::insecure_64::dkg::VARIANCE);
+    let insecure_dkg_variance = match preset {
+        BfvPreset::InsecureDkg64 => Some(constants::insecure_64::dkg::VARIANCE),
+        BfvPreset::InsecureDkg | BfvPreset::InsecureDkgLbfv => {
+            Some(constants::insecure::dkg::VARIANCE)
+        }
+        _ => None,
+    };
+    let insecure_pair = insecure_dkg_variance.is_some_and(|variance| {
+        params.variance() == variance as usize
+            && params.get_error1_variance() == &BigUint::from(variance)
+    });
     standard || insecure_pair
 }
 
+/// The first preset of [`BfvPreset::ALL`] with these parameters. The insecure degree-128 parameters
+/// are shared by a trBFV and an l-BFV label (`InsecureThreshold`/`InsecureThresholdLbfv`, and the DKG
+/// pair), and this walk lists the l-BFV label first; [`BfvPreset::from_threshold_parameters`] walks
+/// `PAIR_PRESETS` and lists the trBFV label first. The two labels share every circuit
+/// configuration, so a caller needing the circuit configuration may use either; one needing the
+/// protocol path must not take it from the parameters.
 pub(crate) fn matching_preset(
     params: &BfvParameters,
     parameter_type: ParameterType,
@@ -51,7 +65,11 @@ pub(crate) fn require_threshold_preset(
     preset: BfvPreset,
     params: &BfvParameters,
 ) -> Result<(), ConfigError> {
-    if matching_preset(params, ParameterType::THRESHOLD)? != preset {
+    let matching = matching_preset(params, ParameterType::THRESHOLD)?;
+    // The trBFV and l-BFV labels of one parameter set share every circuit config, and the
+    // `ALL` order (fixed by the append-only encoding) lists the l-BFV label first.
+    let path_label = |preset: BfvPreset| preset.lbfv_label().unwrap_or(preset);
+    if path_label(matching) != path_label(preset) {
         return Err(ConfigError::Other(
             "BFV parameters do not match the requested threshold preset".into(),
         ));

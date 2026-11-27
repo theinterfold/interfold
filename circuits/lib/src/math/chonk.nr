@@ -6,10 +6,11 @@
 
 //! Chonk (Barretenberg client IVC) types, the C3 Chonk accumulator and the C6 Chonk stack.
 //!
-//! **C3 over Chonk.** A Chonk stack is an app and three kernels. The app (`c3_chonk_app`) verifies
-//! a batch of C3 proofs and writes their rows; each kernel verifies the circuit before it and
-//! passes the rows on. Inside a Mega app an UltraHonk verification costs about 12K gates against
-//! about 700K in an UltraHonk circuit, which is what makes a stack cheaper than folding the proofs one UltraHonk step at a time.
+//! **C3 over Chonk.** A Chonk stack is an app and three kernels. The app (`c3_chonk_app`, or
+//! `c3_chonk_app_chunked` on the l-BFV path) verifies a batch of C3 proofs and writes their rows;
+//! each kernel verifies the circuit before it and passes the rows on. Inside a Mega app an
+//! UltraHonk verification costs about 12K gates against about 700K in an UltraHonk circuit, which
+//! is what makes a stack cheaper than folding the proofs one UltraHonk step at a time.
 //!
 //! **Keys.** Every key a stage verifies against is a witness, so each stage appends its key's hash
 //! to the data it passes on: the app the C3 leaf key, the init kernel the app key, the tail kernel
@@ -18,7 +19,8 @@
 //! stack built from other circuits is rejected.
 //!
 //! **Rollups.** The tube and `c3_chonk_accumulate` are rollup proofs: each carries an IPA claim,
-//! the accumulate step merges two into one, and `c3ab_fold` closes both chains' claims once.
+//! the accumulate step merges two into one, and `c3ab_fold` (`c3ab_fold_chunked` on l-BFV) closes
+//! both chains' claims once.
 //!
 //! **C6 over Chonk.** A decryption's `T + 1` C6 proofs fit one stack (`c6_chonk_app`, with its own
 //! init, tail and hiding kernels), so there is nothing to accumulate: `c6_chonk_tube` verifies the
@@ -66,6 +68,7 @@ pub global C3_CHONK_LEAVES: u32 = 24;
 pub global C3_CHONK_KEYS: u32 = 7;
 pub global C3_CHONK_OWN_KEY: u32 = 0;
 pub global C3_CHONK_TUBE_KEY: u32 = 1;
+pub global C3_CHONK_LEAF_KEY: u32 = 3;
 
 /// C6 proofs one `c6_chonk_app` verifies: a decryption's whole column, one per slot. One stack
 /// holds it while `T + 1` stays within `C3_CHONK_LEAVES`, the ECCVM bound.
