@@ -28,9 +28,13 @@ pub use actors::{
     ShareVerificationActor, ZkVerificationOutcome, ZkVerificationRequest, ZkVerificationResponse,
 };
 pub use domain::commitment_links::default_links;
+pub use domain::commitment_links::lbfv_share_transport::validate_lbfv_key_share_document_commitments;
 
 pub use backend::{BBPath, SetupStatus, ZkBackend};
 pub use circuits::aggregation::c2_chain::{final_circuit_inputs, ChunkCircuits};
+pub use circuits::aggregation::c2_terminal_validation::{
+    validate_c2_terminal_proof, C2TerminalAnchors,
+};
 pub use circuits::aggregation::c3_chonk::generate_c3_chonk_chain;
 pub use circuits::aggregation::c4_chain::{final_share_decryption_inputs, LimbCircuits};
 pub use circuits::aggregation::c6_chonk::generate_c6_chonk_root;
@@ -44,13 +48,23 @@ pub use circuits::aggregation::nodes_fold_accumulator::{
     generate_nodes_fold_step, generate_sequential_nodes_fold, nodes_fold_step_len,
     NODES_FOLD_LEAVES,
 };
+pub use circuits::aggregation::v2::{
+    prove_dkg_aggregation_v2, prove_lbfv_aggregation_fold_step_for_preset,
+    prove_lbfv_generation_fold_step_for_preset, prove_node_dkg_fold_v2_for_preset,
+    prove_nodes_fold_v2_step_for_preset,
+};
 pub use circuits::dkg::pk::PkCircuit;
 pub use circuits::dkg::share_computation::ShareComputationCircuit;
+pub use circuits::dkg::share_computation::{
+    c2_chunk_size, prove_chunked_share_computation, ChunkedShareComputationProofs,
+};
 pub use circuits::dkg::share_decryption::ShareDecryptionCircuit as DkgShareDecryptionCircuit;
 pub use circuits::dkg::share_encryption::ShareEncryptionCircuit;
 pub use circuits::threshold::decrypted_shares_aggregation::DecryptedSharesAggregationCircuit;
+pub use circuits::threshold::lbfv_pk_generation::prove_lbfv_pk_generation_row;
 pub use circuits::threshold::pk_aggregation::PkAggregationCircuit;
 pub use circuits::threshold::pk_generation::PkGenerationCircuit;
+pub use circuits::threshold::rlk_generation::prove_rlk_generation_row;
 pub use circuits::threshold::share_decryption::ShareDecryptionCircuit as ThresholdShareDecryptionCircuit;
 pub use circuits::utils::inputs_json_to_input_map;
 pub use config::{verify_checksum, BbTarget, CircuitInfo, VersionInfo, ZkConfig};
@@ -64,3 +78,8 @@ pub use traits::Provable;
 pub use witness::{input_map, CompiledCircuit, WitnessGenerator};
 mod retained_journal;
 pub mod synchronized;
+
+pub use circuits::threshold::{
+    lbfv_pk_aggregation::LbfvPkAggregationCircuit, lbfv_pk_generation::LbfvPkGenerationCircuit,
+    rlk_aggregation::RlkAggregationCircuit, rlk_generation::RlkGenerationCircuit,
+};

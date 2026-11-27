@@ -93,8 +93,13 @@ pub fn generate(
 
     Ok(ShareDecryptionCircuitData {
         honest_ciphertexts,
+        recipient_party_id: 0,
         own_plaintext_share,
         secret_key: dkg_secret_key,
+        // C4 opens the chunk roots C2 committed, so it uses C2's chunk rule.
+        chunk_size: e3_zk_config::chunks::c2_chunk_size(threshold_params.degree(), committee.n)
+            as u32,
+        committee,
     })
 }
 

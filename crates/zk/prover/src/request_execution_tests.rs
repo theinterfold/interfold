@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use super::*;
-use e3_events::{CorrelationId, PartyProofsToVerify, ProofPayload, ProofType, SignedProofPayload};
+use e3_events::{
+    CorrelationId, NodeDkgFoldRequest, PartyProofsToVerify, ProofPayload, ProofType,
+    SignedProofPayload,
+};
 use e3_utils::ArcBytes;
 
 fn unavailable_prover(root: &std::path::Path) -> ZkProver {
@@ -706,6 +709,112 @@ async fn verification_execution_preserves_correlations_and_error_classification(
             if message.contains("C4 verifier process failed") && message.contains(directory))
         );
     }
+}
+
+/// The l-BFV C2 path binds each finalizer to this node's VK anchors. A missing local anchor is a
+/// request error that accuses nobody; a proof that disagrees with the anchors is a completed
+/// rejection.
+#[actix::test]
+async fn lbfv_c2_anchor_load_failure_is_a_request_error_and_mismatch_a_rejection() {
+    use e3_zk_config::CircuitName;
+
+    let temp = tempfile::tempdir().unwrap();
+    let prover = unavailable_prover(temp.path());
+    let cipher = Cipher::from_password("execution-test").await.unwrap();
+    let e3_id = E3id::new("7", 31_337);
+    let directory = "secure-16384/minimum";
+
+    // One child VK hash (1), the secret chunk root, 3 * 6 commitments, and the batch VK hash (2).
+    let field = |value: u8| {
+        let mut bytes = [0u8; 32];
+        bytes[31] = value;
+        bytes
+    };
+    let mut signals = field(1).to_vec();
+    signals.extend(field(5));
+    (0..3 * 6).for_each(|_| signals.extend(field(7)));
+    signals.extend(field(2));
+    let signed = SignedProofPayload {
+        payload: ProofPayload {
+            e3_id: e3_id.clone(),
+            proof_type: ProofType::C2aSkShareComputation,
+            proof: Proof::new(
+                CircuitName::SkC2ChunkFinalize,
+                ArcBytes::from_bytes(&[1]),
+                ArcBytes::from_bytes(&signals),
+            ),
+        },
+        signature: ArcBytes::default(),
+    };
+    let verify = |profile, signed: &SignedProofPayload| {
+        let request = ComputeRequest::zk(
+            ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
+                party_proofs: vec![PartyProofsToVerify {
+                    sender_party_id: 2,
+                    signed_proofs: vec![signed.clone()],
+                }],
+                params_profile: profile,
+                committee_size: CiphernodesCommitteeSize::Minimum,
+            }),
+            CorrelationId::new(),
+            e3_id.clone(),
+        );
+        execute_zk_request(&prover, &cipher, request, &mut |_| {})
+    };
+
+    // No anchor artifacts: the node cannot judge the proof.
+    let error = verify(BfvProfile::SsSecure16384, &signed).unwrap_err();
+    assert!(
+        matches!(error.get_err(), ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(message))
+            if message.contains("verifier process failed")
+                && message.contains("C2 terminal VK anchors")
+                && message.contains(directory))
+    );
+
+    let write_anchor = |variant, circuit: CircuitName, hash: u8| {
+        let dir = prover
+            .circuits_dir(variant, directory)
+            .join(circuit.dir_path());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{}.vk", circuit.as_str())), [0u8; 32]).unwrap();
+        std::fs::write(
+            dir.join(format!("{}.vk_hash", circuit.as_str())),
+            field(hash),
+        )
+        .unwrap();
+    };
+    write_anchor(
+        CircuitVariant::Recursive,
+        CircuitName::SkShareComputationChunk,
+        9,
+    );
+    write_anchor(CircuitVariant::Default, CircuitName::C2ChunkBatch, 2);
+
+    // Anchors that disagree with the proof's child VK hash reject its sender.
+    let response = verify(BfvProfile::SsSecure16384, &signed)
+        .unwrap()
+        .try_into_zk()
+        .unwrap();
+    let ZkResponse::VerifyShareProofs(result) = response else {
+        panic!("wrong response variant")
+    };
+    assert!(!result.party_results[0].all_verified);
+    assert_eq!(
+        result.party_results[0].failed_signed_payload.as_ref(),
+        Some(&signed)
+    );
+
+    // Matching anchors pass the step; the unavailable verifier is then a request error again.
+    write_anchor(
+        CircuitVariant::Recursive,
+        CircuitName::SkShareComputationChunk,
+        1,
+    );
+    let error = verify(BfvProfile::SsSecure16384, &signed).unwrap_err();
+    assert!(
+        matches!(error.get_err(), ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(message))
+            if message.contains("verifier process failed for party 2"))
+    );
 }
 
 #[actix::test]

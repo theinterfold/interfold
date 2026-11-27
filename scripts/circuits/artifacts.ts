@@ -13,6 +13,7 @@ import type { CircuitCommittee, CircuitPreset } from './constants'
 import requiredArtifacts from '../../crates/zk/prover/required-artifacts.json'
 import requiredLbfvArtifacts from '../../crates/zk/prover/required-artifacts-lbfv.json'
 import requiredTrbfvArtifacts from '../../crates/zk/prover/required-artifacts-trbfv.json'
+import presetProtocolPaths from '../../crates/zk/prover/preset-protocol-paths.json'
 import supportedConfigurations from '../../crates/zk/prover/supported-configurations.json'
 
 const BRANCH = 'circuit-artifacts'
@@ -114,16 +115,17 @@ function stampFiles(dir: string): string[] {
   return stamps
 }
 
-// Preset directories that serve the l-BFV path, and those that serve only it. The Rust installer
-// applies the same rule (`required_artifacts` in `crates/zk/prover/src/backend/download.rs`).
-const LBFV_PRESET_DIRS = new Set(['insecure-lbfv', 'secure-16384'])
-const LBFV_ONLY_PRESET_DIRS = new Set(['secure-16384'])
+// The protocol paths each preset directory serves. `preset_protocol_paths_match_the_preset_table`
+// in `crates/zk/prover/src/backend/download.rs` pins this file to the table behind the Rust
+// `ZkBackend::required_artifacts`, so both sides list the same inventory.
+const PRESET_PROTOCOL_PATHS: Record<string, string[]> = presetProtocolPaths
 
 export function requiredArtifactMarkers(preset: string, committee: string): string[] {
+  const served = PRESET_PROTOCOL_PATHS[preset] ?? ['trbfv']
   const artifacts = [
     ...requiredArtifacts,
-    ...(LBFV_ONLY_PRESET_DIRS.has(preset) ? [] : requiredTrbfvArtifacts),
-    ...(LBFV_PRESET_DIRS.has(preset) ? requiredLbfvArtifacts : []),
+    ...(served.includes('trbfv') ? requiredTrbfvArtifacts : []),
+    ...(served.includes('lbfv') ? requiredLbfvArtifacts : []),
   ]
   return artifacts.map((artifact) => join(preset, committee, artifact))
 }

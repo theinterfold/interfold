@@ -30,4 +30,17 @@ impl Provable for ShareEncryptionCircuit {
     fn circuit(&self) -> CircuitName {
         CircuitName::ShareEncryption
     }
+    fn resolve_circuit_name(&self, config: &Self::Config, _input: &Self::Input) -> CircuitName {
+        if e3_fhe_params::is_lbfv_path(config.preset) {
+            CircuitName::ShareEncryptionChunked
+        } else {
+            CircuitName::ShareEncryption
+        }
+    }
+    fn valid_circuits(&self) -> Vec<CircuitName> {
+        vec![
+            CircuitName::ShareEncryption,
+            CircuitName::ShareEncryptionChunked,
+        ]
+    }
 }

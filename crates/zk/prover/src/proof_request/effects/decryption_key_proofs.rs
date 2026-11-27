@@ -63,7 +63,9 @@ impl ProofRequestActor {
         // C4a/C4b: dispatch share-decryption proof requests in canonical seq
         // order. The pure domain planner owns seq assignment; the actor only
         // allocates correlation ids, publishes, and rolls back on failure.
-        for item in plan_decryption_dispatch(msg.sk_request, msg.esm_requests, c4_base_seq) {
+        for item in
+            plan_decryption_dispatch(msg.sk_request, msg.esm_requests, msg.party_id, c4_base_seq)
+        {
             let corr = CorrelationId::new();
             self.decryption_correlation
                 .insert(corr, (e3_id.clone(), item.kind, item.seq));

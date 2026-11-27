@@ -166,6 +166,7 @@ test('partial push publishes the staged catalogue and does not advance the ref i
     'crates/zk/prover/required-artifacts.json',
     'crates/zk/prover/required-artifacts-trbfv.json',
     'crates/zk/prover/required-artifacts-lbfv.json',
+    'crates/zk/prover/preset-protocol-paths.json',
     'crates/zk/prover/supported-configurations.json',
   ]) {
     mkdirSync(join(checkout, file, '..'), { recursive: true })

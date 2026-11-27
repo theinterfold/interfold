@@ -267,6 +267,13 @@ impl Fixture {
                             u_rns: witness.u_rns,
                             e0_rns: witness.e0_rns,
                             e1_rns: witness.e1_rns,
+                            committee: config.committee.values(),
+                            party_idx: recipient as u32,
+                            mod_idx: limb as u32,
+                            chunk_size: e3_zk_config::chunks::c2_chunk_size(
+                                config.threshold.degree(),
+                                config.committee.values().n,
+                            ) as u32,
                         },
                     )?;
                     ensure!(inputs.pk_commitment == public_commitments[recipient]);

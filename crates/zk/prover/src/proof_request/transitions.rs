@@ -3,6 +3,7 @@
 //! Deterministic C1-C4 dispatch planning and sequence assignment.
 
 use super::*;
+use crate::utils::{proves_c1, C1_SEQ};
 
 /// A single planned threshold (C1/C2/C3) proof request: which proof, its `seq`
 /// index for streaming aggregation, and the [`ZkRequest`] to dispatch.
@@ -15,6 +16,7 @@ pub(crate) struct ThresholdDispatchItem {
 /// Build the deterministic, ordered set of C1/C2/C3 proof requests for a
 /// `ThresholdSharePending` event. Pure: assigns the canonical `seq` indices
 /// (C1=1, C2a=2, C2b=3, C3a[i]=4+i, C3b[j]=4+sk_count+j) and wraps each request.
+/// The l-BFV path proves no C1, so its plan starts at C2a and leaves `seq` 1 unused.
 pub(crate) fn plan_threshold_dispatch(
     proof_request: PkGenerationProofRequest,
     sk_share_computation_request: ShareComputationProofRequest,
@@ -34,11 +36,13 @@ pub(crate) fn plan_threshold_dispatch(
     let mut items =
         Vec::with_capacity(c3_start - 1 + sk_enc_count + e_sm_share_encryption_requests.len());
 
-    items.push(ThresholdDispatchItem {
-        kind: ThresholdProofKind::PkGeneration,
-        seq: 1,
-        request: ZkRequest::PkGeneration(proof_request),
-    });
+    if proves_c1(proof_request.params_profile) {
+        items.push(ThresholdDispatchItem {
+            kind: ThresholdProofKind::PkGeneration,
+            seq: C1_SEQ,
+            request: ZkRequest::PkGeneration(proof_request),
+        });
+    }
     items.push(ThresholdDispatchItem {
         kind: ThresholdProofKind::SkShareComputation,
         seq: 2,
@@ -90,22 +94,37 @@ pub(crate) struct DecryptionDispatchItem {
 /// Build the ordered set of C4 proof requests (SecretKey then SmudgingNoise[i]).
 /// `c4_base_seq` is the streaming-aggregation `seq` of the C4a (SecretKey) proof;
 /// each C4b proof follows at `c4_base_seq + 1 + esi_idx`.
+///
+/// Every C4 proof of this node decrypts its own share row, so `recipient_party_id` is this node's
+/// party ID. An l-BFV E3 names it in the request, because its chunked circuit commits under the
+/// recipient's row. A trBFV E3 keeps the request that earlier releases stored.
 pub(crate) fn plan_decryption_dispatch(
     sk_request: DkgShareDecryptionProofRequest,
     esm_requests: Vec<DkgShareDecryptionProofRequest>,
+    recipient_party_id: u64,
     c4_base_seq: usize,
 ) -> Vec<DecryptionDispatchItem> {
+    let request_for = |request: DkgShareDecryptionProofRequest| {
+        if e3_fhe_params::is_lbfv_path(request.params_profile.threshold_preset()) {
+            ZkRequest::LbfvDkgShareDecryption(LbfvDkgShareDecryptionProofRequest {
+                request,
+                recipient_party_id,
+            })
+        } else {
+            ZkRequest::DkgShareDecryption(request)
+        }
+    };
     let mut items = Vec::with_capacity(1 + esm_requests.len());
     items.push(DecryptionDispatchItem {
         kind: DecryptionProofKind::SecretKey,
         seq: c4_base_seq,
-        request: ZkRequest::DkgShareDecryption(sk_request),
+        request: request_for(sk_request),
     });
     for (esi_idx, esm_req) in esm_requests.into_iter().enumerate() {
         items.push(DecryptionDispatchItem {
             kind: DecryptionProofKind::SmudgingNoise { esi_idx },
             seq: c4_base_seq + 1 + esi_idx,
-            request: ZkRequest::DkgShareDecryption(esm_req),
+            request: request_for(esm_req),
         });
     }
     items

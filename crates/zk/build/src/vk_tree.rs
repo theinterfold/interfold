@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-use crate::policy;
 use anyhow::{bail, Context, Result};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
@@ -102,12 +101,12 @@ fn c3_chain_hash(root: &Path, leaf: &str, app: &str) -> Result<Fr> {
 /// The anchors a pair's archive writes: the nodes-fold tree on trBFV, the C6 tree on every pair,
 /// and on l-BFV the C3 chain that `dkg_aggregator_v2` binds, named after `c3ab_fold_chunked`.
 pub fn anchors(root: &Path, preset: &str) -> Result<Vec<(&'static str, [u8; 32])>> {
-    let mut anchors = if policy::has_trbfv(preset) {
+    let mut anchors = if e3_fhe_params::artifacts_dir_serves_trbfv(preset) {
         hashes(root)?.to_vec()
     } else {
         vec![("c6_fold", decryption_hash(root)?)]
     };
-    if policy::has_lbfv(preset) {
+    if e3_fhe_params::artifacts_dir_serves_lbfv(preset) {
         anchors.push((
             "c3ab_fold_chunked",
             encode(c3_chain_hash(

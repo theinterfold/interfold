@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use e3_fhe_params::BfvPreset;
 #[allow(unused_imports)]
 pub use e3_test_support::find_bb;
 use e3_zk_config::CircuitName;
@@ -11,6 +12,27 @@ use e3_zk_prover::{BBPath, ZkBackend, ZkConfig};
 use std::{env, path::PathBuf};
 use tempfile::TempDir;
 use tokio::fs;
+
+/// Explicit committee selection for secure l-BFV proof campaigns; never substitute another pair.
+pub fn secure_lbfv_committee() -> e3_committee::CiphernodesCommitteeSize {
+    match env::var("INTERFOLD_SECURE_16384_COMMITTEE") {
+        Ok(value) => value
+            .parse()
+            .expect("INTERFOLD_SECURE_16384_COMMITTEE must be minimum, micro, or small"),
+        Err(env::VarError::NotPresent) => e3_committee::CiphernodesCommitteeSize::Minimum,
+        Err(error) => panic!("invalid INTERFOLD_SECURE_16384_COMMITTEE: {error}"),
+    }
+}
+
+/// Keep saved proof campaigns for different committees separate, without replacing older runs.
+pub fn secure_lbfv_cache_dir(variable: &str) -> Option<PathBuf> {
+    env::var_os(variable).map(|root| {
+        PathBuf::from(root).join(
+            BfvPreset::SecureThreshold16384
+                .artifacts_dir_for_committee(secure_lbfv_committee().as_str()),
+        )
+    })
+}
 
 pub async fn find_anvil() -> bool {
     if let Ok(output) = tokio::process::Command::new("which")
@@ -45,7 +67,58 @@ pub async fn setup_compiled_circuit_for_committee(
     circuit_name: &str,
     committee: &str,
 ) {
-    let target_dir = circuits_build_root().join(group).join("target");
+    // Tests use insecure params — fixtures go under insecure-64/{committee}/
+    let preset_dir = backend
+        .circuits_dir
+        .join(BfvPreset::InsecureThreshold64.artifacts_dir_for_committee(committee));
+    stage_compiled_circuit(
+        circuits_build_root().join(group).join("target"),
+        preset_dir,
+        group,
+        circuit_name,
+    )
+    .await;
+}
+
+/// Stages a compiled circuit for `preset`, which must be the active build.
+///
+/// The package is read from its source tree (`circuits/bin/lbfv/...` for the l-BFV circuits); the
+/// artifacts go to the flat `{group}/{name}` directory.
+pub async fn setup_compiled_circuit_for_preset(
+    backend: &ZkBackend,
+    circuit: CircuitName,
+    preset: BfvPreset,
+    committee: &str,
+) {
+    assert_active_preset_matches(preset, committee);
+    let preset_dir = backend
+        .circuits_dir
+        .join(preset.artifacts_dir_for_committee(committee));
+    stage_compiled_circuit(
+        workspace_target_dir(circuit),
+        preset_dir,
+        circuit.group(),
+        circuit.as_str(),
+    )
+    .await;
+}
+
+/// The shared `target` directory of the workspace that builds `circuit`'s package.
+fn workspace_target_dir(circuit: CircuitName) -> PathBuf {
+    let group = if circuit.is_lbfv() {
+        format!("lbfv/{}", circuit.group())
+    } else {
+        circuit.group().to_owned()
+    };
+    circuits_build_root().join(group).join("target")
+}
+
+async fn stage_compiled_circuit(
+    target_dir: PathBuf,
+    preset_dir: PathBuf,
+    group: &str,
+    circuit_name: &str,
+) {
     let json_path = target_dir.join(format!("{circuit_name}.json"));
     let vk_evm_path = target_dir.join(format!("{circuit_name}.vk"));
     let vk_evm_hash_path = target_dir.join(format!("{circuit_name}.vk_hash"));
@@ -64,9 +137,6 @@ pub async fn setup_compiled_circuit_for_committee(
         "evm verification key not found: {} (run `pnpm build:circuits` to compile)",
         vk_evm_path.display()
     );
-
-    // Tests use insecure params — fixtures go under insecure-64/{committee}/
-    let preset_dir = backend.circuits_dir.join("insecure-64").join(committee);
 
     // Set up the evm variant directory (keccak VK + hash)
     let evm_dir = preset_dir.join("evm").join(group).join(circuit_name);
@@ -259,10 +329,29 @@ async fn setup_default_recursive_circuits(backend: &ZkBackend, circuits: &[Circu
 /// [`CircuitName::DkgAggregator`] also gets `{package}.vk` / `.vk_hash` (`bb write_vk -t evm`); when present, they are
 /// copied into `insecure-64/evm/...` for [`CircuitVariant::Evm`] proving.
 pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circuit: CircuitName) {
+    let preset_dir = backend.circuits_dir.join("insecure-64").join("minimum");
+    stage_recursive_aggregation_fold_circuit(preset_dir, circuit).await;
+}
+
+/// [`setup_recursive_aggregation_fold_circuit`] for `preset`, which must be the active build. The
+/// l-BFV packages are read from `circuits/bin/lbfv/recursive_aggregation`.
+pub async fn setup_recursive_aggregation_fold_circuit_for_preset(
+    backend: &ZkBackend,
+    circuit: CircuitName,
+    preset: BfvPreset,
+    committee: &str,
+) {
+    assert_active_preset_matches(preset, committee);
+    let preset_dir = backend
+        .circuits_dir
+        .join(preset.artifacts_dir_for_committee(committee));
+    stage_recursive_aggregation_fold_circuit(preset_dir, circuit).await;
+}
+
+async fn stage_recursive_aggregation_fold_circuit(preset_dir: PathBuf, circuit: CircuitName) {
     let pkg = circuit.as_str();
     let target_dir = circuits_build_root()
-        .join("recursive_aggregation")
-        .join(pkg)
+        .join(circuit.package_path())
         .join("target");
 
     let json_path = target_dir.join(format!("{pkg}.json"));
@@ -270,6 +359,8 @@ pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circu
     let vk_recursive_hash_path = target_dir.join(format!("{pkg}.vk_recursive_hash"));
     let vk_evm_path = target_dir.join(format!("{pkg}.vk"));
     let vk_evm_hash_path = target_dir.join(format!("{pkg}.vk_hash"));
+    let vk_noir_path = target_dir.join(format!("{pkg}.vk_noir"));
+    let vk_noir_hash_path = target_dir.join(format!("{pkg}.vk_noir_hash"));
 
     assert!(
         json_path.exists(),
@@ -282,7 +373,6 @@ pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circu
         vk_recursive_path.display()
     );
 
-    let preset_dir = backend.circuits_dir.join("insecure-64").join("minimum");
     let default_dir = preset_dir.join("default").join(circuit.group()).join(pkg);
     fs::create_dir_all(&default_dir).await.unwrap();
     fs::copy(&json_path, default_dir.join(format!("{pkg}.json")))
@@ -324,6 +414,25 @@ pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circu
                 .unwrap();
         }
     }
+
+    if vk_noir_path.exists() {
+        let recursive_dir = preset_dir.join("recursive").join(circuit.group()).join(pkg);
+        fs::create_dir_all(&recursive_dir).await.unwrap();
+        fs::copy(&json_path, recursive_dir.join(format!("{pkg}.json")))
+            .await
+            .unwrap();
+        fs::copy(&vk_noir_path, recursive_dir.join(format!("{pkg}.vk")))
+            .await
+            .unwrap();
+        if vk_noir_hash_path.exists() {
+            fs::copy(
+                &vk_noir_hash_path,
+                recursive_dir.join(format!("{pkg}.vk_hash")),
+            )
+            .await
+            .unwrap();
+        }
+    }
 }
 
 /// Creates a temp ZkBackend with the real bb binary symlinked in.
@@ -362,44 +471,77 @@ pub fn active_bin_committee() -> Option<String> {
     v.get("committee")?.as_str().map(|s| s.to_lowercase())
 }
 
-/// Returns `true` when the compiled `pk_aggregation` (C5) circuit was built for the **minimum**
-/// committee (H=2): `expected_threshold_pk_commitments` array length == 2.
-///
-/// Tests that hard-code `CiphernodesCommitteeSize::Minimum` samples should call this and skip
-/// when it returns `false` — the Minimum samples will not satisfy the compiled circuit's ABI.
-///
-/// Prefers `.active-preset.json` (cheap stamp check) and falls back to ABI introspection of
-/// `pk_aggregation.json` for older builds that pre-date the stamp's `committee` field.
-pub fn circuits_compiled_for_minimum() -> bool {
-    if let Some(committee) = active_bin_committee() {
-        return committee == "minimum";
-    }
+pub fn active_bin_preset() -> Option<String> {
+    let path = circuits_build_root().join(".active-preset.json");
+    let raw = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    v.get("preset")?.as_str().map(str::to_owned)
+}
 
-    let path = circuits_build_root()
-        .join("threshold")
-        .join("pk_aggregation")
-        .join("target")
-        .join("pk_aggregation.json");
-    let Ok(raw) = std::fs::read_to_string(&path) else {
-        return false; // artifact absent → can't tell, assume not minimum
+fn assert_active_preset_matches(preset: BfvPreset, committee: &str) {
+    let active = active_bin_preset().expect("active circuit preset stamp is required");
+    let active_committee =
+        active_bin_committee().expect("active circuit committee stamp is required");
+    let expected = expected_preset_name(preset, committee);
+    assert_eq!(
+        active, expected,
+        "compiled artifacts use preset {active}, but the test requested {expected}"
+    );
+    assert_eq!(
+        active_committee, committee,
+        "compiled artifacts use committee {active_committee}, but the test requested {committee}"
+    );
+}
+
+pub fn compiled_circuit_artifacts_available(circuit: CircuitName) -> bool {
+    let target_dir = workspace_target_dir(circuit);
+    let name = circuit.as_str();
+    target_dir.join(format!("{name}.json")).is_file()
+        && target_dir.join(format!("{name}.vk")).is_file()
+}
+
+pub fn recursive_circuit_artifacts_available(circuit: CircuitName) -> bool {
+    let target_dir = circuits_build_root()
+        .join(circuit.package_path())
+        .join("target");
+    target_dir
+        .join(format!("{}.json", circuit.as_str()))
+        .is_file()
+        && target_dir
+            .join(format!("{}.vk_recursive", circuit.as_str()))
+            .is_file()
+}
+
+fn expected_preset_name(preset: BfvPreset, committee: &str) -> String {
+    preset
+        .artifacts_dir_for_committee(committee)
+        .split('/')
+        .next()
+        .unwrap()
+        .to_owned()
+}
+
+pub fn require_minimum_circuits_for_preset(preset: BfvPreset) -> Option<()> {
+    let Some(active) = active_bin_preset() else {
+        println!("skipping: active circuit preset stamp is missing");
+        return None;
     };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return false;
+    let Some(committee) = active_bin_committee() else {
+        println!("skipping: active circuit committee stamp is missing");
+        return None;
     };
-    // `expected_threshold_pk_commitments` is the H-length array in C5's ABI.
-    v["abi"]["parameters"]
-        .as_array()
-        .and_then(|ps| {
-            ps.iter()
-                .find(|p| {
-                    p.get("name")
-                        == Some(&serde_json::Value::String(
-                            "expected_threshold_pk_commitments".into(),
-                        ))
-                })
-                .and_then(|p| p.get("type")?.get("length")?.as_u64())
-        })
-        .is_some_and(|len| len == 2) // minimum H == 2
+    if committee != "minimum" {
+        println!(
+            "skipping: circuits not compiled for minimum committee. Rebuild with `pnpm build:circuits --committee minimum` to run this test."
+        );
+        return None;
+    }
+    let expected = expected_preset_name(preset, "minimum");
+    if active != expected {
+        println!("skipping: active preset is {active}, expected {expected}");
+        return None;
+    }
+    Some(())
 }
 
 /// Lightweight backend for tests that need to override config (e.g. inject bad checksums).
