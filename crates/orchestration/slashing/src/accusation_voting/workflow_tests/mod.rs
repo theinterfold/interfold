@@ -96,12 +96,13 @@ fn insert_pending(
     deadline: u64,
     own_vote: AccusationVote,
 ) -> [u8; 32] {
-    let accusation = ProofFailureAccusation {
+    let accusation = LbfvProofFailureAccusation {
         e3_id: v.e3_id.clone(),
         accuser: accuser.address(),
         accused,
         accused_party_id: 1,
         proof_type: ProofType::C1PkGeneration,
+        proof_instance: 0,
         data_hash,
         issued_at: deadline.saturating_sub(VALIDITY),
         deadline,

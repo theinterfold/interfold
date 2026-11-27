@@ -14,8 +14,8 @@
 use std::collections::HashMap;
 
 use crate::actors::accusation_manager::AccusationManager;
-use crate::repo::AccusationVotesRepositoryFactory;
-use crate::workflow::accusation_voting::AccusationVotesSnapshot;
+use crate::repo::{AccusationVotesRepositoryFactory, PathRepository};
+use crate::workflow::accusation_voting::{AccusationVotesSnapshot, LbfvAccusationVotesSnapshot};
 use actix::Actor;
 use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
@@ -98,6 +98,20 @@ impl AccusationManagerExtension {
         }
     }
 
+    /// The saved vote state of an E3, in the layout of its proving path.
+    fn votes_repository(
+        &self,
+        e3_id: &E3id,
+        params_profile: e3_fhe_params::BfvProfile,
+    ) -> PathRepository<AccusationVotesSnapshot, LbfvAccusationVotesSnapshot> {
+        let repositories = self.store.repositories();
+        if e3_fhe_params::is_lbfv_path(params_profile.threshold_preset()) {
+            PathRepository::Lbfv(repositories.accusation_votes_lbfv(e3_id))
+        } else {
+            PathRepository::Trbfv(repositories.accusation_votes(e3_id))
+        }
+    }
+
     /// Start the per-E3 manager. `effects_enabled` is false for a manager that startup rebuilds:
     /// it holds local accusations until `EffectsEnabled`, after the replayed event log.
     fn start_manager(
@@ -105,7 +119,7 @@ impl AccusationManagerExtension {
         ctx: &mut E3Context,
         committee: &[String],
         effects_enabled: bool,
-        saved_votes: Option<AccusationVotesSnapshot>,
+        saved_votes: Option<LbfvAccusationVotesSnapshot>,
     ) {
         if ctx.get_event_recipient("accusation_manager").is_some() {
             return;
@@ -191,7 +205,7 @@ impl AccusationManagerExtension {
         } else {
             manager.hold_accusations_until_effects()
         };
-        let votes_repo = self.store.repositories().accusation_votes(&ctx.e3_id);
+        let votes_repo = self.votes_repository(&ctx.e3_id, meta.params_profile);
         let manager = match manager.with_saved_votes(votes_repo, saved_votes) {
             Ok(manager) => manager,
             Err(error) => {
@@ -226,10 +240,15 @@ impl E3Extension for AccusationManagerExtension {
     async fn hydrate(&self, ctx: &mut E3Context, _snapshot: &E3ContextSnapshot) -> Result<()> {
         if let Some(committee) = self.persisted_committees.get(&ctx.e3_id) {
             let members = committee.members().to_vec();
-            let repo = self.store.repositories().accusation_votes(&ctx.e3_id);
-            let saved_votes = DataStore::from(&repo)
-                .read_checked::<AccusationVotesSnapshot>()
-                .await?;
+            // Without metadata `start_manager` starts nothing, so nothing is restored.
+            let saved_votes = match ctx.get_dependency(META_KEY) {
+                Some(meta) => {
+                    self.votes_repository(&ctx.e3_id, meta.params_profile)
+                        .read_checked()
+                        .await?
+                }
+                None => None,
+            };
             if let Some(saved_votes) = &saved_votes {
                 saved_votes.validate()?;
             }
@@ -247,8 +266,9 @@ mod tests {
     use e3_data::{DataStore, InMemStore, RepositoriesFactory};
     use e3_events::{
         hlc_factory::HlcFactory, AccusationVote, CommitmentConsistencyViolation, EffectsEnabled,
-        EventBus, EventBusConfig, EventConstructorWithTimestamp, EventSource, GetEvents, ProofType,
-        Seed, Sequencer, StoreEventRequested, Unsequenced,
+        EventBus, EventBusConfig, EventConstructorWithTimestamp, EventSource, GetEvents,
+        LbfvAccusationQuorumReached, LbfvCommitmentConsistencyViolation,
+        LbfvProofFailureAccusation, ProofType, Seed, Sequencer, StoreEventRequested, Unsequenced,
     };
     use e3_fhe_params::BfvProfile;
     use e3_request::{ContextRepositoryFactory, E3ContextParams, E3Meta};
@@ -294,11 +314,15 @@ mod tests {
     }
 
     fn test_meta() -> E3Meta {
+        test_meta_for(BfvProfile::SsInsecure64)
+    }
+
+    fn test_meta_for(params_profile: BfvProfile) -> E3Meta {
         E3Meta {
             threshold_m: 1,
             threshold_n: 3,
             seed: Seed([0; 32]),
-            params_profile: BfvProfile::SsInsecure64,
+            params_profile,
             crypto_config_id: [0; 32],
             params: ArcBytes::default(),
             error_size: ArcBytes::default(),
@@ -560,7 +584,24 @@ mod tests {
     /// evidence that the slash proposal needs.
     #[actix::test]
     async fn a_restarted_manager_keeps_the_votes_of_a_pending_accusation() -> Result<()> {
+        restarted_manager_keeps_votes(false).await
+    }
+
+    /// The same on the l-BFV path: the accusation and the quorum name the row, and the votes are
+    /// saved in the l-BFV record, not the trBFV one.
+    #[actix::test]
+    async fn an_lbfv_restarted_manager_keeps_the_votes_of_a_pending_accusation_row() -> Result<()> {
+        restarted_manager_keeps_votes(true).await
+    }
+
+    async fn restarted_manager_keeps_votes(lbfv: bool) -> Result<()> {
         use alloy::signers::SignerSync;
+        let profile = if lbfv {
+            BfvProfile::SsInsecureLbfv
+        } else {
+            BfvProfile::SsInsecure64
+        };
+        let row = 2;
 
         let bus = test_bus();
         let history = bus.history();
@@ -600,7 +641,7 @@ mod tests {
                 &store,
             );
             let mut context = test_context(e3_id.clone());
-            context.set_dependency(META_KEY, test_meta());
+            context.set_dependency(META_KEY, test_meta_for(profile));
             let snapshot = E3ContextSnapshot {
                 e3_id: e3_id.clone(),
                 recipients: Vec::new(),
@@ -629,34 +670,58 @@ mod tests {
         };
 
         let before_restart = start().await?;
-        before_restart
-            .send(event(
-                CommitmentConsistencyViolation {
-                    e3_id: e3_id.clone(),
-                    accused_address: accused,
-                    accused_party_id,
-                    proof_type: ProofType::C1PkGeneration,
-                    data_hash: [7; 32],
-                    evidence: alloy::primitives::Bytes::from(vec![0x11; 32]),
-                }
-                .into(),
-                2,
-            ))
-            .await?;
+        let violation: e3_events::InterfoldEventData = if lbfv {
+            LbfvCommitmentConsistencyViolation {
+                e3_id: e3_id.clone(),
+                accused_address: accused,
+                accused_party_id,
+                proof_type: ProofType::LbfvPkGeneration,
+                proof_instance: row,
+                data_hash: [7; 32],
+                evidence: alloy::primitives::Bytes::from(vec![0x11; 32]),
+            }
+            .into()
+        } else {
+            CommitmentConsistencyViolation {
+                e3_id: e3_id.clone(),
+                accused_address: accused,
+                accused_party_id,
+                proof_type: ProofType::C1PkGeneration,
+                data_hash: [7; 32],
+                evidence: alloy::primitives::Bytes::from(vec![0x11; 32]),
+            }
+            .into()
+        };
+        before_restart.send(event(violation, 2)).await?;
+        // Each path publishes its own accusation form, and only that one.
         let accusation = actix::clock::timeout(std::time::Duration::from_secs(5), async {
             loop {
-                let accusations =
-                    published(|data| matches!(data, InterfoldEventData::ProofFailureAccusation(_)))
-                        .await?;
-                if let Some(InterfoldEventData::ProofFailureAccusation(accusation)) =
-                    accusations.into_iter().next()
-                {
-                    return Ok::<_, anyhow::Error>(accusation);
+                let accusations = published(|data| {
+                    matches!(
+                        data,
+                        InterfoldEventData::ProofFailureAccusation(_)
+                            | InterfoldEventData::LbfvProofFailureAccusation(_)
+                    )
+                })
+                .await?;
+                match accusations.into_iter().next() {
+                    Some(InterfoldEventData::ProofFailureAccusation(accusation)) => {
+                        assert!(!lbfv, "an l-BFV E3 published a trBFV accusation");
+                        return Ok::<_, anyhow::Error>(LbfvProofFailureAccusation::from(
+                            accusation,
+                        ));
+                    }
+                    Some(InterfoldEventData::LbfvProofFailureAccusation(accusation)) => {
+                        assert!(lbfv, "a trBFV E3 published an l-BFV accusation");
+                        return Ok(accusation);
+                    }
+                    _ => {}
                 }
                 actix::clock::sleep(std::time::Duration::from_millis(10)).await;
             }
         })
         .await??;
+        assert_eq!(accusation.proof_instance, if lbfv { row } else { 0 });
 
         let after_restart = start().await?;
         let mut vote = AccusationVote {
@@ -675,23 +740,151 @@ mod tests {
         let quorum = actix::clock::timeout(std::time::Duration::from_secs(5), async {
             loop {
                 let quorums = published(|data| {
-                    matches!(data, InterfoldEventData::AccusationQuorumReached(_))
+                    matches!(
+                        data,
+                        InterfoldEventData::AccusationQuorumReached(_)
+                            | InterfoldEventData::LbfvAccusationQuorumReached(_)
+                    )
                 })
                 .await?;
-                if let Some(InterfoldEventData::AccusationQuorumReached(quorum)) =
-                    quorums.into_iter().next()
-                {
-                    return Ok::<_, anyhow::Error>(quorum);
+                match quorums.into_iter().next() {
+                    Some(InterfoldEventData::AccusationQuorumReached(quorum)) => {
+                        assert!(!lbfv, "an l-BFV E3 published a trBFV quorum");
+                        return Ok::<_, anyhow::Error>(LbfvAccusationQuorumReached::from(quorum));
+                    }
+                    Some(InterfoldEventData::LbfvAccusationQuorumReached(quorum)) => {
+                        assert!(lbfv, "a trBFV E3 published an l-BFV quorum");
+                        return Ok(quorum);
+                    }
+                    _ => {}
                 }
                 actix::clock::sleep(std::time::Duration::from_millis(10)).await;
             }
         })
         .await??;
         assert_eq!(quorum.votes_for.len(), 2);
+        assert_eq!(quorum.proof_instance, if lbfv { row } else { 0 });
         assert_eq!(
             quorum.evidence,
             alloy::primitives::Bytes::from(vec![0x11; 32])
         );
+
+        // The vote state is in the record of the E3's path, and the other record is empty.
+        let repositories = store.repositories();
+        assert_eq!(
+            repositories
+                .accusation_votes(&e3_id)
+                .read()
+                .await?
+                .is_some(),
+            !lbfv
+        );
+        assert_eq!(
+            repositories
+                .accusation_votes_lbfv(&e3_id)
+                .read()
+                .await?
+                .is_some(),
+            lbfv
+        );
+        Ok(())
+    }
+
+    /// A manager acts only on the events of its E3's proving path: a violation of the other
+    /// path's form starts no accusation.
+    #[actix::test]
+    async fn a_manager_ignores_a_violation_of_the_other_proving_path() -> Result<()> {
+        for lbfv in [false, true] {
+            let bus = test_bus();
+            let history = bus.history();
+            let e3_id = E3id::new("7", 31337);
+            let me = PrivateKeySigner::random();
+            let accused = Address::repeat_byte(0x22);
+            let committee = Committee::new(vec![
+                me.address().to_string(),
+                accused.to_string(),
+                Address::repeat_byte(0x33).to_string(),
+            ]);
+            let accused_party_id = committee
+                .party_id_for(&accused.to_string())
+                .expect("accused member");
+            let extension = AccusationManagerExtension::create(
+                &bus,
+                me,
+                HashMap::from([(31337, Address::repeat_byte(0x44))]),
+                HashMap::from([(31337, 300)]),
+                30,
+                HashMap::from([(e3_id.clone(), committee)]),
+                &DataStore::from_in_mem(&InMemStore::new(false).start()),
+            );
+            let profile = if lbfv {
+                BfvProfile::SsInsecureLbfv
+            } else {
+                BfvProfile::SsInsecure64
+            };
+            let mut context = test_context(e3_id.clone());
+            context.set_dependency(META_KEY, test_meta_for(profile));
+            let snapshot = E3ContextSnapshot {
+                e3_id: e3_id.clone(),
+                recipients: Vec::new(),
+                dependencies: vec!["meta".to_string()],
+            };
+            extension.hydrate(&mut context, &snapshot).await?;
+            let manager = context
+                .get_event_recipient("accusation_manager")
+                .expect("hydration starts the manager");
+            let event = |data: e3_events::InterfoldEventData, seq: u64| {
+                InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                    data,
+                    None,
+                    seq as u128,
+                    None,
+                    EventSource::Local,
+                )
+                .into_sequenced(seq)
+            };
+            manager.send(event(EffectsEnabled::new().into(), 1)).await?;
+
+            // The form of the other path.
+            let violation: e3_events::InterfoldEventData = if lbfv {
+                CommitmentConsistencyViolation {
+                    e3_id: e3_id.clone(),
+                    accused_address: accused,
+                    accused_party_id,
+                    proof_type: ProofType::C1PkGeneration,
+                    data_hash: [7; 32],
+                    evidence: Default::default(),
+                }
+                .into()
+            } else {
+                LbfvCommitmentConsistencyViolation {
+                    e3_id: e3_id.clone(),
+                    accused_address: accused,
+                    accused_party_id,
+                    proof_type: ProofType::C1PkGeneration,
+                    proof_instance: 0,
+                    data_hash: [7; 32],
+                    evidence: Default::default(),
+                }
+                .into()
+            };
+            manager.send(event(violation, 2)).await?;
+            actix::clock::sleep(std::time::Duration::from_millis(200)).await;
+
+            let accusations = history
+                .send(GetEvents::new())
+                .await?
+                .into_iter()
+                .filter(|event| {
+                    matches!(
+                        event.get_data(),
+                        InterfoldEventData::ProofFailureAccusation(_)
+                            | InterfoldEventData::LbfvProofFailureAccusation(_)
+                    )
+                })
+                .count();
+            assert_eq!(accusations, 0, "lbfv={lbfv}");
+        }
         Ok(())
     }
 }

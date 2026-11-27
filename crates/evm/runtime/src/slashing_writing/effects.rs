@@ -24,7 +24,7 @@ pub(in crate::actors::slashing_manager_sol_writer) async fn submit_slash_proposa
 >(
     provider: EthProvider<P>,
     contract_address: Address,
-    data: AccusationQuorumReached,
+    data: LbfvAccusationQuorumReached,
 ) -> Result<TransactionReceipt> {
     let e3_id: U256 = data.e3_id.clone().try_into()?;
     let operator = data.accused;

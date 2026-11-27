@@ -519,6 +519,7 @@ impl Node {
             signer: setup.signers[owner].clone(),
             bfv_key,
             effects_enabled: false,
+            lbfv_generation: test_lbfv_generation(),
             dkg_timing_reader: Arc::new(|_| {
                 Box::pin(async { anyhow::bail!("timing must be recovered") })
             }),

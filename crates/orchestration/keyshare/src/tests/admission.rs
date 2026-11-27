@@ -183,6 +183,7 @@ impl AdmissionHarness {
             effects_enabled: true,
             recovery,
             recovery_payloads,
+            lbfv_generation: super::test_lbfv_generation(),
             bfv_key: self.bfv_keys.clone(),
             dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
         })
@@ -333,6 +334,7 @@ impl AdmissionHarness {
                 InterfoldEventData::ProofVerificationFailed(_)
                     | InterfoldEventData::SignedProofFailed(_)
                     | InterfoldEventData::ProofFailureAccusation(_)
+                    | InterfoldEventData::LbfvProofFailureAccusation(_)
             )),
             "unauthenticated input caused fault attribution"
         );

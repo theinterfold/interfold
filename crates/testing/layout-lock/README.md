@@ -27,6 +27,10 @@ The fixture must already contain the accepted rows for normal test runs. `sample
 [runtime layout test](../system/tests/layout_lock.rs) for multiple roots, repository value bindings,
 and event-ID samples.
 
+A decoder that accepts one value of an integer field, such as a schema version, or rejects a `None`
+option, rejects the synthetic sample. Use `sample_rows_pinned` for that type: every integer field
+with a pinned `(field name, value)` takes the value, and every field named in `present` is `Some`.
+
 Rows contain a named digest (sample/layout names and structure) and positional digests (encoded
 sample bytes independent of cosmetic names). Enum paths, optional/empty/full shapes, and flipped
 booleans expose many changes that a single round trip would miss.

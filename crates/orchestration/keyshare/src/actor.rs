@@ -20,10 +20,12 @@ use e3_events::{
     DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, E3id, EType,
     EncryptionKey, EncryptionKeyCollectionFailed, EncryptionKeyCreated, EncryptionKeyPending,
     EventContext, EventId, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
-    PartyProofsToVerify, PartyShareDecryptionProofsToVerify, PkGenerationProofSigned, ProofType,
+    LbfvKeyShareDocumentCreated, LbfvKeyShareManifestPublished, PartyProofsToVerify,
+    PartyShareDecryptionProofsToVerify, PkGenerationProofSigned, ProofPayload, ProofType,
     Sequenced, ShareDecryptionProofPending, ShareVerificationComplete, ShareVerificationDispatched,
-    SignedProofPayload, ThresholdShare, ThresholdShareCollectionFailed, ThresholdShareCreated,
-    ThresholdShareDecryptionProofRequest, ThresholdSharePending, TypedEvent, VerificationKind,
+    SignedLbfvKeyShareManifest, SignedProofPayload, ThresholdShare, ThresholdShareCollectionFailed,
+    ThresholdShareCreated, ThresholdShareDecryptionProofRequest, ThresholdSharePending, TypedEvent,
+    VerificationKind, ZkRequest, ZkResponse,
 };
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::{BfvPreset, BfvProfile};
@@ -33,7 +35,11 @@ use e3_trbfv::{
         CalculateDecryptionShareRequest, CalculateDecryptionShareResponse,
     },
     gen_esi_sss::{GenEsiSssRequest, GenEsiSssResponse},
-    gen_pk_share_and_sk_sss::{GenPkShareAndSkSssRequest, GenPkShareAndSkSssResponse},
+    gen_lbfv_key_shares::GenLbfvKeySharesRequest,
+    gen_pk_share_and_sk_sss::{
+        GenLbfvPkShareAndSkSssRequest, GenPkShareAndSkSssRequest, GenPkShareAndSkSssResponse,
+    },
+    lbfv_operation::LbfvOperationId,
     shares::SharedSecret,
     TrBFVConfig, TrBFVRequest, TrBFVResponse,
 };
@@ -68,8 +74,8 @@ use crate::domain::{
     dealer_identity_for_profile, dispatch_verifies_batch, generate_bfv_keypair,
     select_ready_roster, AggregatingDecryptionKey, BfvKeypairMaterial,
     CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan, GeneratingDecryptionProof,
-    GeneratingThresholdShareData, KeyshareState, ProofRequestData, ReadyForDecryption,
-    ReadySummaryGate, ReceivedShareProofs, ThresholdKeyshareState,
+    GeneratingThresholdShareData, KeyshareState, LbfvGenerationStateV1, ProofRequestData,
+    ReadyForDecryption, ReadySummaryGate, ReceivedShareProofs, ThresholdKeyshareState,
 };
 
 #[path = "recovery_state.rs"]
@@ -137,6 +143,7 @@ pub struct ThresholdKeyshareParams {
     pub params_profile: BfvProfile,
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
+    pub lbfv_generation: Persistable<LbfvGenerationStateV1>,
     pub recovery_payloads: ThresholdKeyshareRecoveryPayloads,
     /// Where this node's BFV encryption keypair is recorded.
     pub bfv_key: DurableIntent<BfvKeyIntent>,
@@ -229,6 +236,7 @@ pub struct ThresholdKeyshare {
     bfv_key: Option<BfvKeyIntent>,
     params_profile: BfvProfile,
     interfold_address: Address,
+    lbfv_generation: Persistable<LbfvGenerationStateV1>,
     dkg_timing_reader: DkgTimingReader,
     signer: PrivateKeySigner,
     active_aggregator_party_id: Option<u64>,
@@ -313,6 +321,7 @@ impl ThresholdKeyshare {
             bfv_key: None,
             params_profile: params.params_profile,
             interfold_address: params.interfold_address,
+            lbfv_generation: params.lbfv_generation,
             dkg_timing_reader: params.dkg_timing_reader,
             signer: params.signer,
             active_aggregator_party_id: recovered.active_aggregator_party_id,
@@ -374,6 +383,12 @@ impl ThresholdKeyshare {
         })
     }
 
+    /// Whether this E3 proves C1. The l-BFV path proves none, so its `KeyshareCreated` carries
+    /// no C1 proof.
+    pub(in crate::actors::threshold_keyshare) fn proves_c1(&self) -> bool {
+        !e3_fhe_params::is_lbfv_path(self.params_profile.threshold_preset())
+    }
+
     fn keyshare_created_fields(
         state: &KeyshareState,
     ) -> Option<(&ArcBytes, &Option<SignedProofPayload>)> {
@@ -393,11 +408,24 @@ impl ThresholdKeyshare {
         let Some((_, signed)) = Self::keyshare_created_fields(&state.state) else {
             return Ok(());
         };
-        if signed.is_none() {
+        if signed.is_none() && self.proves_c1() {
             return Ok(());
         }
         self.pending.keyshare_publish = false;
         self.publish_keyshare_created(ec)
+    }
+
+    fn discard_pending_lbfv_generation(&mut self) -> Result<()> {
+        if !self.lbfv_generation.has() {
+            return Ok(());
+        }
+        self.lbfv_generation
+            .try_mutate_without_context(|mut state| {
+                if !state.is_ready() {
+                    state.record_failure("E3 ended before l-BFV generation completed");
+                }
+                Ok(state)
+            })
     }
 }
 

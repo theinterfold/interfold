@@ -56,7 +56,7 @@ pub use interfold_sol_writer::{publish_synchronized_plaintext_definition, Interf
 pub use randomness_provider_sol::RandomnessProviderSolReader;
 pub use slashing_manager_sol_reader::SlashingManagerSolReader;
 pub use slashing_manager_sol_writer::{
-    SlashIntentTimes, SlashingManagerSolWriter, SlashingWriterRecoveryState,
-    SLASHING_WRITER_RECOVERY_SCHEMA_VERSION,
+    LbfvSlashingWriterRecoveryState, SlashIntentTimes, SlashingManagerSolWriter,
+    SlashingWriterRecoveryState, SLASHING_WRITER_RECOVERY_SCHEMA_VERSION,
 };
 pub use slashing_writer_restart_backfill::SlashingWriterBackfill;

@@ -58,7 +58,11 @@ impl ThresholdKeyshare {
                 failed_at_stage,
                 reason,
             })
-        })
+        })?;
+        if let Err(error) = self.discard_pending_lbfv_generation() {
+            error!("Failed to clear l-BFV generation secrets after the main failure: {error}");
+        }
+        Ok(())
     }
 
     /// End this node's DKG because it cannot continue with H encryption keys.
@@ -452,6 +456,9 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         self.pending.synchronized_consent = None;
         self.pending.decryption_share_request = None;
         self.pending.decryption_proof_request = None;
+        if let Err(error) = self.discard_pending_lbfv_generation() {
+            error!("Failed to discard pending l-BFV generation secrets: {error}");
+        }
         if let Err(error) = self.clear_large_recovery_payloads(event.get_ctx()) {
             error!(%error, "Could not clear terminal DKG recovery payloads");
             ctx.notify_later(event, std::time::Duration::from_secs(1));

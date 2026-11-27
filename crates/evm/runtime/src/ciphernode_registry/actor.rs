@@ -477,6 +477,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
                 EventType::DkgFoldAttestationContextEstablished,
                 EventType::PublicKeyAggregated,
                 EventType::SynchronizedDkgPublicationReady,
+                EventType::LbfvPublicKeyAggregated,
                 EventType::CommitteePublished,
                 EventType::CommitteeFinalizeRequested,
                 EventType::TicketGenerated,

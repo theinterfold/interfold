@@ -10,21 +10,29 @@ use alloy::{
     primitives::{Address, Bytes, U256},
     sol_types::SolValue,
 };
-use e3_events::AccusationQuorumReached;
+use e3_events::LbfvAccusationQuorumReached;
 
-/// Encode `AccusationQuorumReached` into the attestation evidence format expected
-/// by both `SlashingManager.proposeSlash()` and `SlashingManager.proposeSlashByDkgParty()`:
+/// Encode a quorum report of either proving path into the attestation evidence format expected by
+/// both `SlashingManager.proposeSlash()` and `SlashingManager.proposeSlashByDkgParty()`:
 /// `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes, bytes evidence, uint256 issuedAt, uint256 deadline, bytes[] signatures)`
+///
+/// The l-BFV row families ([`ProofType::is_multirow`]) name their row, so their evidence has a
+/// `uint256 proofInstance` after `proofType`. Every other proof type has one instance and no such
+/// field, so a trBFV report has the bytes that it had before l-BFV.
 ///
 /// Voters are sorted ascending by address to satisfy the contract's duplicate-prevention
 /// check. All `votes_for` share the same `issued_at` and `deadline` values. The
 /// accuser sets both values, and `AccusationManager::on_vote_received` rejects a
 /// vote when either value differs. The encoder therefore reads them from the
 /// first vote. Returns `None`
-/// if `votes_for` is empty — the on-chain submitter must skip the submission in that
-/// case rather than send malformed calldata.
-pub fn encode_attestation_evidence(data: &AccusationQuorumReached) -> Option<Vec<u8>> {
+/// if `votes_for` is empty, or if a proof type with one instance names another — the on-chain
+/// submitter must skip the submission in that case rather than send malformed calldata.
+pub fn encode_attestation_evidence(data: &LbfvAccusationQuorumReached) -> Option<Vec<u8>> {
     if data.votes_for.is_empty() || data.evidence.is_empty() {
+        return None;
+    }
+    let multirow = data.proof_type.is_multirow();
+    if !multirow && data.proof_instance != 0 {
         return None;
     }
 
@@ -33,6 +41,7 @@ pub fn encode_attestation_evidence(data: &AccusationQuorumReached) -> Option<Vec
     votes.sort_by_key(|v| v.voter);
 
     let proof_type = U256::from(data.proof_type as u8);
+    let proof_instance = U256::from(data.proof_instance);
     let voters: Vec<Address> = votes.iter().map(|v| v.voter).collect();
     let data_hashes: Vec<[u8; 32]> = votes.iter().map(|v| v.data_hash).collect();
     let evidence = data.evidence.clone();
@@ -45,7 +54,19 @@ pub fn encode_attestation_evidence(data: &AccusationQuorumReached) -> Option<Vec
         .map(|v| Bytes::from(v.signature.extract_bytes()))
         .collect();
 
-    Some(
+    Some(if multirow {
+        (
+            proof_type,
+            proof_instance,
+            voters,
+            data_hashes,
+            evidence,
+            issued_at,
+            deadline,
+            signatures,
+        )
+            .abi_encode_params()
+    } else {
         (
             proof_type,
             voters,
@@ -55,8 +76,8 @@ pub fn encode_attestation_evidence(data: &AccusationQuorumReached) -> Option<Vec
             deadline,
             signatures,
         )
-            .abi_encode_params(),
-    )
+            .abi_encode_params()
+    })
 }
 
 #[cfg(test)]
@@ -78,12 +99,13 @@ mod tests {
         }
     }
 
-    fn quorum(votes_for: Vec<AccusationVote>, evidence: &[u8]) -> AccusationQuorumReached {
-        AccusationQuorumReached {
+    fn quorum(votes_for: Vec<AccusationVote>, evidence: &[u8]) -> LbfvAccusationQuorumReached {
+        LbfvAccusationQuorumReached {
             e3_id: E3id::new("1".to_string(), 1),
             accuser: Address::repeat_byte(0xFF),
             accused: Address::repeat_byte(0xEE),
             proof_type: ProofType::C0PkBfv,
+            proof_instance: 0,
             votes_for,
             outcome: AccusationOutcome::AccusedFaulted,
             evidence: evidence.to_vec().into(),
@@ -118,5 +140,62 @@ mod tests {
         assert_eq!(decoded.1, vec![lo, hi]);
         assert_eq!(decoded.4, U256::from(90u64));
         assert_eq!(decoded.5, U256::from(100u64));
+    }
+
+    /// A trBFV report encodes as main's evidence did: no `proofInstance` field.
+    #[test]
+    fn a_trbfv_report_has_the_evidence_bytes_of_main() {
+        let voter = Address::repeat_byte(0x01);
+        let q = quorum(vec![vote(voter, 100)], b"evidence");
+        let encoded = encode_attestation_evidence(&q).expect("should encode");
+
+        let main = (
+            U256::from(ProofType::C0PkBfv as u8),
+            vec![voter],
+            vec![[7u8; 32]],
+            Bytes::from_static(b"evidence"),
+            U256::from(90u64),
+            U256::from(100u64),
+            vec![Bytes::from_static(&[1, 2, 3])],
+        )
+            .abi_encode_params();
+        assert_eq!(encoded, main);
+    }
+
+    /// An l-BFV row family names its row after the proof type.
+    #[test]
+    fn an_lbfv_row_report_carries_its_instance() {
+        let voter = Address::repeat_byte(0x01);
+        let q = LbfvAccusationQuorumReached {
+            proof_type: ProofType::RlkAggregation,
+            proof_instance: 9,
+            ..quorum(vec![vote(voter, 100)], b"evidence")
+        };
+        let encoded = encode_attestation_evidence(&q).expect("should encode");
+
+        let decoded = <(
+            U256,
+            U256,
+            Vec<Address>,
+            Vec<B256>,
+            Bytes,
+            U256,
+            U256,
+            Vec<Bytes>,
+        )>::abi_decode_params(&encoded)
+        .expect("decodes");
+        assert_eq!(decoded.0, U256::from(ProofType::RlkAggregation as u8));
+        assert_eq!(decoded.1, U256::from(9u64));
+        assert_eq!(decoded.2, vec![voter]);
+    }
+
+    /// A proof type with one instance has no field for another one.
+    #[test]
+    fn a_singleton_proof_type_cannot_name_a_row() {
+        let q = LbfvAccusationQuorumReached {
+            proof_instance: 1,
+            ..quorum(vec![vote(Address::repeat_byte(0x01), 100)], b"evidence")
+        };
+        assert!(encode_attestation_evidence(&q).is_none());
     }
 }

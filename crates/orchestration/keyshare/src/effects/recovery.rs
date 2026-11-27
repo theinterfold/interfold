@@ -591,6 +591,26 @@ impl ThresholdKeyshare {
             "resuming persisted threshold keyshare work"
         );
 
+        if let KeyshareState::Failed {
+            failed_at_stage,
+            reason,
+        } = state.state
+        {
+            self.discard_pending_lbfv_generation()?;
+            return self.bus.publish(
+                E3Failed {
+                    e3_id: state.e3_id,
+                    failed_at_stage,
+                    reason,
+                },
+                ec,
+            );
+        }
+        if let Err(error) = self.resume_lbfv_generation(ec.clone()) {
+            error!("Failed to resume local l-BFV generation: {error}");
+        }
+        let state = self.state.try_get()?;
+
         match state.state {
             KeyshareState::Init => {
                 let selected = recovery
@@ -679,17 +699,7 @@ impl ThresholdKeyshare {
             KeyshareState::GeneratingDecryptionProof(_) | KeyshareState::Completed => {
                 self.resume_decryption_work(ec)
             }
-            KeyshareState::Failed {
-                failed_at_stage,
-                reason,
-            } => self.bus.publish(
-                E3Failed {
-                    e3_id: state.e3_id,
-                    failed_at_stage,
-                    reason,
-                },
-                ec,
-            ),
+            KeyshareState::Failed { .. } => unreachable!("failed state returned before recovery"),
         }
     }
 }

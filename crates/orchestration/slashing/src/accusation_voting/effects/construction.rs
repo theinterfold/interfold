@@ -204,12 +204,17 @@ impl AccusationManager {
         bus.subscribe(EventType::ProofVerificationFailed, addr.clone().into());
         bus.subscribe(EventType::ProofVerificationPassed, addr.clone().into());
         bus.subscribe(EventType::ProofFailureAccusation, addr.clone().into());
+        bus.subscribe(EventType::LbfvProofFailureAccusation, addr.clone().into());
         bus.subscribe(EventType::AccusationVote, addr.clone().into());
         bus.subscribe(EventType::ComputeResponse, addr.clone().into());
         bus.subscribe(EventType::ComputeRequestError, addr.clone().into());
         bus.subscribe(EventType::CommitteeMemberExpelled, addr.clone().into());
         bus.subscribe(
             EventType::CommitmentConsistencyViolation,
+            addr.clone().into(),
+        );
+        bus.subscribe(
+            EventType::LbfvCommitmentConsistencyViolation,
             addr.clone().into(),
         );
         addr
@@ -219,8 +224,8 @@ impl AccusationManager {
     /// saved before a restart.
     pub(crate) fn with_saved_votes(
         mut self,
-        repo: Repository<AccusationVotesSnapshot>,
-        restored: Option<AccusationVotesSnapshot>,
+        repo: PathRepository<AccusationVotesSnapshot, LbfvAccusationVotesSnapshot>,
+        restored: Option<LbfvAccusationVotesSnapshot>,
     ) -> anyhow::Result<Self> {
         if let Some(snapshot) = restored {
             self.voting.restore(snapshot)?;
@@ -253,11 +258,18 @@ impl AccusationManager {
         &mut self,
         accused: Address,
         proof_type: ProofType,
+        proof_instance: u32,
         data_hash: [u8; 32],
         passed: bool,
         evidence: Bytes,
     ) {
-        self.voting
-            .cache_verification_result(accused, proof_type, data_hash, passed, evidence);
+        self.voting.cache_verification_result(
+            accused,
+            proof_type,
+            proof_instance,
+            data_hash,
+            passed,
+            evidence,
+        );
     }
 }

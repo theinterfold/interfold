@@ -43,19 +43,22 @@ use actix::{Actor, Addr, AsyncContext, Context, Handler, SpawnHandle};
 use alloy::primitives::{Address, Bytes};
 use alloy::signers::local::PrivateKeySigner;
 use e3_committee::CiphernodesCommitteeSize;
-use e3_data::Repository;
 use e3_events::{
-    AccusationVote, BusHandle, CommitmentConsistencyViolation, ComputeRequestError,
-    ComputeResponse, E3id, EventPublisher, EventSubscriber, EventType, InterfoldEvent,
-    InterfoldEventData, ProofFailureAccusation, ProofType, ProofVerificationFailed,
-    ProofVerificationPassed, TypedEvent,
+    AccusationQuorumReached, AccusationVote, BusHandle, ComputeRequestError, ComputeResponse, E3id,
+    EventPublisher, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData,
+    LbfvAccusationQuorumReached, LbfvCommitmentConsistencyViolation, LbfvProofFailureAccusation,
+    ProofFailureAccusation, ProofType, ProofVerificationFailed, ProofVerificationPassed,
+    TypedEvent,
 };
 use e3_events::{EventContext, Sequenced};
 use e3_utils::NotifySync;
 use tracing::{error, warn};
 
+use crate::repo::PathRepository;
 pub use crate::workflow::accusation_voting::Clock;
-use crate::workflow::accusation_voting::{AccusationVotesSnapshot, AccusationVoting, VoteAction};
+use crate::workflow::accusation_voting::{
+    AccusationVotesSnapshot, AccusationVoting, LbfvAccusationVotesSnapshot, VoteAction,
+};
 
 /// Production clock backed by `SystemTime::now()`.
 pub struct SystemClock;
@@ -81,6 +84,13 @@ impl Clock for SystemClock {
 /// proofs this node accused are saved after each event that changes them. A restarted manager
 /// restores them and starts their vote timers at `EffectsEnabled`.
 ///
+/// **Proving paths**: the voting workflow runs on the l-BFV event forms, which name each proof by
+/// its row. A trBFV E3 receives and publishes the trBFV forms ([`ProofFailureAccusation`],
+/// [`AccusationQuorumReached`], `CommitmentConsistencyViolation`) and saves the trBFV vote
+/// layout, so their persisted and wire bytes stay as they were. An l-BFV E3 uses
+/// [`LbfvProofFailureAccusation`], [`LbfvAccusationQuorumReached`] and
+/// [`LbfvCommitmentConsistencyViolation`]; the actor drops an event of the other path.
+///
 /// Subscribes to:
 /// - [`ProofVerificationFailed`] — local proof failure detection
 /// - [`ProofVerificationPassed`] — cache successful verification for voting
@@ -105,7 +115,7 @@ pub struct AccusationManager {
     /// by the actor — the service only signals start/cancel via [`VoteAction`].
     timeout_handles: HashMap<[u8; 32], SpawnHandle>,
     /// Where the vote state is saved; `None` in tests that run without a store.
-    votes_repo: Option<Repository<AccusationVotesSnapshot>>,
+    votes_repo: Option<PathRepository<AccusationVotesSnapshot, LbfvAccusationVotesSnapshot>>,
     /// Context of the latest E3 event. Saves use it: an older context makes the store drop the
     /// write as stale.
     last_ec: Option<EventContext<Sequenced>>,

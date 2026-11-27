@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::FieldValue;
-use e3_events::{CorrelationId, PartyProofData, VerificationKind};
+use e3_events::{CorrelationId, LbfvPartyProofData, VerificationKind};
 
 /// A minimal same-party commitment link: extracts the first 32 bytes of the
 /// source public signals and requires them to equal the first 32 bytes of
@@ -58,6 +58,13 @@ fn addr(byte: u8) -> Address {
 
 fn signals(byte: u8) -> ArcBytes {
     ArcBytes::from_bytes(&[byte; 32])
+}
+
+fn identity(proof_type: ProofType) -> ProofIdentity {
+    ProofIdentity {
+        proof_type,
+        instance: 0,
+    }
 }
 
 fn passed(
@@ -197,7 +204,7 @@ fn foreign_e3_id_is_ignored() {
     ));
     assert!(v.is_empty(), "proofs for a foreign E3 must be ignored");
 
-    let req = CommitmentConsistencyCheckRequested {
+    let req = LbfvCommitmentConsistencyCheckRequested {
         e3_id: other,
         kind: VerificationKind::ShareProofs,
         correlation_id: CorrelationId::new(),
@@ -215,41 +222,41 @@ fn pre_zk_check_flags_and_evicts_inconsistent_party() {
     let honest = addr(5);
     let faulty = addr(6);
 
-    let req = CommitmentConsistencyCheckRequested {
+    let req = LbfvCommitmentConsistencyCheckRequested {
         e3_id: e3(),
         kind: VerificationKind::ShareProofs,
         correlation_id: CorrelationId::new(),
         party_proofs: vec![
-            PartyProofData {
+            LbfvPartyProofData {
                 party_id: 1,
                 address: honest,
                 proofs: vec![
                     (
-                        ProofType::C1PkGeneration,
+                        identity(ProofType::C1PkGeneration),
                         signals(0x42),
                         [0xa1; 32],
                         ArcBytes::from_bytes(&[0x01]),
                     ),
                     (
-                        ProofType::C2aSkShareComputation,
+                        identity(ProofType::C2aSkShareComputation),
                         signals(0x42),
                         [0xa2; 32],
                         ArcBytes::from_bytes(&[0x02]),
                     ),
                 ],
             },
-            PartyProofData {
+            LbfvPartyProofData {
                 party_id: 2,
                 address: faulty,
                 proofs: vec![
                     (
-                        ProofType::C1PkGeneration,
+                        identity(ProofType::C1PkGeneration),
                         signals(0x11),
                         [0xb1; 32],
                         ArcBytes::from_bytes(&[0x03]),
                     ),
                     (
-                        ProofType::C2aSkShareComputation,
+                        identity(ProofType::C2aSkShareComputation),
                         signals(0x99),
                         [0xb2; 32],
                         ArcBytes::from_bytes(&[0x04]),
@@ -448,7 +455,7 @@ fn snapshot_roundtrip_preserves_proofs_and_selected_roster() {
         .is_empty());
 
     let encoded = bincode::serialize(&before.snapshot()).expect("serialize snapshot");
-    let snapshot: CommitmentConsistencySnapshot =
+    let snapshot: LbfvCommitmentConsistencySnapshot =
         bincode::deserialize(&encoded).expect("deserialize snapshot");
     let mut after = CommitmentConsistency::new(e3(), vec![same_party_link()], 2);
     after.restore(snapshot).expect("restore snapshot");
@@ -507,8 +514,23 @@ fn snapshot_is_emitted_only_after_state_changes() {
 
 #[actix::test]
 async fn actor_persists_state_and_restores_it_after_restart() -> anyhow::Result<()> {
+    persists_and_restores(e3_fhe_params::BfvPreset::InsecureThreshold64, false).await
+}
+
+#[actix::test]
+async fn lbfv_actor_persists_state_and_restores_it_after_restart() -> anyhow::Result<()> {
+    persists_and_restores(
+        e3_fhe_params::BfvProfile::SsInsecureLbfv.threshold_preset(),
+        true,
+    )
+    .await
+}
+
+/// The checker saves and restores its state in the record of its proving path, and the other
+/// path's record stays empty.
+async fn persists_and_restores(preset: e3_fhe_params::BfvPreset, lbfv: bool) -> anyhow::Result<()> {
     use crate::actors::commitment_consistency_checker::CommitmentConsistencyChecker;
-    use crate::repo::CommitmentConsistencyRepositoryFactory;
+    use crate::repo::{CommitmentConsistencyRepositoryFactory, PathRepository};
     use actix::{Actor, Context, Handler};
     use e3_data::{DataStore, InMemStore, RepositoriesFactory};
     use e3_events::{
@@ -533,9 +555,16 @@ async fn actor_persists_state_and_restores_it_after_restart() -> anyhow::Result<
     let bus = e3_events::BusHandle::new(event_bus, sequencer, HlcFactory::new())
         .enable("commitment-consistency-persistence-test");
     let store = DataStore::from_in_mem(&InMemStore::new(false).start());
-    let repo = store.repositories().commitment_consistency(&e3());
-    let checker = CommitmentConsistencyChecker::new(&bus, e3(), vec![same_party_link()], 2)
-        .with_snapshot(repo.clone(), None)?
+    let repositories = store.repositories();
+    let repo = || {
+        if lbfv {
+            PathRepository::Lbfv(repositories.commitment_consistency_lbfv(&e3()))
+        } else {
+            PathRepository::Trbfv(repositories.commitment_consistency(&e3()))
+        }
+    };
+    let checker = CommitmentConsistencyChecker::new(&bus, e3(), vec![same_party_link()], 2, preset)
+        .with_snapshot(repo(), None)?
         .start();
 
     let proof = passed(
@@ -578,7 +607,7 @@ async fn actor_persists_state_and_restores_it_after_restart() -> anyhow::Result<
 
     let restored = actix::clock::timeout(std::time::Duration::from_secs(1), async {
         loop {
-            if let Some(snapshot) = repo.read().await? {
+            if let Some(snapshot) = repo().read_checked().await? {
                 if snapshot.entries.len() == 1 && snapshot.roster.as_deref() == Some(&[1, 2]) {
                     break Ok::<_, anyhow::Error>(snapshot);
                 }
@@ -588,8 +617,24 @@ async fn actor_persists_state_and_restores_it_after_restart() -> anyhow::Result<
     })
     .await??;
 
-    let restarted = CommitmentConsistencyChecker::new(&bus, e3(), vec![same_party_link()], 2)
-        .with_snapshot(repo.clone(), Some(restored))?;
+    let other_path_is_empty = if lbfv {
+        repositories
+            .commitment_consistency(&e3())
+            .read()
+            .await?
+            .is_none()
+    } else {
+        repositories
+            .commitment_consistency_lbfv(&e3())
+            .read()
+            .await?
+            .is_none()
+    };
+    assert!(other_path_is_empty, "the other path's record stays empty");
+
+    let restarted =
+        CommitmentConsistencyChecker::new(&bus, e3(), vec![same_party_link()], 2, preset)
+            .with_snapshot(repo(), Some(restored))?;
     assert_eq!(restarted.cached_proof_count(), 1);
     assert_eq!(restarted.accepted_roster(), Some(&[1, 2][..]));
 
@@ -610,7 +655,7 @@ async fn actor_persists_state_and_restores_it_after_restart() -> anyhow::Result<
         .await?;
     actix::clock::timeout(std::time::Duration::from_secs(1), async {
         loop {
-            if repo.read().await?.is_none() {
+            if repo().read_checked().await?.is_none() {
                 break Ok::<_, anyhow::Error>(());
             }
             actix::clock::sleep(std::time::Duration::from_millis(10)).await;

@@ -106,6 +106,7 @@ async fn contributor(
         signer: signer.clone(),
         bfv_key: repos.threshold_keyshare_bfv_key(id),
         effects_enabled: false,
+        lbfv_generation: test_lbfv_generation(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { anyhow::bail!("unexpected DKG timing") })),
     })
     .with_canonical_keys(keys)

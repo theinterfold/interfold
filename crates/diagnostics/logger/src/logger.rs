@@ -82,11 +82,14 @@ fn severity(data: &InterfoldEventData) -> Severity {
         | E::ThresholdShareCollectionFailed(_)
         | E::EncryptionKeyCollectionFailed(_)
         | E::ComputeRequestError(_)
-        | E::CommitmentConsistencyViolation(_) => Severity::Error,
+        | E::CommitmentConsistencyViolation(_)
+        | E::LbfvCommitmentConsistencyViolation(_) => Severity::Error,
 
         E::ProofFailureAccusation(_)
+        | E::LbfvProofFailureAccusation(_)
         | E::AccusationVote(_)
         | E::AccusationQuorumReached(_)
+        | E::LbfvAccusationQuorumReached(_)
         | E::SlashExecuted(_)
         | E::CommitteeMemberExpelled(_)
         | E::AggregatorChanged(_) => Severity::Warn,
@@ -148,12 +151,16 @@ fn stage(data: &InterfoldEventData) -> &'static str {
         | E::DkgProofSigned(_)
         | E::ShareVerificationDispatched(_)
         | E::ShareVerificationComplete(_)
+        | E::LbfvShareVerificationDispatched(_)
+        | E::LbfvShareVerificationComplete(_)
         | E::DecryptionKeyShared(_)
         | E::DKGInnerProofReady(_)
         | E::DKGRecursiveAggregationComplete(_)
         | E::CommitmentConsistencyCheckRequested(_)
         | E::CommitmentConsistencyCheckComplete(_)
-        | E::CommitmentConsistencyViolation(_) => "dkg_shares",
+        | E::CommitmentConsistencyViolation(_)
+        | E::LbfvCommitmentConsistencyCheckRequested(_)
+        | E::LbfvCommitmentConsistencyViolation(_) => "dkg_shares",
         E::KeyshareCreated(_)
         | E::PkGenerationProofSigned(_)
         | E::PkAggregationProofPending(_)
@@ -184,8 +191,10 @@ fn stage(data: &InterfoldEventData) -> &'static str {
         E::ProofVerificationPassed(event) => proof_stage(&format!("{:?}", event.proof_type)),
         E::SignedProofFailed(event) => proof_stage(&format!("{:?}", event.proof_type)),
         E::ProofFailureAccusation(_)
+        | E::LbfvProofFailureAccusation(_)
         | E::AccusationVote(_)
         | E::AccusationQuorumReached(_)
+        | E::LbfvAccusationQuorumReached(_)
         | E::SlashExecuted(_) => "dkg_shares",
         E::EvmLogObserved(event) => match event.event_name.as_str() {
             "CommitteeFormed" | "CommitteeFinalized" => "committee",
@@ -272,6 +281,10 @@ fn error_message_for(data: &InterfoldEventData) -> String {
         InterfoldEventData::CommitmentConsistencyViolation(data) => compact_error(&format!(
             "{:?} commitment from party {} ({}) is inconsistent",
             data.proof_type, data.accused_party_id, data.accused_address
+        )),
+        InterfoldEventData::LbfvCommitmentConsistencyViolation(data) => compact_error(&format!(
+            "{:?} row {} commitment from party {} ({}) is inconsistent",
+            data.proof_type, data.proof_instance, data.accused_party_id, data.accused_address
         )),
         _ => String::new(),
     }

@@ -6,7 +6,10 @@ use anyhow::{ensure, Result};
 use std::ops::{Deref, Range};
 
 pub const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
-pub const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
+// Matches `RegistrySortitionLib.MAX_LBFV_COMMITTEE_PUBLIC_KEY_BYTES`, the registry's bound for an
+// l-BFV E3 (a secure-16384 key envelope is about 7.8 MB). A trBFV E3's key is capped lower, by
+// `CiphernodeRegistryOwnable.MAX_COMMITTEE_PUBLIC_KEY_BYTES`.
+pub const MAX_PUBLIC_KEY_BYTES: usize = 16 * 1024 * 1024;
 
 /// An ephemeral layout, never a replacement for a consumer's persisted assembly record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
