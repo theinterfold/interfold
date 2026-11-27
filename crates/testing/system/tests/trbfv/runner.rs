@@ -147,7 +147,7 @@ fn proof_aggregation_enabled() -> bool {
 }
 
 /// Restores the collection-timeout variables a secure run overrides.
-struct TimeoutEnvGuard(Vec<(&'static str, Option<OsString>)>);
+pub(super) struct TimeoutEnvGuard(Vec<(&'static str, Option<OsString>)>);
 
 impl TimeoutEnvGuard {
     const VARS: [&'static str; 3] = [
@@ -156,7 +156,7 @@ impl TimeoutEnvGuard {
         "E3_DECRYPTION_KEY_SHARED_COLLECTION_TIMEOUT_SECS",
     ];
 
-    fn set(timeouts: Option<(u64, u64, u64)>) -> Self {
+    pub(super) fn set(timeouts: Option<(u64, u64, u64)>) -> Self {
         let guard = Self(
             Self::VARS
                 .into_iter()

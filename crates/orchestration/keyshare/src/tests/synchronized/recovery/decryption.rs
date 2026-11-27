@@ -153,39 +153,44 @@ pub(super) async fn qualify(
     history: Vec<InterfoldEvent<Unsequenced>>,
     pk: &PublicKey,
     dir: &Path,
+    key: super::cli::Publication<'_>,
 ) -> Result<()> {
     let selected = setups[0].selected();
     let id = &selected.e3_id;
     let profile = selected.params_profile;
     let numeric: U256 = id.clone().try_into()?;
     let controller = chain.controller;
-    let honk: Value = serde_json::from_slice(&fs::read(dir.join("DecryptionHonk.json"))?)?;
-    let mut libs = HashMap::new();
-    for (name, compiled) in honk.as_object().unwrap() {
-        if name != "DecryptionAggregatorVerifier" {
-            libs.insert(
-                name.clone(),
-                deploy(&chain.provider, compiled, vec![], &libs).await?,
-            );
+    let wrapper = if let Some(cli) = &chain.cli {
+        cli.decryption
+    } else {
+        let honk: Value = serde_json::from_slice(&fs::read(dir.join("DecryptionHonk.json"))?)?;
+        let mut libs = HashMap::new();
+        for (name, compiled) in honk.as_object().unwrap() {
+            if name != "DecryptionAggregatorVerifier" {
+                libs.insert(
+                    name.clone(),
+                    deploy(&chain.provider, compiled, vec![], &libs).await?,
+                );
+            }
         }
-    }
-    let verifier = deploy(
-        &chain.provider,
-        &honk["DecryptionAggregatorVerifier"],
-        vec![],
-        &libs,
-    )
-    .await?;
-    let wrapper_artifact = artifact(
+        let verifier = deploy(
+            &chain.provider,
+            &honk["DecryptionAggregatorVerifier"],
+            vec![],
+            &libs,
+        )
+        .await?;
+        let wrapper_artifact = artifact(
         "contracts/verifiers/bfv/SynchronizedDecryptionVerifier.sol/SynchronizedDecryptionVerifier.json",
     )?;
-    let wrapper = deploy(
-        &chain.provider,
-        &wrapper_artifact,
-        (verifier, registry, B256::from(selected.crypto_config_id)).abi_encode_params(),
-        &HashMap::new(),
-    )
-    .await?;
+        deploy(
+            &chain.provider,
+            &wrapper_artifact,
+            (verifier, registry, B256::from(selected.crypto_config_id)).abi_encode_params(),
+            &HashMap::new(),
+        )
+        .await?
+    };
     let p = &pk.params;
     // Compute one level-zero output under the published key.
     let encrypt = |value: u64| -> Result<Ciphertext> {
@@ -201,12 +206,45 @@ pub(super) async fn qualify(
     let ct = (&encrypt(19)? + &encrypt(18)?).to_bytes();
     let commitment = e3_bfv_client::compute_ct_commitment_with_params(&ct, p)?;
     let checkpoint = Checkpoint::new(controller, &chain.provider);
-    let receipt = checkpoint
-        .seedCiphertext(numeric, keccak256(&ct), commitment.into(), wrapper)
-        .send()
-        .await?
-        .get_receipt()
-        .await?;
+    let receipt = if chain.cli.is_some() {
+        let lifecycle = IInterfold::new(controller, &chain.provider);
+        let current = lifecycle.getE3(numeric).call().await?;
+        ensure!(current.decryptionVerifier == wrapper);
+        let now = chain
+            .provider
+            .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
+            .await?
+            .context("missing chain head")?
+            .header
+            .timestamp;
+        if current.inputWindow[1] > U256::from(now) {
+            chain
+                .provider
+                .anvil_set_next_block_timestamp(current.inputWindow[1].try_into()?)
+                .await?;
+            chain.provider.evm_mine(None).await?;
+        }
+        let reference = IInterfold::CiphertextOutputReference {
+            contentHash: keccak256(&ct),
+            ciphertextCommitment: commitment.into(),
+            computeProof: Bytes::from_static(&[1]),
+            availabilityProof: Bytes::copy_from_slice(&ct),
+        };
+        lifecycle
+            .publishCiphertextOutput(numeric, reference.abi_encode().into())
+            .send()
+            .await?
+            .get_receipt()
+            .await?
+    } else {
+        checkpoint
+            .seedCiphertext(numeric, keccak256(&ct), commitment.into(), wrapper)
+            .send()
+            .await?
+            .get_receipt()
+            .await?
+    };
+    let ciphertext_observed = e3_test_support::BenchmarkInstant::now();
     ensure!(receipt.status());
     let node = DiskJournal::open(dir, "plaintext").await?;
     let bus = &node.bus;
@@ -304,23 +342,27 @@ pub(super) async fn qualify(
     let duplicate = received(&mut candidates).await?;
     ensure!(first.get_data() == duplicate.get_data() && first.seq() < duplicate.seq());
     // Same frozen request and one honest share: even a new coordinator cannot start.
-    let snapshot = chain.provider.anvil_snapshot().await?;
-    for (at, expired) in [(deadline, false), (deadline + 1, true)] {
-        chain.provider.anvil_set_next_block_timestamp(at).await?;
-        chain.provider.evm_mine(None).await?;
-        let outcome = checkpoint.failureCondition(numeric).call().await?;
-        let open = rt.open_deadline(id, Some(deadline)).await;
-        if expired {
-            ensure!(open.unwrap_err().to_string().contains("deadline expired"));
-        } else {
-            ensure!(open? == deadline);
+    if chain.cli.is_none() {
+        let snapshot = chain.provider.anvil_snapshot().await?;
+        for (at, expired) in [(deadline, false), (deadline + 1, true)] {
+            chain.provider.anvil_set_next_block_timestamp(at).await?;
+            chain.provider.evm_mine(None).await?;
+            let outcome = checkpoint.failureCondition(numeric).call().await?;
+            let open = rt.open_deadline(id, Some(deadline)).await;
+            if expired {
+                ensure!(open.unwrap_err().to_string().contains("deadline expired"));
+            } else {
+                ensure!(open? == deadline);
+            }
+            ensure!(outcome.expired == expired && outcome.deadline == U256::from(deadline));
+            if expired {
+                ensure!(
+                    FailureReason::try_from(outcome.reason)? == FailureReason::DecryptionTimeout
+                );
+            }
         }
-        ensure!(outcome.expired == expired && outcome.deadline == U256::from(deadline));
-        if expired {
-            ensure!(FailureReason::try_from(outcome.reason)? == FailureReason::DecryptionTimeout);
-        }
+        ensure!(chain.provider.anvil_revert(snapshot).await?);
     }
-    ensure!(chain.provider.anvil_revert(snapshot).await?);
     let b = last_owner.signed().await?;
     let plan = keys
         .synchronized_decryption_definition(id, profile, &[ArcBytes::from_bytes(&ct)])?
@@ -483,6 +525,52 @@ pub(super) async fn qualify(
         e3_request::canonical_key::SynchronizedChildPins::for_profile(other_profile, COMMITTEE)?;
     let lifecycle = IInterfold::new(controller, &chain.provider);
     let output = Bytes::copy_from_slice(&intent.decrypted_output[0]);
+    if let Some(cli) = &chain.cli {
+        plan.check_current(&keys, &ArcBytes::from_bytes(&ct))?;
+        let mined =
+            e3_evm::publish_synchronized_plaintext_definition(writer, &keys, controller, &intent)
+                .await?
+                .context("missing mined plaintext")?;
+        let plaintext_observed = e3_test_support::BenchmarkInstant::now();
+        let state = lifecycle.getE3(numeric).call().await?;
+        ensure!(
+            mined.status()
+                && state.plaintextOutput == output
+                && state.decryptionVerifier == cli.decryption
+                && state.pkVerifier == cli.dkg
+                && lifecycle.getE3Stage(numeric).call().await? == 5
+        );
+        ensure!(
+            mined
+                .logs()
+                .iter()
+                .filter(|log| log.address() == controller)
+                .filter_map(|log| log
+                    .log_decode::<IInterfold::PlaintextOutputPublished>()
+                    .ok())
+                .any(|log| log.inner.data.e3Id == numeric
+                    && log.inner.data.plaintextOutput == output),
+            "no mined plaintext for the CLI E3"
+        );
+        cli.record(
+            controller,
+            &plan,
+            u64::from_le_bytes(state.plaintextOutput[..8].try_into()?),
+            [
+                key,
+                super::cli::Publication {
+                    receipt: &receipt,
+                    observed: ciphertext_observed,
+                },
+                super::cli::Publication {
+                    receipt: &mined,
+                    observed: plaintext_observed,
+                },
+            ],
+        )?;
+        node.close().await?;
+        return Ok(());
+    }
     use e3_evm_contracts::decryption_errors::SynchronizedDecryptionVerifier::{
         DomainBindingMismatch, VkHashMismatch,
     };

@@ -9,9 +9,11 @@ use super::{
     Options,
 };
 use anyhow::{bail, Result};
-use e3_zk_config::CircuitName;
+use e3_events::Proof;
+use e3_zk_config::{CircuitName, CircuitVariant};
 use e3_zk_prover::{
-    DkgShareDecryptionCircuit, Provable, ShareComputationCircuit, WitnessGenerator, ZkProver,
+    CompiledCircuit, DkgShareDecryptionCircuit, Provable, ShareComputationCircuit,
+    WitnessGenerator, ZkProver,
 };
 use std::{fs, path::Path, process::Command, time::Instant};
 
@@ -55,15 +57,45 @@ pub(crate) fn benchmark(
         .transpose()?;
     record.artifact = Some(identity);
     let inputs = inputs::prepare(material, case, &compiled, prover, pair, ude, shared, record)?;
+    measure(
+        root, output, work, options, prover, pair, case, variant, &compiled, &path, &vk, inputs,
+        record,
+    )?;
+    Ok(())
+}
+
+/// Use the same witness solver, BB phases and clock boundaries for both BFV protocols.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn measure(
+    root: &Path,
+    output: &Path,
+    work: &Path,
+    options: &Options,
+    prover: &ZkProver,
+    pair: &str,
+    case: Case,
+    variant: CircuitVariant,
+    compiled: &CompiledCircuit,
+    path: &Path,
+    vk: &Path,
+    inputs: noirc_abi::InputMap,
+    record: &mut Record,
+) -> Result<Option<Proof>> {
     if options.export_toml {
         fs::write(
-            output.join(format!("{}.toml", case.path().replace('/', "_"))),
+            output.join(format!(
+                "{}.toml",
+                record
+                    .circuit_path
+                    .trim_start_matches("circuits/bin/")
+                    .replace('/', "_")
+            )),
             noirc_abi::input_parser::Format::Toml.serialize(&inputs, &compiled.abi)?,
         )?;
     }
     let start = Instant::now();
     let witness = WitnessGenerator::new()
-        .generate_witness(&compiled, inputs)
+        .generate_witness(compiled, inputs)
         .map_err(anyhow::Error::from);
     record.execution.finish(start.elapsed(), &witness);
     let witness = witness?;
@@ -71,7 +103,7 @@ pub(crate) fn benchmark(
     if !options.skip_gates && !options.witness_only {
         let result = run(Command::new(prover.bb_binary())
             .args(["gates", "-b"])
-            .arg(&path)
+            .arg(path)
             .args(["-t", variant.verifier_target()]))
         .and_then(|text| artifacts::gate_counts(&text));
         match result {
@@ -86,17 +118,17 @@ pub(crate) fn benchmark(
         }
     }
     if options.witness_only {
-        return Ok(());
+        return Ok(None);
     }
     let job = tempfile::Builder::new()
         .prefix("bb-leaf-")
         .tempdir_in(work)?;
-    let mut selected_vk = vk.clone();
+    let mut selected_vk = vk.to_path_buf();
     if options.bench_vk {
         let start = Instant::now();
         let result = run(Command::new(prover.bb_binary())
             .args(["write_vk", "-b"])
-            .arg(&path)
+            .arg(path)
             .arg("-o")
             .arg(job.path())
             .args(["-t", variant.verifier_target()]));
@@ -105,7 +137,7 @@ pub(crate) fn benchmark(
         selected_vk = job.path().join("vk");
         if case == Case::Config {
             record.artifact.as_mut().unwrap().source_stamp =
-                artifacts::bind_config_vk(root, &path, variant, &selected_vk, &vk)?;
+                artifacts::bind_config_vk(root, path, variant, &selected_vk, vk)?;
         }
         record.vk_size_bytes = Some(fs::metadata(&selected_vk)?.len());
         record.artifact.as_mut().unwrap().vk_sha256 = Some(artifacts::digest(&selected_vk)?);
@@ -162,6 +194,7 @@ pub(crate) fn benchmark(
         });
         record.verification.finish(start.elapsed(), &result);
         result?;
+        Ok(Some(proof))
     } else {
         // These development circuits have no protocol CircuitName. Use the same verifier-target flags.
         record.proof_generation.metric = "external_bb_prove_wall".into();
@@ -172,7 +205,7 @@ pub(crate) fn benchmark(
         let start = Instant::now();
         let result = run(Command::new(prover.bb_binary())
             .args(["prove", "-b"])
-            .arg(&path)
+            .arg(path)
             .arg("-w")
             .arg(witness_path)
             .arg("-k")
@@ -196,6 +229,6 @@ pub(crate) fn benchmark(
             .args(["-t", variant.verifier_target()]));
         record.verification.finish(start.elapsed(), &result);
         result?;
+        Ok(None)
     }
-    Ok(())
 }

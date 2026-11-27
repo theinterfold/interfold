@@ -114,8 +114,9 @@ stop/flush/cache eviction/reopen, exact saved work, non-prefix H `[0,2]`, self/o
 and authenticated replacement. Its ordinary variant and provisional negatives use synthetic signed
 statements, not valid proofs.
 
-The qualification command selects all synchronized keyshare cases, including recovery and a
-complementary ordinary durable-log replay test. That test reopens actual commit logs through
+The qualification command selects all synchronized keyshare cases except the
+[opt-in CLI request benchmark](../../zk/benchmarks/README.md#synchronized-minimum). It includes
+recovery and a complementary durable-log replay test. That test reopens actual commit logs through
 `EventSystem` and production startup sync, preserves aggregate sequence despite decreasing HLC,
 filters stale boot controls and records authenticated replacements without effects until this boot's
 fresh enable signal. Snapshot persistence assertions follow an acknowledged drain; event-log flush

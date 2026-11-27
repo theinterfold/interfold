@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+anyhow.workspace = true
 zeroize.workspace = true
 e3-zk-witness.workspace = true
 e3-zk-config.workspace = true
@@ -15,13 +16,14 @@ e3-committee.workspace = true
 e3-fhe-params.workspace = true
 e3-polynomial.workspace = true
 e3-polynomial-fhe.workspace = true
-fhe.workspace = true
+e3-trbfv.workspace = true
+fhe = { workspace = true, features = ["synchronized-decryption"] }
 fhe-math.workspace = true
 fhe-traits.workspace = true
 ndarray.workspace = true
 num-bigint.workspace = true
 rand.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
-fhe = { workspace = true, features = ["synchronized-decryption"] }
 num-traits.workspace = true

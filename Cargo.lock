@@ -4221,6 +4221,7 @@ dependencies = [
  "e3-request",
  "e3-sync",
  "e3-task-pool",
+ "e3-test-support",
  "e3-trbfv",
  "e3-utils",
  "e3-zk-build",
@@ -4548,6 +4549,7 @@ dependencies = [
 name = "e3-test-support"
 version = "0.20.0"
 dependencies = [
+ "libc",
  "rand 0.9.5",
  "rand_chacha 0.9.0",
  "tokio",
@@ -4571,6 +4573,7 @@ dependencies = [
  "e3-bfv-client",
  "e3-bfv-test-support",
  "e3-ciphernode-builder",
+ "e3-ciphernode-config",
  "e3-committee",
  "e3-crypto",
  "e3-data",
@@ -4844,10 +4847,12 @@ dependencies = [
 name = "e3-zk-samples"
 version = "0.20.0"
 dependencies = [
+ "anyhow",
  "e3-committee",
  "e3-fhe-params",
  "e3-polynomial",
  "e3-polynomial-fhe",
+ "e3-trbfv",
  "e3-zk-config",
  "e3-zk-witness",
  "fhe",
@@ -4857,6 +4862,7 @@ dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
  "rand 0.9.5",
+ "serde_json",
  "zeroize",
 ]
 

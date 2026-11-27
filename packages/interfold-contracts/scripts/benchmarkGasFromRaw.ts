@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { CIRCUIT_DIMENSIONS } from "../bfv.js";
+import { decodeBenchmarkProof } from "./benchmarkProof";
 import {
   type ActiveBfvConfig,
   type BfvCommittee,
@@ -298,21 +299,6 @@ function requirePublicInputLen(
   }
 }
 
-function hexToBytes32Array(hex: string): string[] {
-  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
-  if (clean.length === 0) return [];
-  if (clean.length % 64 !== 0) {
-    throw new Error(
-      `public_inputs_hex length is not 32-byte aligned: ${clean.length}`,
-    );
-  }
-  const out: string[] = [];
-  for (let i = 0; i < clean.length; i += 64) {
-    out.push(`0x${clean.slice(i, i + 64)}`);
-  }
-  return out;
-}
-
 function plaintextHashFromPublicInputs(
   publicInputs: string[],
   ethersLib: any,
@@ -408,8 +394,14 @@ async function main() {
     );
   }
 
-  const dkgPublicInputs = hexToBytes32Array(dkgPublicHex);
-  const decPublicInputs = hexToBytes32Array(decPublicHex);
+  const { proof: dkgProof, fields: dkgPublicInputs } = decodeBenchmarkProof(
+    dkgProofHex,
+    dkgPublicHex,
+  );
+  const { proof: decProof, fields: decPublicInputs } = decodeBenchmarkProof(
+    decProofHex,
+    decPublicHex,
+  );
   requirePublicInputLen(
     "dkg_aggregator",
     dkgPublicInputs,
@@ -481,7 +473,7 @@ async function main() {
 
   const dkgEncodedProof = abiCoder.encode(
     ["bytes", "bytes32[]"],
-    [dkgProofHex, dkgPublicInputs],
+    [dkgProof, dkgPublicInputs],
   );
   requirePublicInputLen(
     "dkg_aggregator committee_hash",
@@ -552,7 +544,7 @@ async function main() {
 
   const decEncodedProof = abiCoder.encode(
     ["bytes", "bytes32[]"],
-    [decProofHex, decPublicInputs],
+    [decProof, decPublicInputs],
   );
   const plaintextHash = plaintextHashFromPublicInputs(decPublicInputs, ethers);
   requirePublicInputLen(

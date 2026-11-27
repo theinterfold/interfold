@@ -78,6 +78,13 @@ async fn benchmark_trbfv_actor() -> Result<()> {
     trbfv::benchmark::run_from_env().await
 }
 
+#[actix::test]
+#[serial_test::serial]
+#[ignore = "local Anvil and full SS Minimum proofs; run by the request benchmark"]
+async fn benchmark_ss_cli_request() -> Result<()> {
+    trbfv::benchmark::run_cli_request().await
+}
+
 // ============================================================================
 // Networking and P2P Tests
 // ============================================================================

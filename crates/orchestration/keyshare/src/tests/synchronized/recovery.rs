@@ -605,25 +605,32 @@ fn signed_roster(setup: &Setup) -> Result<DkgCoordination> {
     )
 }
 
-async fn exercise(profile: BfvProfile, prover: Option<&ZkProver>) -> Result<()> {
+async fn exercise(
+    profile: BfvProfile,
+    prover: Option<&ZkProver>,
+    chain: Option<chain::Chain>,
+) -> Result<()> {
     let _exclusive = DISK_RECOVERY.lock().await;
     let mut ciphers = Vec::new();
     for owner in 0..3 {
         ciphers.push(cipher(owner).await?);
     }
-    let chain = if prover.is_some() {
-        Some(chain::Chain::start().await?)
-    } else {
-        None
+    let controller = chain
+        .as_ref()
+        .map_or(Address::repeat_byte(0x11), |chain| chain.controller);
+    let mut setup = match chain.as_ref().and_then(|chain| chain.cli.as_ref()) {
+        Some(request) => {
+            Setup::for_request(
+                ciphers,
+                controller,
+                profile,
+                request.id.clone(),
+                request.signers.clone(),
+            )
+            .await?
+        }
+        None => Setup::with_ciphers_at(ciphers, controller, profile).await?,
     };
-    let mut setup = Setup::with_ciphers_at(
-        ciphers,
-        chain
-            .as_ref()
-            .map_or(Address::repeat_byte(0x11), |chain| chain.controller),
-        profile,
-    )
-    .await?;
     let artifacts = artifacts(&mut setup, prover).await?;
     let mut plans = calculations(&setup)?;
     let mut successful = plans.clone();
@@ -1018,7 +1025,7 @@ async fn exercise(profile: BfvProfile, prover: Option<&ZkProver>) -> Result<()> 
 
 #[actix::test]
 async fn synchronized_disk_reopen_restores_actor_work_and_releases_rejected_slots() -> Result<()> {
-    exercise(PROFILE, None).await
+    exercise(PROFILE, None, None).await
 }
 
 #[actix::test]
@@ -1040,12 +1047,37 @@ async fn synchronized_disk_reopen_uses_real_proofs_and_restored_private_inputs()
         PROFILE
     };
     let (directory, prover) = real_prover(profile, &circuits)?;
-    if let Err(error) = exercise(profile, Some(&prover)).await {
+    async {
+        let chain = chain::Chain::start().await?;
+        exercise(profile, Some(&prover), Some(chain)).await
+    }
+    .await
+    .map_err(|error| {
         let evidence = directory.keep();
-        return Err(error.context(format!(
+        error.context(format!(
             "Proof artifacts retained at {}",
             evidence.display()
-        )));
-    }
-    Ok(())
+        ))
+    })
+}
+
+#[actix::test]
+#[ignore = "optimized local committee:new request with pinned synchronized candidates; use pnpm bench:circuits request"]
+async fn synchronized_cli_request_to_plaintext() -> Result<()> {
+    use e3_zk_prover::{BBPath, ZkBackend};
+    let profile: BfvProfile = std::env::var("E3_BENCHMARK_PROFILE")?.parse()?;
+    let artifacts = std::path::PathBuf::from(std::env::var("E3_BENCHMARK_ARTIFACTS")?);
+    let work = tempfile::tempdir()?;
+    let prover = ZkProver::new(&ZkBackend::new(
+        BBPath::Custom(std::env::var("E3_CUSTOM_BB")?.into()),
+        artifacts.clone(),
+        work.path().into(),
+    ));
+    let chain = chain::Chain::request(
+        profile,
+        &artifacts.join(profile.artifacts_dir_for_committee(COMMITTEE)?),
+        work.path(),
+    )
+    .await?;
+    exercise(profile, Some(&prover), Some(chain)).await
 }

@@ -247,6 +247,8 @@ pub(crate) struct Data {
     pub metadata: Value,
     pub integration: Value,
     pub gas: Value,
+    pub request: Value,
+    pub request_outcome: Value,
     pub files: Vec<String>,
 }
 pub(crate) fn load(input: &Path, summary: Option<&Path>, gas: Option<&Path>) -> Result<Data> {
@@ -258,10 +260,19 @@ pub(crate) fn load(input: &Path, summary: Option<&Path>, gas: Option<&Path>) -> 
     let base = if input.join("raw").is_dir()
         || input.join("benchmark_run_meta.json").exists()
         || input.join("integration_summary.json").exists()
+        || input.join("request_receipt.json").exists()
+        || input.join("request_outcome.json").exists()
     {
         input
     } else {
         input.parent().context("Raw directory has no parent")?
+    };
+    let receipt_path = base.join("request_receipt.json");
+    let request_outcome = optional_json(&base.join("request_outcome.json"))?;
+    let request = match optional_json(&receipt_path) {
+        // The saved validation error explains a truncated or unreadable receipt. Leave it on disk.
+        Err(_) if request_outcome["receipt_valid"] == false => Value::Null,
+        result => result?,
     };
     let mut leaves = Vec::new();
     let mut files = Vec::new();
@@ -273,6 +284,7 @@ pub(crate) fn load(input: &Path, summary: Option<&Path>, gas: Option<&Path>) -> 
                 .path()
                 .extension()
                 .is_some_and(|extension| extension == "json")
+                && path.path() != receipt_path
                 && (raw != input || !path.file_name().to_string_lossy().ends_with("summary.json"))
             {
                 let document = protocol::read_json(&path.path())?;
@@ -302,7 +314,13 @@ pub(crate) fn load(input: &Path, summary: Option<&Path>, gas: Option<&Path>) -> 
         integration = gas["integration_summary"].clone();
     }
     integration = protocol::summary(&integration).clone();
-    if leaves.is_empty() && metadata.is_null() && integration.is_null() && gas.is_null() {
+    if leaves.is_empty()
+        && metadata.is_null()
+        && integration.is_null()
+        && gas.is_null()
+        && request.is_null()
+        && request_outcome.is_null()
+    {
         bail!("No saved benchmark records in {}", input.display());
     }
     Ok(Data {
@@ -310,6 +328,8 @@ pub(crate) fn load(input: &Path, summary: Option<&Path>, gas: Option<&Path>) -> 
         metadata,
         integration,
         gas,
+        request,
+        request_outcome,
         files,
     })
 }
@@ -328,6 +348,34 @@ fn settings(out: &mut String, title: &str, values: &Value) {
 pub(crate) fn render(data: &Data) -> Result<String> {
     let mut out = String::from("# Circuit and protocol benchmarks\n\n## Run configuration\n");
     settings(&mut out, "Saved benchmark settings", &data.metadata);
+    settings(&mut out, "CLI request outcome", &data.request_outcome);
+    settings(
+        &mut out,
+        "Local CLI request and mined receipts",
+        &data.request,
+    );
+    if !data.request.is_null() {
+        let synchronized = data.request["profile"]
+            .as_str()
+            .is_some_and(|profile| profile.starts_with("sync-"));
+        let parties = if synchronized {
+            "Designated SyncDec owners"
+        } else {
+            "SS parties in the accepted decryption proof (zero-based slots)"
+        };
+        out += &format!("\n{parties}: `{}`. The submission clock starts at the CLI's request call and stops at the observed plaintext receipt. DKG transaction gas excludes key chunks. Standalone verifier estimates, when present, are separate calls.\n", data.request["owners"]);
+        let stamp = &data.metadata["artifact_stamp"];
+        if synchronized {
+            for graph in ["dkg", "decryption"] {
+                settings(&mut out, &format!("{graph} candidate"), &stamp[graph]);
+            }
+        } else {
+            settings(&mut out, "SS archive source stamp", stamp);
+        }
+    }
+    if !data.request.is_null() || !data.request_outcome.is_null() {
+        return Ok(out);
+    }
     settings(
         &mut out,
         "Observed integration configuration",
@@ -396,8 +444,13 @@ pub(crate) fn render(data: &Data) -> Result<String> {
     }
     ude_totals(&mut out, &data.leaves);
     artifact_table(&mut out, data)?;
-    phase_table(&mut out, data);
-    integration_tables(&mut out, &data.integration);
+    let mode = data.metadata["benchmark_mode"]
+        .as_str()
+        .or_else(|| data.integration["benchmark_config"]["mode"].as_str());
+    if !matches!(mode, Some("sync-insecure-64" | "sync-secure-8192")) {
+        phase_table(&mut out, data);
+        integration_tables(&mut out, &data.integration);
+    }
     out += "\n## Artifact provenance\n\n| Circuit | Compiled SHA-256 | VK SHA-256 | Artifact source |\n|---|---|---|---|\n";
     for leaf in &data.leaves {
         out += &format!(
@@ -433,13 +486,17 @@ fn ude_totals(out: &mut String, leaves: &[Leaf]) {
 }
 
 fn artifact_table(out: &mut String, data: &Data) -> Result<()> {
-    *out += "\n## On-chain artifacts\n\n| Artifact | Proof bytes | Public-input bytes | Verifier gas | Calldata gas | Total gas |\n|---|---:|---:|---:|---:|---:|\n";
+    let decryption_only = data.gas["scope"] == "synchronized-decryption";
+    *out += "\n## On-chain artifacts\n\n| Artifact | Proof bytes | Public-input bytes | Verifier gas | Calldata gas |\n|---|---:|---:|---:|---:|\n";
     let mut missing = 0;
     for (label, key, folded_key) in [
         ("Π_DKG", "dkg", "dkg_aggregator"),
         ("Π_user", "user", ""),
         ("Π_dec", "dec", "decryption_aggregator"),
     ] {
+        if decryption_only && key != "dec" {
+            continue;
+        }
         let verify = data.gas["verify_gas"][key].as_u64();
         let mut sizes = (
             data.gas["artifacts"][key]["proof_size_bytes"]
@@ -467,21 +524,19 @@ fn artifact_table(out: &mut String, data: &Data) -> Result<()> {
                 sizes = (wrapper.proof_bytes, wrapper.public_bytes, wrapper.calldata);
             }
         }
-        let total = verify.zip(sizes.2).map(|(a, b)| a + b);
         *out += &format!(
-            "| {label} | {} | {} | {} | {} | {} |\n",
+            "| {label} | {} | {} | {} | {} |\n",
             number(sizes.0),
             number(sizes.1),
             number(verify),
-            number(sizes.2),
-            number(total)
+            number(sizes.2)
         );
         if verify.is_none() {
             missing += 1;
         }
     }
     *out += &format!(
-        "\nVerifier gas: {}. Calldata-only values do not establish measured verifier gas.\n",
+        "\nVerifier gas: {}. The standalone call estimate includes transaction intrinsic gas. Calldata gas counts just the raw proof and public-input bytes; it is not an additional fee or a publication receipt.\n",
         if missing == 0
             && data.gas["complete"] != false
             && !data.gas["test_exit_code"]

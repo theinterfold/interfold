@@ -757,6 +757,13 @@ export const readDeploymentArgs = (
   contractName: string,
   chain: string,
 ): DeploymentArgs | undefined => {
+  if (chain === "benchmark") {
+    const file = process.env.E3_BENCHMARK_DEPLOYMENTS;
+    if (!file) throw new Error("Missing isolated benchmark deployments");
+    return (JSON.parse(fs.readFileSync(file, "utf8")) as Deployments)[chain]?.[
+      contractName
+    ];
+  }
   if (!fs.existsSync(deploymentsFile)) {
     // create a new file
     fs.writeFileSync(deploymentsFile, JSON.stringify({}, null, 2));

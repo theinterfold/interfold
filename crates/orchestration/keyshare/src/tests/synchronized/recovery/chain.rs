@@ -47,6 +47,7 @@ pub(super) struct Chain {
     anvil: AnvilInstance,
     provider: DynProvider,
     pub controller: Address,
+    pub cli: Option<cli::CliRequest>,
 }
 
 fn package() -> PathBuf {
@@ -160,6 +161,7 @@ impl Chain {
             anvil,
             provider,
             controller,
+            cli: None,
         })
     }
 
@@ -230,24 +232,12 @@ impl Chain {
         Ok(events)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn qualify(
+    async fn seeded_history(
         &self,
-        recovered: &[Recovered],
-        recipients: &BTreeMap<u32, SynchronizedRecipientProofReady>,
-        late: &RecipientJoinWork,
-        planned: &super::publication::PlannedPublication,
-        public_key: &PublicKey,
-        proof: &Proof,
+        selected: &CiphernodeSelected,
+        committee: &[Address],
         directory: &Path,
-        signers: &[PrivateKeySigner],
-        prover: &ZkProver,
-    ) -> Result<()> {
-        let selected = recovered[0]
-            .0
-            .ciphernode_selected
-            .as_ref()
-            .context("missing selection")?;
+    ) -> Result<(Address, Address, Vec<InterfoldEvent<Unsequenced>>)> {
         let id = &selected.e3_id;
         let numeric_id: U256 = id.clone().try_into()?;
         let mut libraries = HashMap::new();
@@ -320,17 +310,11 @@ impl Chain {
             .get_receipt()
             .await?;
         ensure!(configured.status());
-        let committee = selected
-            .committee
-            .iter()
-            .map(|member| member.parse::<Address>())
-            .collect::<Result<Vec<_>, _>>()?;
         let receipt = FixtureRegistry::new(registry, &self.provider)
             .seed(
                 numeric_id,
                 self.controller,
                 committee
-                    .clone()
                     .try_into()
                     .map_err(|_| anyhow::anyhow!("N differs"))?,
             )
@@ -372,6 +356,38 @@ impl Chain {
             receipt.block_number,
             EventSource::Evm,
         ));
+        Ok((registry, wrapper, history))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn qualify(
+        &self,
+        recovered: &[Recovered],
+        recipients: &BTreeMap<u32, SynchronizedRecipientProofReady>,
+        late: &RecipientJoinWork,
+        planned: &super::publication::PlannedPublication,
+        public_key: &PublicKey,
+        proof: &Proof,
+        directory: &Path,
+        signers: &[PrivateKeySigner],
+        prover: &ZkProver,
+    ) -> Result<()> {
+        let selected = recovered[0]
+            .0
+            .ciphernode_selected
+            .as_ref()
+            .context("missing selection")?;
+        let id = &selected.e3_id;
+        let numeric_id: U256 = id.clone().try_into()?;
+        let committee = selected
+            .committee
+            .iter()
+            .map(|member| member.parse::<Address>())
+            .collect::<Result<Vec<_>, _>>()?;
+        let (registry, wrapper, mut history) = match &self.cli {
+            Some(cli) => (cli.registry, cli.dkg, cli.history.clone()),
+            None => self.seeded_history(selected, &committee, directory).await?,
+        };
         let prefix =
             EventSystem::new()
                 .with_fresh_bus()
@@ -492,35 +508,37 @@ impl Chain {
         let contract = ISynchronizedDkgPublication::new(registry, &self.provider);
         // A second finalized E3 with the same committee, profile and verifier cannot reuse
         // this publication. No missing verifier, different roster or absent request explains it.
-        let other = numeric_id + U256::from(1);
-        let configured = FixtureController::new(self.controller, &self.provider)
-            .configure(other, registry, wrapper, selected.crypto_config_id.into())
-            .send()
-            .await?
-            .get_receipt()
-            .await?;
-        let finalized = FixtureRegistry::new(registry, &self.provider)
-            .seed(
-                other,
-                self.controller,
-                committee.clone().try_into().unwrap(),
-            )
-            .send()
-            .await?
-            .get_receipt()
-            .await?;
-        ensure!(configured.status() && finalized.status());
-        let error = contract
-            .publishSynchronizedCommittee(other, publication.clone())
-            .call()
-            .await
-            .expect_err("a different finalized E3 accepted the signed publication");
-        ensure!(
-            error
-                .as_decoded_error::<ISynchronizedDkgPublication::InvalidPublication>()
-                .is_some(),
-            "{error:#}"
-        );
+        if self.cli.is_none() {
+            let other = numeric_id + U256::from(1);
+            let configured = FixtureController::new(self.controller, &self.provider)
+                .configure(other, registry, wrapper, selected.crypto_config_id.into())
+                .send()
+                .await?
+                .get_receipt()
+                .await?;
+            let finalized = FixtureRegistry::new(registry, &self.provider)
+                .seed(
+                    other,
+                    self.controller,
+                    committee.clone().try_into().unwrap(),
+                )
+                .send()
+                .await?
+                .get_receipt()
+                .await?;
+            ensure!(configured.status() && finalized.status());
+            let error = contract
+                .publishSynchronizedCommittee(other, publication.clone())
+                .call()
+                .await
+                .expect_err("a different finalized E3 accepted the signed publication");
+            ensure!(
+                error
+                    .as_decoded_error::<ISynchronizedDkgPublication::InvalidPublication>()
+                    .is_some(),
+                "{error:#}"
+            );
+        }
         if let Some(export) = std::env::var_os("E3_SYNC_OTHER_PROFILE_EXPORT") {
             let dkg: Value =
                 serde_json::from_slice(&fs::read(Path::new(&export).join("publication.json"))?)?;
@@ -597,6 +615,7 @@ impl Chain {
             &pending[0],
         )
         .await?;
+        let published_key = e3_test_support::BenchmarkInstant::now();
         ensure!(
             receipts.len() == 2,
             "expected the proof receipt and final key-chunk receipt"
@@ -754,12 +773,18 @@ impl Chain {
             history,
             public_key,
             directory,
+            cli::Publication {
+                receipt: &receipts[0],
+                observed: published_key,
+            },
         ))
         .await?;
         Ok(())
     }
 }
 
+#[path = "cli.rs"]
+mod cli;
 #[path = "decryption.rs"]
 mod decryption;
 #[path = "late_setup.rs"]
