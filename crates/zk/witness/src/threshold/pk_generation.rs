@@ -6,6 +6,9 @@
 
 //! Circuit input data, witness preparation, and canonical Noir encoding.
 
+mod lbfv;
+pub use lbfv::*;
+
 use crate::encoding::crt_polynomial_to_toml_json;
 use crate::encoding::polynomial_to_toml_json;
 use crate::negacyclic::{exact_reduction_quotient, product_for_fold};

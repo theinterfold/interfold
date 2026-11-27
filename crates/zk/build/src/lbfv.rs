@@ -50,7 +50,9 @@ pub fn public_randomness(
             .map(|row| {
                 format!(
                     "    {},",
-                    e3_zk_witness::commitments::compute_pk_aggregation_pk1_commitment(row, bit)
+                    e3_zk_witness::commitments::compute_pk_aggregation_component_commitment(
+                        row, bit
+                    )
                 )
             })
             .collect::<Vec<_>>()

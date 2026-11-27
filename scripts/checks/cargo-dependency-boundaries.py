@@ -50,6 +50,7 @@ SHARED = {
     "e3-polynomial",
     "e3-polynomial-fhe",
     "e3-committee",
+    "e3-committee-hash",
     "e3-safe",
 }
 # The `interfold` binary hosts the node and the project commands. Those commands run the project's

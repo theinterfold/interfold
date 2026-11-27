@@ -6,8 +6,8 @@ This crate owns circuit input data, witness preparation, commitments, and canoni
 encoding. Each family's `Inputs::compute` takes its configuration from `e3-zk-config`. It does not
 construct a second configuration from a preset.
 
-`WitnessError` covers preparation, conversion, and commitment failures. Commitment packing stays
-private inside `commitments.rs`. The private `negacyclic` module owns the circuit-specific fold. It
+`WitnessError` covers preparation, conversion, and commitment failures. `packing` owns the shared
+coefficient/carrier encoding. The private `negacyclic` module owns the circuit-specific fold. It
 pads zero products to the circuit's `2N-1` shape. `Polynomial::mul` retains its canonical
 single-coefficient zero result. Preparation checks polynomial shapes before indexing or pairing
 limbs and returns errors for invalid shapes or inexact quotient division.
@@ -38,6 +38,12 @@ ciphertext and its `EncryptionIntermediates`; repeated preparation from the same
 deterministic. `encrypt_and_prepare` encrypts once and returns `(Ciphertext, Inputs)`. BFV-client
 and CRISP serialize that ciphertext only at their output boundaries. The ct0 quotient includes the
 lifted `e0` correction; ct1 retains its separate `r_ct1` JSON key.
+
+Chunked user encryption retains separate `r1is`/`p1is` and component commitments and takes the
+`EncryptionIntermediates` of the ciphertext it prepares. It preserves natural coefficient order,
+centered commitment openings, and lifted smudging quotients. The l-BFV PK/RLK row adapters bind
+their inputs to the proof session, finalized party and gadget row. They check every peer share
+against the preset's fixed CRS and URS.
 
 The normal dependency points from witness to config. Config does not depend on witness or samples.
 Noir execution and proving belong to `e3-zk-prover`. Artifact file writes belong to the unpublished

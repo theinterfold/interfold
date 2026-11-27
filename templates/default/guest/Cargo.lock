@@ -1112,10 +1112,15 @@ version = "0.20.0"
 dependencies = [
  "anyhow",
  "e3-fhe-params",
+ "e3-polynomial",
+ "e3-polynomial-fhe",
  "e3-zk-config",
  "e3-zk-witness",
  "fhe",
+ "fhe-math",
  "fhe-traits",
+ "num-bigint 0.5.1",
+ "prost",
  "rand 0.9.5",
  "thiserror 1.0.69",
 ]
@@ -1125,6 +1130,16 @@ name = "e3-committee"
 version = "0.20.0"
 dependencies = [
  "anyhow",
+ "serde",
+]
+
+[[package]]
+name = "e3-committee-hash"
+version = "0.20.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "hex",
  "serde",
 ]
 
@@ -1261,10 +1276,12 @@ dependencies = [
 name = "e3-zk-witness"
 version = "0.20.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "e3-committee",
+ "e3-committee-hash",
  "e3-fhe-params",
  "e3-polynomial",
  "e3-polynomial-fhe",

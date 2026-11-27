@@ -157,6 +157,25 @@ pub(crate) fn fold_negacyclic(poly: &Polynomial, n: usize) -> Polynomial {
     Polynomial::new(out)
 }
 
+/// Independent long division by the monic polynomial X^N + 1, for tests that restate the fold.
+#[cfg(test)]
+pub(crate) fn reduce_reference(poly: &Polynomial, n: usize) -> Polynomial {
+    let mut divisor = vec![BigInt::zero(); n + 1];
+    divisor[0] = BigInt::from(1);
+    divisor[n] = BigInt::from(1);
+    let mut remainder = poly.coefficients().to_vec();
+    for i in 0..remainder.len().saturating_sub(n) {
+        let leading = remainder[i].clone();
+        for (j, coefficient) in divisor.iter().enumerate() {
+            remainder[i + j] -= &leading * coefficient;
+        }
+    }
+    let mut coefficients = vec![BigInt::zero(); n];
+    let tail_len = remainder.len().min(n);
+    coefficients[n - tail_len..].clone_from_slice(&remainder[remainder.len() - tail_len..]);
+    Polynomial::new(coefficients)
+}
+
 /// Fold the integer expression and solve `actual = reduced + qi * quotient` exactly.
 pub(crate) fn exact_reduction_quotient(
     actual: &Polynomial,
@@ -289,23 +308,5 @@ mod tests {
         let key = Polynomial::new((1..=n as i64).map(BigInt::from).collect());
         assert!(ntt_negacyclic_mul(&key, &zero, n).is_none());
         assert_eq!(negacyclic_mul_exact(&key, &zero, n), zero);
-    }
-
-    /// Independent long division by the monic polynomial X^N + 1.
-    fn reduce_reference(poly: &Polynomial, n: usize) -> Polynomial {
-        let mut divisor = vec![BigInt::zero(); n + 1];
-        divisor[0] = BigInt::from(1);
-        divisor[n] = BigInt::from(1);
-        let mut remainder = poly.coefficients().to_vec();
-        for i in 0..remainder.len().saturating_sub(n) {
-            let leading = remainder[i].clone();
-            for (j, coefficient) in divisor.iter().enumerate() {
-                remainder[i + j] -= &leading * coefficient;
-            }
-        }
-        let mut coefficients = vec![BigInt::zero(); n];
-        let tail_len = remainder.len().min(n);
-        coefficients[n - tail_len..].clone_from_slice(&remainder[remainder.len() - tail_len..]);
-        Polynomial::new(coefficients)
     }
 }
