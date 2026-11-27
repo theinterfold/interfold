@@ -127,6 +127,11 @@ shows the values for the BFV scheme (`keccak256("fhe.rs:BFV")`) at block 26,221,
   proof.
 - Each router has three routes (`routeCount()`, `routeAt(index)`). All routes point to
   `BfvDecryptionVerifier` or `BfvPkVerifier` contracts.
+- A router is built with the `CiphernodeRegistry` address (`ciphernodeRegistry()`), the verifier
+  list, and one expected parameter set per verifier. Each route record holds the verifier, its
+  expected public-input length, its nodes-fold key hash and its `expectedParamSet`; `routeAt(index)`
+  returns all four. The router reads the E3's parameter set from the registry's Interfold contract
+  and accepts only a route whose `expectedParamSet` matches it.
 - `mainnet-protocol.deployment.json` records these verifiers. Its `bfvVerifierRoutes` field lists
   the three routes, with the `BfvDecryptionVerifier` and the `BfvPkVerifier` of each route.
 
@@ -237,6 +242,11 @@ the BFV scheme (`keccak256("fhe.rs:BFV")`).
 - Each router has six routes (`routeCount()`, `routeAt(index)`). The routes cover the `insecure-64`
   preset (parameter set 0) and the `secure-8192` preset (parameter set 2), each with the three
   committee sizes. Every route points to a `BfvDecryptionVerifier` or a `BfvPkVerifier` contract.
+- A router is built with the `CiphernodeRegistry` address (`ciphernodeRegistry()`), the verifier
+  list, and one expected parameter set per verifier. Each route record holds the verifier, its
+  expected public-input length, its nodes-fold key hash and its `expectedParamSet`; `routeAt(index)`
+  returns all four. The router reads the E3's parameter set from the registry's Interfold contract
+  and accepts only a route whose `expectedParamSet` matches it.
 - `sepolia-protocol.deployment.json` records these verifiers. Its `bfvVerifierRoutes` field lists
   the six routes, with the `BfvDecryptionVerifier` and the `BfvPkVerifier` of each route.
 

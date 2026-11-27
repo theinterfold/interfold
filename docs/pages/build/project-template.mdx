@@ -330,10 +330,11 @@ defaults:
 (default: the Anvil test mnemonic), `PRIVATE_KEY`, `RPC_URL`, and block explorer API keys, for
 example `ETHERSCAN_API_KEY`.
 
-**Dev scripts.** `scripts/lib/dev_config.sh` reads `BFV_PRESET` (`insecure-64` or `secure-8192`,
-default `insecure-64`) and `COMMITTEE` (default `minimum`). These variables have an effect only when
-the template is inside an Interfold repository checkout, where the scripts build the circuits.
-`scripts/anvil-automine.mjs` reads `ANVIL_RPC_URL` (default `http://127.0.0.1:8545`).
+**Dev scripts.** `scripts/lib/dev_config.sh` reads `BFV_PRESET` (`insecure-64`, `insecure-lbfv`,
+`secure-8192`, or `secure-16384`, default `insecure-64`) and `COMMITTEE` (default `minimum`). These
+variables have an effect only when the template is inside an Interfold repository checkout, where
+the scripts build the circuits. `scripts/anvil-automine.mjs` reads `ANVIL_RPC_URL` (default
+`http://127.0.0.1:8545`).
 
 ## Where to change things
 

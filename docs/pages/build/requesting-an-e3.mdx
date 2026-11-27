@@ -308,24 +308,26 @@ The committee stays viable while at least H members stay active. Decryption need
 
 The parameter set selects the BFV parameters. The SDK preset must match it.
 
-| `paramSet` | SDK preset name         | Ring degree | Use                                        |
-| ---------- | ----------------------- | ----------- | ------------------------------------------ |
-| 4          | `INSECURE_THRESHOLD_64` | 64          | Tests only. It has no production security. |
-| 3          | `SECURE_THRESHOLD_8192` | 8192        | Production.                                |
+| `paramSet` | SDK preset name           | Ring degree | Use                                        |
+| ---------- | ------------------------- | ----------- | ------------------------------------------ |
+| 4          | `INSECURE_THRESHOLD_64`   | 64          | Tests only. It has no production security. |
+| 3          | `SECURE_THRESHOLD_8192`   | 8192        | Production.                                |
+| 5          | `SECURE_THRESHOLD_16384`  | 16384       | l-BFV path, Sepolia and local chains only. |
+| 6          | `INSECURE_THRESHOLD_LBFV` | 128         | Tests only. It has no production security. |
 
 Each network accepts different pairs:
 
-| Network                                | Parameter sets | Committee sizes                                                  |
-| -------------------------------------- | -------------- | ---------------------------------------------------------------- |
-| Ethereum mainnet                       | 3 only         | `Small` only. The launch pricing sets `minCommitteeSize` to 19.  |
-| Sepolia, local chains (31337 and 1337) | 3 and 4        | All four sizes, when the deployment configures their thresholds. |
+| Network                                | Parameter sets | Committee sizes                                                                                                                         |
+| -------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Ethereum mainnet                       | 3 only         | `Small` only. The launch pricing sets `minCommitteeSize` to 19.                                                                         |
+| Sepolia, local chains (31337 and 1337) | 3, 4, 5, and 6 | All four sizes for sets 3 and 4, and `Minimum`, `Micro`, and `Small` for sets 5 and 6, when the deployment configures their thresholds. |
 
 A parameter set must also be registered on the chain. `paramSetRegistry(paramSet)` returns empty
 bytes for an unregistered set. The local deploy script registers the set of the active circuit build
 (set 4 in the checked-in configuration). With mock verifiers, it configures thresholds for all four
 sizes. With `ENABLE_ZK_VERIFICATION=true`, it configures thresholds only for the committee of the
 active circuit build, because its verifiers check only that committee. Indices 0, 1, and 2 stay in
-the registry for older E3s; new requests use index 3 or 4.
+the registry for older E3s; new requests use index 3, 4, 5, or 6.
 
 Use these rules to choose:
 

@@ -127,6 +127,26 @@ pub(crate) fn folded(document: &serde_json::Value) -> Result<FoldedArtifacts> {
     Ok(artifacts)
 }
 
+/// The artifact archive that a benchmark label runs on, or `None` for an unknown label.
+fn archive_of(label: &str) -> Option<&'static str> {
+    match label {
+        "insecure" | "insecure-64" => Some("insecure-64"),
+        "insecure-lbfv" => Some("insecure-lbfv"),
+        "secure" | "secure-8192" => Some("secure-8192"),
+        "secure-16384" => Some("secure-16384"),
+        _ => None,
+    }
+}
+
+/// The benchmark mode of an artifact archive.
+fn mode_of(archive: &str) -> &'static str {
+    if archive.starts_with("secure-") {
+        "secure"
+    } else {
+        "insecure"
+    }
+}
+
 pub(crate) fn configuration(
     document: &serde_json::Value,
     mode: Option<&str>,
@@ -134,13 +154,30 @@ pub(crate) fn configuration(
     jobs: usize,
 ) -> Result<Configuration> {
     let cfg = &summary(document)["benchmark_config"];
-    let stored_mode = cfg["mode"]
+    // An export names its archive in `bfv_preset_subdir`; its `mode` is the scenario label, which
+    // is `insecure`/`secure` for trBFV and the archive's name for an l-BFV run.
+    let labelled = cfg["mode"]
         .as_str()
-        .or_else(|| match cfg["bfv_preset_subdir"].as_str() {
-            Some("insecure-64") => Some("insecure"),
-            Some("secure-8192") => Some("secure"),
-            _ => None,
-        });
+        .map(|label| {
+            archive_of(label).with_context(|| format!("Exported mode {label} is not supported"))
+        })
+        .transpose()?;
+    let subdir = cfg["bfv_preset_subdir"]
+        .as_str()
+        .map(|name| {
+            archive_of(name)
+                .filter(|archive| *archive == name)
+                .with_context(|| format!("Exported preset {name} is not an artifact archive"))
+        })
+        .transpose()?;
+    if labelled
+        .zip(subdir)
+        .is_some_and(|(label, subdir)| label != subdir)
+    {
+        bail!("Exported preset disagrees with its benchmark mode");
+    }
+    let exported = subdir.or(labelled);
+    let stored_mode = exported.map(mode_of);
     if let (Some(requested), Some(stored)) = (mode, stored_mode) {
         if requested != stored {
             bail!("Replay mode {requested} disagrees with exported mode {stored}");
@@ -149,17 +186,12 @@ pub(crate) fn configuration(
     let mode = mode
         .or(stored_mode)
         .context("Specify --mode for an export without preset metadata")?;
-    let preset = match mode {
+    let default_archive = match mode {
         "insecure" => "insecure-64",
         "secure" => "secure-8192",
         _ => bail!("Mode must be insecure or secure"),
     };
-    if cfg["bfv_preset_subdir"]
-        .as_str()
-        .is_some_and(|stored| stored != preset)
-    {
-        bail!("Exported preset disagrees with its benchmark mode");
-    }
+    let preset = exported.unwrap_or(default_archive);
     let stored_committee = if let Some(name) = cfg["committee"].as_str() {
         Some(name.parse::<CiphernodesCommitteeSize>()?)
     } else {
@@ -231,10 +263,7 @@ pub(crate) fn validate_active(root: &Path, cfg: &Configuration) -> Result<serde_
     if manifest["algorithm"] != "sha256" {
         bail!("Artifact manifest must use sha256");
     }
-    let required: Vec<String> = serde_json::from_slice(&fs::read(
-        root.join("crates/zk/prover/required-artifacts.json"),
-    )?)?;
-    for artifact in required {
+    for artifact in e3_zk_build::required_artifacts(&cfg.preset) {
         let relative = format!("{}/{committee}/{artifact}", cfg.preset);
         let expected = manifest["files"][&relative]
             .as_str()
@@ -244,6 +273,15 @@ pub(crate) fn validate_active(root: &Path, cfg: &Configuration) -> Result<serde_
         }
     }
     Ok(stamp)
+}
+
+/// The scenario runner picks its parameter family from `BENCHMARK_MODE` alone: `insecure` and
+/// `secure` run trBFV, and the l-BFV presets are named by their archive.
+fn scenario_label(cfg: &Configuration) -> &str {
+    match cfg.preset.as_str() {
+        "insecure-lbfv" | "secure-16384" => &cfg.preset,
+        _ => &cfg.mode,
+    }
 }
 
 pub(crate) fn integration_command(
@@ -273,7 +311,7 @@ pub(crate) fn integration_command(
             "--test-threads=1",
         ])
         .current_dir(root)
-        .env("BENCHMARK_MODE", &cfg.mode)
+        .env("BENCHMARK_MODE", scenario_label(cfg))
         .env("E3_CUSTOM_BB", bb)
         .env("CIPHERNODE_SKIP_PROOF_AGGREGATION", "false")
         .env("BENCHMARK_MULTITHREAD_JOBS", cfg.jobs.to_string())
@@ -300,8 +338,9 @@ pub(crate) fn evm_command(
             "hardhat",
             "run",
             "scripts/benchmarkGasFromRaw.ts",
+            // Chain 1, the chain the integration run binds its V2 DKG proof to.
             "--network",
-            "hardhat",
+            "benchmark",
         ])
         .current_dir(root.join("packages/interfold-contracts"))
         .env("BENCHMARK_RAW_DIR", output.join("raw"))
@@ -358,12 +397,19 @@ pub(crate) fn collect(
             )?;
             let export = (|| -> Result<serde_json::Value> {
                 let document = read_json(&output.join("integration_summary.json"))?;
-                configuration(
+                let exported = configuration(
                     &document,
                     Some(&cfg.mode),
                     Some(&cfg.committee.to_string()),
                     cfg.jobs,
                 )?;
+                if exported.preset != cfg.preset {
+                    bail!(
+                        "Integration ran the {} scenario, not {}",
+                        exported.preset,
+                        cfg.preset
+                    );
+                }
                 if summary(&document)["benchmark_config"]["proof_aggregation_enabled"] != true {
                     bail!("Integration export has proof aggregation disabled");
                 }
@@ -387,10 +433,13 @@ pub(crate) fn collect(
             write_json(&output.join("integration_summary.json"), summary(&document))?;
         }
         let folded_path = output.join("folded_artifacts.json");
-        write_json(
-            &folded_path,
-            &serde_json::json!({ "preset": cfg.preset, "committee": cfg.committee.to_string(), "folded_artifacts": artifacts }),
-        )?;
+        let mut folded_document = serde_json::json!({ "preset": cfg.preset, "committee": cfg.committee.to_string(), "folded_artifacts": artifacts });
+        // A V2 DKG proof is bound to the run's chain, E3 and committee; the replay needs them.
+        let replay_context = &summary(&document)["replay_context"];
+        if !replay_context.is_null() {
+            folded_document["replay_context"] = replay_context.clone();
+        }
+        write_json(&folded_path, &folded_document)?;
         if !gas {
             results.complete = true;
             return Ok(());

@@ -111,12 +111,12 @@ wallet. See [Rewards](/operate/exits-and-slashing#rewards).
 
 The Events view gives each event a level:
 
-| Level    | Events                                                                                                                                                                                                                               |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Errors   | `InterfoldError`, `E3Failed`, `CommitteeFormationFailed`, `ProofVerificationFailed`, `SignedProofFailed`, `ThresholdShareCollectionFailed`, `EncryptionKeyCollectionFailed`, `ComputeRequestError`, `CommitmentConsistencyViolation` |
-| Warnings | `ProofFailureAccusation`, `AccusationVote`, `AccusationQuorumReached`, `SlashExecuted`, `CommitteeMemberExpelled`, and unknown EVM logs                                                                                              |
-| Info     | Other events that belong to an E3 phase                                                                                                                                                                                              |
-| Debug    | All other events                                                                                                                                                                                                                     |
+| Level    | Events                                                                                                                                                                                                                                                                     |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Errors   | `InterfoldError`, `E3Failed`, `CommitteeFormationFailed`, `ProofVerificationFailed`, `SignedProofFailed`, `ThresholdShareCollectionFailed`, `EncryptionKeyCollectionFailed`, `ComputeRequestError`, `CommitmentConsistencyViolation`, `LbfvCommitmentConsistencyViolation` |
+| Warnings | `ProofFailureAccusation`, `LbfvProofFailureAccusation`, `AccusationVote`, `AccusationQuorumReached`, `LbfvAccusationQuorumReached`, `SlashExecuted`, `CommitteeMemberExpelled`, and unknown EVM logs                                                                       |
+| Info     | Other events that belong to an E3 phase                                                                                                                                                                                                                                    |
+| Debug    | All other events                                                                                                                                                                                                                                                           |
 
 When a refresh fails, the dashboard keeps the last data and shows `Live refresh paused` with the
 error.

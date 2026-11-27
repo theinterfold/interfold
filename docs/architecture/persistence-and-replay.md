@@ -337,6 +337,21 @@ through `AsBytesSerde`. A readable JSON value does not establish binary-layout c
 
 ## Schemas and validation
 
+The l-BFV path saves its accusation state in separate records, so the trBFV records keep their
+layout: `//accusation_votes_lbfv/v1/{e3_id}`, `//commitment_consistency_lbfv/v1/{e3_id}` and
+`//evm_writers/slashing/{chain_id}/lbfv_recovery/v1`. A trBFV E3 never writes these records. An
+l-BFV E3 never writes the trBFV records.
+
+l-BFV work also uses versioned sidecars: `//threshold_keyshare_lbfv_generation/v1/{e3_id}` retains
+the encrypted seed and completed publication bundle; `//publickey_lbfv_collection/v1/` retains
+manifests, content-addressed documents, attempts, absolute retries, candidate IDs and sealed
+commitments; `//publickey_lbfv_aggregation/v1/` retains accepted contribution documents and both
+operational keys before final-proof dispatch; `//publickey_lbfv_publication/v1/` retains the local
+publication intent before emission. Publication schema 2 rejects pending version-2 key envelopes.
+Persist one immutable aggregation failure before publishing it; recovery of that failure must not
+resume rows, folds, final proofs, or publication. Terminal cleanup does not erase old secret-bearing
+protocol-event records from historical logs.
+
 Persisted snapshots/events are positional bincode; gossip embeds bincode in a versioned envelope.
 Only some types have per-type versions (for example BondOwnerState). Until a tested per-type
 migration exists, every incompatible persisted layout/event variant change, even an added field,
@@ -359,8 +374,9 @@ rollout. Rust type compatibility is not a migration strategy.
 
 `BfvPreset` also persists enum discriminants. Under schema 8, variants 0 and 1 mean the degree-64
 insecure presets. Degree-512 stores used those same positions and marker, so preflight cannot detect
-the changed meaning. Testnet nodes must reset state against a fresh testnet stack, as
-[upgrades](upgrades.md#insecure-testnet-preset-reset) describes. Future changes to a persisted
+the changed meaning. The degree-128 and l-BFV variants are appended after the earlier variants, so
+no existing position changes meaning. Testnet nodes must reset state against a fresh testnet stack,
+as [upgrades](upgrades.md#insecure-testnet-preset-reset) describes. Future changes to a persisted
 discriminant's parameters require a schema increase or an explicit, coordinated reset requirement.
 
 `CircuitName` is encoded by position in every persisted or gossiped bincode encoding: the event log,

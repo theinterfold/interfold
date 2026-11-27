@@ -25,6 +25,8 @@ impl Case {
                 CircuitName::ESmShareComputation,
                 CircuitName::ESmShareComputationChain,
                 CircuitName::ESmShareComputationChainLast,
+                CircuitName::SkShareComputationChunk,
+                CircuitName::ESmShareComputationChunk,
                 CircuitName::ShareEncryption,
                 CircuitName::DkgShareDecryption,
                 CircuitName::DkgShareDecryptionLimb0,
@@ -32,20 +34,34 @@ impl Case {
                 CircuitName::DkgShareDecryptionLimb2,
                 CircuitName::PkGeneration,
                 CircuitName::PkAggregation,
+                CircuitName::LbfvPkGeneration,
+                CircuitName::LbfvPkAggregation,
+                CircuitName::RlkGeneration,
+                CircuitName::RlkAggregation,
                 CircuitName::ThresholdShareDecryption,
                 CircuitName::DecryptedSharesAggregation,
+                CircuitName::DecryptedSharesAggregationWide,
             ]
             .into_iter()
-            .find(|name| name.dir_path() == path)
+            .find(|name| name.package_path() == path)
             .map(Self::Named)
             .ok_or_else(|| anyhow::anyhow!("Unsupported leaf circuit: {path}")),
         }
     }
+    /// The circuit's package under `circuits/bin`, which is also its name in the benchmark config.
     pub fn path(self) -> String {
         match self {
-            Self::Named(name) => name.dir_path(),
+            Self::Named(name) => name.package_path(),
             Self::Config => "config".into(),
             Self::Ude => "threshold/user_data_encryption".into(),
+        }
+    }
+    /// Where the circuit's artifacts sit below a variant directory: the l-BFV circuits are
+    /// published flat, like every other circuit.
+    pub fn artifact_path(self) -> String {
+        match self {
+            Self::Named(name) => name.dir_path(),
+            other => other.path(),
         }
     }
     pub fn name(self) -> String {
@@ -82,7 +98,13 @@ pub(crate) fn variant(name: &str) -> Result<CircuitVariant> {
 #[serde(untagged)]
 pub(crate) enum Entry {
     Path(String),
-    Restricted { name: String, modes: Vec<String> },
+    Restricted {
+        name: String,
+        #[serde(default)]
+        modes: Vec<String>,
+        #[serde(default)]
+        presets: Vec<String>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -97,7 +119,12 @@ pub(crate) struct Config {
 }
 
 impl Config {
-    pub fn select(&self, mode: &str, filters: &[String]) -> Result<Vec<Case>> {
+    pub fn select_for_preset(
+        &self,
+        mode: &str,
+        preset: &str,
+        filters: &[String],
+    ) -> Result<Vec<Case>> {
         if self.oracles != ["default"] {
             bail!("The legacy oracle selector has no effect; use --variant with the default oracle entry");
         }
@@ -127,14 +154,20 @@ impl Config {
         }
         let mut selected = Vec::new();
         for entry in &self.circuits {
-            let (path, modes) = match entry {
-                Entry::Path(path) => (path, None),
-                Entry::Restricted { name, modes } => (name, Some(modes)),
+            let (path, modes, presets) = match entry {
+                Entry::Path(path) => (path, &[][..], &[][..]),
+                Entry::Restricted {
+                    name,
+                    modes,
+                    presets,
+                } => (name, modes.as_slice(), presets.as_slice()),
             };
             if !filters.is_empty() && !filters.contains(path) {
                 continue;
             }
-            if modes.is_some_and(|modes| !modes.iter().any(|value| value == mode)) {
+            if (!modes.is_empty() && !modes.iter().any(|value| value == mode))
+                || (!presets.is_empty() && !presets.iter().any(|value| value == preset))
+            {
                 continue;
             }
             let case = Case::parse(path)?;

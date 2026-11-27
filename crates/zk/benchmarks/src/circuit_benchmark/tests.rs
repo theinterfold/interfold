@@ -11,22 +11,125 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
         "../../../../../circuits/benchmarks/config.json"
     ))
     .unwrap();
-    assert_eq!(config.select("secure", &[]).unwrap().len(), 18);
-    assert_eq!(config.select("insecure", &[]).unwrap().len(), 17);
-    assert!(config.select("insecure", &["config".into()]).is_err());
+    assert_eq!(
+        config
+            .select_for_preset("secure", "secure-8192", &[])
+            .unwrap()
+            .len(),
+        18
+    );
+    assert_eq!(
+        config
+            .select_for_preset("insecure", "insecure-64", &[])
+            .unwrap()
+            .len(),
+        17
+    );
     assert!(config
-        .select("secure", &["threshold/missing".into()])
+        .select_for_preset("insecure", "insecure-64", &["config".into()])
+        .is_err());
+    assert!(config
+        .select_for_preset("secure", "secure-8192", &["threshold/missing".into()])
         .is_err());
     assert_eq!(
         config
-            .select("secure", &["threshold/user_data_encryption".into()])
+            .select_for_preset(
+                "secure",
+                "secure-8192",
+                &["threshold/user_data_encryption".into()],
+            )
             .unwrap(),
         [Case::Ude]
     );
     // The legs are proven inside one circuit; there is no standalone leg to select.
     assert!(config
-        .select("secure", &["threshold/user_data_encryption_ct0".into()])
+        .select_for_preset(
+            "secure",
+            "secure-8192",
+            &["threshold/user_data_encryption_ct0".into()],
+        )
         .is_err());
+}
+
+#[test]
+fn l_bfv_presets_select_only_the_circuits_their_archives_serve() {
+    let config: Config = serde_json::from_str(include_str!(
+        "../../../../../circuits/benchmarks/config.json"
+    ))
+    .unwrap();
+    let selected = |mode, preset| -> Vec<String> {
+        config
+            .select_for_preset(mode, preset, &[])
+            .unwrap()
+            .into_iter()
+            .map(Case::path)
+            .collect()
+    };
+    let insecure = selected("insecure", "insecure-lbfv");
+    assert_eq!(insecure.len(), 14);
+    assert!(insecure.contains(&"lbfv/threshold/rlk_generation".to_string()));
+    assert!(insecure.contains(&"dkg/share_encryption".to_string()));
+    assert!(!insecure.contains(&"dkg/sk_share_computation".to_string()));
+    assert!(!insecure.contains(&"lbfv/threshold/decrypted_shares_aggregation_wide".to_string()));
+
+    let secure = selected("secure", "secure-16384");
+    assert_eq!(secure.len(), 10);
+    assert!(secure.contains(&"lbfv/threshold/decrypted_shares_aggregation_wide".to_string()));
+    for trbfv_only in [
+        "dkg/share_encryption",
+        "dkg/share_decryption",
+        "threshold/user_data_encryption",
+        "threshold/pk_generation",
+        "threshold/pk_aggregation",
+        "threshold/decrypted_shares_aggregation",
+    ] {
+        assert!(!secure.contains(&trbfv_only.to_string()), "{trbfv_only}");
+    }
+    assert!(!selected("insecure", "insecure-64")
+        .iter()
+        .any(|path| path.starts_with("lbfv/")));
+}
+
+#[test]
+fn every_accepted_preset_lists_its_cases_on_the_real_build_policy() {
+    for (mode, preset, committee) in [
+        ("insecure", "insecure-64", "minimum"),
+        ("insecure", "insecure-lbfv", "minimum"),
+        ("secure", "secure-8192", "minimum"),
+        ("secure", "secure-16384", "small"),
+    ] {
+        let options = clap::Parser::parse_from([
+            "benchmark",
+            "list",
+            "--mode",
+            mode,
+            "--preset",
+            preset,
+            "--committee",
+            committee,
+        ]);
+        execute(&root(), &options).unwrap_or_else(|error| panic!("{preset}: {error:#}"));
+    }
+    // The insecure default is the trBFV archive, as on `main`.
+    let options = clap::Parser::parse_from(["benchmark", "list", "--committee", "minimum"]);
+    execute(&root(), &options).unwrap();
+    for (mode, preset) in [
+        ("insecure", "insecure"),
+        ("insecure", "secure-16384"),
+        ("secure", "insecure-lbfv"),
+    ] {
+        let options = clap::Parser::parse_from([
+            "benchmark",
+            "list",
+            "--mode",
+            mode,
+            "--preset",
+            preset,
+            "--committee",
+            "minimum",
+        ]);
+        assert!(execute(&root(), &options).is_err(), "{mode} {preset}");
+    }
 }
 
 #[test]
@@ -262,6 +365,57 @@ fn report_only_uses_saved_data_and_does_not_overwrite_its_input() {
 }
 
 #[test]
+fn an_insecure_64_export_replays_on_the_insecure_64_pair() {
+    let doc = serde_json::json!({"benchmark_config":{"mode":"insecure","bfv_preset_subdir":"insecure-64","committee_n":3,"committee_h":2,"committee_t":1}});
+    let cfg = protocol::configuration(&doc, None, None, 1).unwrap();
+    assert_eq!(cfg.preset, "insecure-64");
+}
+
+#[test]
+fn an_l_bfv_export_replays_on_its_own_archive() {
+    for (mode, archive, replay_mode) in [
+        ("insecure-lbfv", "insecure-lbfv", "insecure"),
+        ("secure-16384", "secure-16384", "secure"),
+    ] {
+        let doc = serde_json::json!({"benchmark_config":{"mode":mode,"bfv_preset_subdir":archive,"committee_n":3,"committee_h":2,"committee_t":1}});
+        let cfg = protocol::configuration(&doc, None, None, 1).unwrap();
+        assert_eq!(
+            (cfg.mode.as_str(), cfg.preset.as_str()),
+            (replay_mode, archive)
+        );
+    }
+    let doc = serde_json::json!({"benchmark_config":{"mode":"insecure","bfv_preset_subdir":"insecure-lbfv","committee_n":3,"committee_h":2,"committee_t":1}});
+    assert!(protocol::configuration(&doc, None, None, 1).is_err());
+    let doc = serde_json::json!({"benchmark_config":{"mode":"insecure","bfv_preset_subdir":"insecure","committee_n":3,"committee_h":2,"committee_t":1}});
+    assert!(protocol::configuration(&doc, None, None, 1).is_err());
+}
+
+#[test]
+fn the_integration_scenario_is_named_by_the_l_bfv_archive() {
+    for (mode, preset, label) in [
+        ("insecure", "insecure-64", "insecure"),
+        ("secure", "secure-8192", "secure"),
+        ("insecure", "insecure-lbfv", "insecure-lbfv"),
+        ("secure", "secure-16384", "secure-16384"),
+    ] {
+        let cfg = protocol::Configuration {
+            mode: mode.into(),
+            preset: preset.into(),
+            committee: e3_committee::CiphernodesCommitteeSize::Minimum,
+            jobs: 1,
+            bb_binary: Some(PathBuf::from("/validated/bb")),
+        };
+        let command = protocol::integration_command(Path::new("."), Path::new("."), &cfg).unwrap();
+        let scenario = command
+            .get_envs()
+            .find(|(name, _)| *name == "BENCHMARK_MODE")
+            .and_then(|(_, value)| value)
+            .unwrap();
+        assert_eq!(scenario, label);
+    }
+}
+
+#[test]
 fn replay_rejects_bad_proofs_and_wrong_configuration_before_evm_execution() {
     let doc = serde_json::json!({"benchmark_config":{"mode":"insecure","bfv_preset_subdir":"insecure-64","committee_n":3,"committee_h":2,"committee_t":1},"folded_artifacts":{"dkg_aggregator":{"proof_hex":"0x01","public_inputs_hex":"0x00"},"decryption_aggregator":{"proof_hex":"0x01","public_inputs_hex":"0x00"}}});
     assert!(protocol::configuration(&doc, Some("secure"), None, 1).is_err());
@@ -293,7 +447,6 @@ fn protocol_root() -> tempfile::TempDir {
         "scripts/circuits",
         "circuits/bin",
         "dist/circuits/secure-8192/minimum",
-        "crates/zk/prover",
         "output",
     ] {
         fs::create_dir_all(root.join(directory)).unwrap();
@@ -310,14 +463,20 @@ fn protocol_root() -> tempfile::TempDir {
         &stamp,
     )
     .unwrap();
+    let mut files = serde_json::Map::new();
+    for artifact in e3_zk_build::required_artifacts("secure-8192") {
+        let relative = format!("secure-8192/minimum/{artifact}");
+        let path = root.join("dist/circuits").join(&relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, artifact.as_bytes()).unwrap();
+        files.insert(
+            relative,
+            serde_json::Value::String(e3_zk_build::checksum(&path).unwrap()),
+        );
+    }
     write_json(
         &root.join("dist/circuits/checksums.json"),
-        &serde_json::json!({"algorithm":"sha256","files":{}}),
-    )
-    .unwrap();
-    write_json(
-        &root.join("crates/zk/prover/required-artifacts.json"),
-        &serde_json::json!([]),
+        &serde_json::json!({"algorithm":"sha256","files":files}),
     )
     .unwrap();
     temp
