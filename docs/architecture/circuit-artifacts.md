@@ -90,12 +90,13 @@ Both Rust and TypeScript read that build policy. Wildcards preserve its order, n
 product; an unsupported explicit pair fails before tools or writes.
 
 The builder's legacy `--preset` option now selects a protocol profile; SS retains its existing
-`insecure-64`/`secure-8192` artifact namespaces. The disabled `sync-insecure-64` definition uses
-separate `circuits/bin/synchronized/{dkg,threshold,recursive_aggregation}` sources/targets and
-generated static configuration, never SS JSON/VK fallback. The live build/release policy still
-excludes it. Explicitly seeded test policies may build its DKG leaves, draft provenance and
-publication definitions, Minimum C6/C7 and the direct decryption aggregator. For the decryption
-chain select
+`insecure-64`/`secure-8192` artifact namespaces. The disabled synchronized Minimum profiles use
+separate `circuits/bin/synchronized` and `circuits/bin/synchronized_secure` sources/targets and
+generated static configuration, never SS JSON/VK fallback. Only the two parameter-independent outer
+statements share sources; their staged keys still belong to the chosen profile. The live
+build/release policy excludes both. Explicitly seeded test policies may build their DKG leaves,
+draft provenance and publication definitions, Minimum C6/C7 and the direct decryption aggregator.
+For the decryption chain select
 `--group threshold,recursive_aggregation --circuit share_decryption --circuit decrypted_shares_aggregation --circuit decryption_aggregator`
 explicitly. This partial build does not stamp a complete pair, change the active SS stamp, produce
 recursive anchors, hydrate artifacts or reuse the source cache. Partial/failed sync work invalidates
@@ -105,9 +106,9 @@ SS selectors or enabling admission.
 These disabled definitions introduce no durable/wire enum or deployed verifier migration. Existing
 SS artifacts retain their original provenance; added source owners intentionally change source
 hashes, not the published stamps. Sync rollout, version counters and rollback for any future
-persisted state/verifiers need separate human decisions. While admission and runtime wiring remain
-absent, removing these definitions requires no replay/reset migration; this is not a rolling-upgrade
-decision for a future sync release.
+persisted state/verifiers need separate human decisions. While admission remains disabled, removing
+these definitions requires no production replay/reset migration; retain qualification stores with
+their matching binaries.
 
 The draft recipient setup verifier derives its full descendant pin from the selected local keys; it
 does not accept a received NodeFold VK hash as that pin. This does not make a partial sync tree
@@ -123,7 +124,10 @@ outer VK in isolation. It publishes a local manifest only after the two ordered 
 and the outer proof verifies against the rebuilt key. It records the profile/config ID, source
 identity, tool versions, roles, targets, gates and checksums of ACIR JSON, VKs and rendered
 Solidity. The role includes the circuit group: `dkg/share_decryption` is not C6. These candidates
-have no complete-pair stamp, archive hydration, active route, or SS fallback. See the
+have no complete-pair stamp, archive hydration, active route, or SS fallback. For signed DKG,
+`dkg-candidate` independently rederives the recursive setup tree and C5 from that profile's nine DKG
+roles, verifies the exported EVM proof under the rebuilt outer key, and compares the generated
+Solidity verifier with the one used in the rehearsal. See the
 [qualification runner](../../scripts/circuits/qualify-sync-decryption.sh).
 
 The reserved secure profile and transport append enum variants. The layout fixtures add rows only
@@ -135,9 +139,10 @@ production resync. Enabling them later needs its own compatibility and rollback 
 
 The keyshare [recovery qualification](../../crates/orchestration/keyshare/README.md#tests) stages
 explicit leaf/Default/EVM variants and VK hashes in private temporary directories, retaining the
-source Nargo dependency pins. Its final proof drives mandatory generated-Solidity acceptance under
-the production compiler settings. Those temporary artifacts are neither installed nor published and
-do not qualify a source-bound release or the secure profile.
+source Nargo dependency pins. Both Minimum profiles exercised signed publication and mined plaintext
+under the production compiler settings. The
+[recorded manifests](../../circuits/qualification/README.md) identify those local proof artifacts; a
+source-bound release still needs its own qualification.
 
 Default `store:circuits pull` selects newest first-parent artifact commit with matching source hash,
 not necessarily branch tip. Release uses it and `verify-release` checks every pair, stamps,

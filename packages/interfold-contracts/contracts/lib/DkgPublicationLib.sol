@@ -28,8 +28,7 @@ library DkgPublicationLib {
     ) external returns (bool) {
         bytes32 identity = ISynchronizedDkgRequestContext(address(controller))
             .e3CryptoConfigIds(e3Id);
-        if (identity != BfvProtocol.SYNC_INSECURE_64_MINIMUM_CONFIG_ID)
-            return false;
+        if (!BfvProtocol.isSynchronizedMinimum(identity)) return false;
         E3 memory e3 = controller.getE3(e3Id);
         _synchronizedVerifier(
             address(controller),
@@ -115,9 +114,10 @@ library DkgPublicationLib {
     {
         E3 memory e3 = context.controller.getE3(context.e3Id);
         require(
-            ISynchronizedDkgRequestContext(address(context.controller))
-                .e3CryptoConfigIds(context.e3Id) !=
-                BfvProtocol.SYNC_INSECURE_64_MINIMUM_CONFIG_ID,
+            !BfvProtocol.isSynchronizedMinimum(
+                ISynchronizedDkgRequestContext(address(context.controller))
+                    .e3CryptoConfigIds(context.e3Id)
+            ),
             ISynchronizedDkgPublication.SynchronizedDkgPublicationRequired()
         );
         require(proof.length > 0, ICiphernodeRegistry.DkgProofRequired());
@@ -270,7 +270,7 @@ library DkgPublicationLib {
     ) private view returns (ISynchronizedDkgPublicationVerifier verifier) {
         verifier = ISynchronizedDkgPublicationVerifier(verifierAddress);
         if (
-            cryptoConfigId != BfvProtocol.SYNC_INSECURE_64_MINIMUM_CONFIG_ID ||
+            !BfvProtocol.isSynchronizedMinimum(cryptoConfigId) ||
             verifier.INTERFOLD() != interfold ||
             verifier.CRYPTO_CONFIG_ID() != cryptoConfigId ||
             verifier.N() != BfvProtocol.MINIMUM_N ||

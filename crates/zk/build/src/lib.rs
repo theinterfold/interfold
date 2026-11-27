@@ -3,10 +3,10 @@
 mod artifacts;
 mod bindings;
 mod configuration;
-mod decryption_candidate;
 mod identity;
 mod layouts;
 pub mod metadata;
+mod synchronized_candidate;
 mod toolchain;
 mod vk_commitments;
 mod vk_tree;
@@ -79,6 +79,7 @@ pub enum Operation {
     QualifyVkCommitments,
     SyncSources,
     DecryptionCandidate,
+    DkgCandidate,
 }
 
 impl FromStr for Operation {
@@ -100,8 +101,9 @@ impl FromStr for Operation {
             "qualify-vk-commitments" => Ok(Self::QualifyVkCommitments),
             "sync-sources" => Ok(Self::SyncSources),
             "decryption-candidate" => Ok(Self::DecryptionCandidate),
+            "dkg-candidate" => Ok(Self::DkgCandidate),
             other => Err(format!(
-                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-vk-commitments, prepare-vk-commitments, check-vk-commitments, qualify-vk-commitments, sync-sources, or decryption-candidate"
+                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-vk-commitments, prepare-vk-commitments, check-vk-commitments, qualify-vk-commitments, sync-sources, dkg-candidate, or decryption-candidate"
             )),
         }
     }
@@ -125,6 +127,7 @@ impl fmt::Display for Operation {
             Self::QualifyVkCommitments => "qualify-vk-commitments",
             Self::SyncSources => "sync-sources",
             Self::DecryptionCandidate => "decryption-candidate",
+            Self::DkgCandidate => "dkg-candidate",
         })
     }
 }
@@ -275,12 +278,21 @@ impl Request {
     pub fn validate(&self, root: &Path) -> Result<()> {
         // This operation qualifies one disabled definition from explicit proof evidence. It
         // never selects a release pair or hydrates/installs artifacts.
-        if self.operation == Operation::DecryptionCandidate {
-            anyhow::ensure!(matches!(self.preset, PresetSelection::Single(p) if p.protocol() == BfvDecryptionProtocol::Synchronized && !p.admission_enabled())
-                && self.committee == CommitteeSelection::Single(CiphernodesCommitteeSize::Minimum)
-                && self.groups.is_complete() && self.circuits.is_empty() && self.output.is_some()
-                && !self.skip_vk && !self.hydrate_bin_only && !self.dry_run && !self.skip_if_built,
-                "decryption-candidate requires a disabled synchronized Minimum profile and a proof export directory");
+        if self.operation.candidate_roles().is_some() {
+            anyhow::ensure!(
+                matches!(self.preset, PresetSelection::Single(p) if p.protocol() == BfvDecryptionProtocol::Synchronized && !p.admission_enabled())
+                    && self.committee
+                        == CommitteeSelection::Single(CiphernodesCommitteeSize::Minimum)
+                    && self.groups.is_complete()
+                    && self.circuits.is_empty()
+                    && self.output.is_some()
+                    && !self.skip_vk
+                    && !self.hydrate_bin_only
+                    && !self.dry_run
+                    && !self.skip_if_built,
+                "{} requires a disabled synchronized Minimum profile and a proof export directory",
+                self.operation
+            );
             return Ok(());
         }
         if matches!(&self.groups, GroupSelection::Selected(groups) if groups.is_empty()) {
@@ -535,7 +547,9 @@ pub fn execute(root: &Path, request: &Request) -> Result<()> {
         Operation::CheckVkCommitments => vk_commitments::check(root, request)?,
         Operation::QualifyVkCommitments => vk_commitments::qualify(root, request)?,
         Operation::SyncSources => configuration::sync_sources(root)?,
-        Operation::DecryptionCandidate => decryption_candidate::build(root, request)?,
+        Operation::DecryptionCandidate | Operation::DkgCandidate => {
+            synchronized_candidate::build(root, request)?
+        }
         Operation::ExportConfig => {
             let metadata = metadata::collect(root)?;
             let mut stdout = std::io::stdout().lock();

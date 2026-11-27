@@ -1,0 +1,97 @@
+{
+  "admissionEnabled": false,
+  "bb": "6.0.0",
+  "c5KeyHash": "0x070c5fad1cb98d7173666aeabf80e970be5480864e5e2a5fa0e186d6b0ef64e0",
+  "circuits": [
+    {
+      "circuitSha256": "8420be0060f2fd19ff43d5aad4643bc707b55f03d1ea7210ccf9e40b79a833f9",
+      "gates": 5302,
+      "path": "recursive/dkg/pk",
+      "role": "pk",
+      "target": "noir-recursive",
+      "vkHash": "0x1d7dc5aa626e10c2eadea0bd9f1ff72c6456adb1c09c6ed62e44f37029e1c254",
+      "vkSha256": "d61f2afe63a7b56fb32ee1cb1fc8a764edd99be6e043afd0cf78d9af9aa34208"
+    },
+    {
+      "circuitSha256": "432a8362878ba2f34bee72905383da65b1e654ca8455a4bb3ee1558356aac2f1",
+      "gates": 9011,
+      "path": "recursive/threshold/pk_generation",
+      "role": "pk_generation",
+      "target": "noir-recursive",
+      "vkHash": "0x2dcf6319e84fbf817a2f0c628b73b68caa948da0fd8644c74546a35de7056c42",
+      "vkSha256": "ff926f667c2295184da5523f7198d59d8f75c1c8f3af75fbafab5c1f82114fb0"
+    },
+    {
+      "circuitSha256": "516311b93f04b10fa55b53b85fcc9053799c1c52809ed1b07a107b2464cad06b",
+      "gates": 15000,
+      "path": "recursive/dkg/sk_share_computation",
+      "role": "sk_share_computation",
+      "target": "noir-recursive",
+      "vkHash": "0x1eba9eecb0f5b23326fabdf65d9eddda20bcd11357be7d181aa84cff19b87520",
+      "vkSha256": "7fb105d7eb9fc3eb2b6c25d6ee66c9475ee35a64efd885bcb851abbe68dfcf72"
+    },
+    {
+      "circuitSha256": "03417709e73d223bfdc1ee60e6112339c44e61f3f85b3176dbd052c9aeee5e0d",
+      "gates": 17127,
+      "path": "recursive/dkg/share_encryption",
+      "role": "share_encryption",
+      "target": "noir-recursive",
+      "vkHash": "0x21ca71e9d6fbe082e7af8d69fc3f3f9f1b1af38bcaba6db83bf6272e97e010af",
+      "vkSha256": "ec6d82a3dc8e3ae08ee052e41680dcbf6b207ac5d778ee1c55cb5c26500342c8"
+    },
+    {
+      "circuitSha256": "f6687763cea2e9a976a2393c99a74e082da2fcc8e14a731bb95492ec214a9a2a",
+      "gates": 19235,
+      "path": "recursive/dkg/share_decryption",
+      "role": "share_decryption",
+      "target": "noir-recursive",
+      "vkHash": "0x2ce519a76ee92b232cf15373a748d45a623e6b40980921cc6070d81fe78db541",
+      "vkSha256": "0da35afa654ab18b903101987dafe93b049d5ac943197fecd5d3cf5f78a5ec33"
+    },
+    {
+      "circuitSha256": "44a72a8763a6001d1d1270430e52224bca2e6496fd4ee91626fc9b564c47ec13",
+      "gates": 6060638,
+      "path": "default/recursive_aggregation/node_fold",
+      "role": "node_fold",
+      "target": "noir-recursive-no-zk",
+      "vkHash": "0x0787f7777b48b1318c6e2a39549b1f8ceeed2a2c8a65f6da9b153fbb091b16ba",
+      "vkSha256": "d70b2d5337445550c62bbe1f6c74128aeba95c9b572a1b73904ef615845675b8"
+    },
+    {
+      "circuitSha256": "6df722742b2f14f8da3b14966532ae1168a8882a49bb04d9401e61d1db3669e2",
+      "gates": 3724427,
+      "path": "default/recursive_aggregation/nodes_fold",
+      "role": "nodes_fold",
+      "target": "noir-recursive-no-zk",
+      "vkHash": "0x2fbaf3d2716f96ede28aa142ec64b69c0a3bb44541013706d53ad5c8cf204497",
+      "vkSha256": "469e8f2005a2c9a1faf191aa11ccbbe293fbc6e845d2d37bdb1ea32781c863ef"
+    },
+    {
+      "circuitSha256": "324987599f9d30d99ecaf72abc5fec836cbfef732e1c486f99606b6f53d58f2d",
+      "gates": 9149,
+      "path": "default/threshold/pk_aggregation",
+      "role": "pk_aggregation",
+      "target": "noir-recursive-no-zk",
+      "vkHash": "0x070c5fad1cb98d7173666aeabf80e970be5480864e5e2a5fa0e186d6b0ef64e0",
+      "vkSha256": "9b4d10c4895e97b18df8f703e1c2d7dc21f9155ca0eeb21160df120bbcea5d79"
+    },
+    {
+      "circuitSha256": "2ffb6f4745a58906ad92b14590062484a07bfed6c92c4779675a111b5ec81fcb",
+      "gates": 2168810,
+      "path": "evm/recursive_aggregation/dkg_aggregator",
+      "role": "dkg_aggregator",
+      "soliditySha256": "b66150f8c32e6dca79056b07c62646a7a87efbe5f51c9be1798a6ff1b46242db",
+      "target": "evm",
+      "vkHash": "0x0f457b834e280f988d18963cf98b9a2cee798311b9f93f042700ba6d18e5f2b9",
+      "vkSha256": "a988fdd1aec10642a6efc1e26653b9abbae2098fd233923f77e5f5aaed7ae4d0"
+    }
+  ],
+  "committee": "minimum",
+  "cryptoConfigId": "0xfe0e258735d79bc000f057bbc65136f31e6006884bd8d56f58a43bb236079fd7",
+  "formatVersion": 1,
+  "nargo": "1.0.0-rc.3",
+  "profile": "sync-insecure-64",
+  "scope": "dkg-publication",
+  "setupTreeHash": "0x13f3351a1915a1886a74e673bf1b91a9ceb60c23efe8542d57bbe1926e842164",
+  "sourceHash": "5e218a8d126e3ac0"
+}

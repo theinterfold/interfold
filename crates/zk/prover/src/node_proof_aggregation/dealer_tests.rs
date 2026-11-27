@@ -556,7 +556,7 @@ fn synchronized_dealer_restores_alternates_from_the_disk_prefix() -> Result<()> 
             store.shutdown().await?;
             Ok::<_, anyhow::Error>((input, valid))
         })?;
-        e3_data::SledDb::close_all_connections();
+        e3_data::SledDb::close_connection(&root.path().join("sled"));
 
         // Neither early C3 nor any previously journaled C2 is redelivered.
         actix::System::new().block_on(async {
@@ -647,7 +647,7 @@ fn synchronized_dealer_restores_alternates_from_the_disk_prefix() -> Result<()> 
             store.shutdown().await?;
             Ok::<_, anyhow::Error>(())
         })?;
-        e3_data::SledDb::close_all_connections();
+        e3_data::SledDb::close_connection(&root.path().join("sled"));
     }
     Ok(())
 }
@@ -1020,7 +1020,7 @@ async fn synchronized_dealer_plan_prunes_unbound_early_leaves_after_disk_reopen(
     drop(repositories);
     store.shutdown().await?;
     drop(store);
-    e3_data::SledDb::close_all_connections();
+    e3_data::SledDb::close_connection(directory.path());
 
     let reopened = e3_data::DataStore::from_sled_store(&e3_data::SledStore::new(
         &bus,
@@ -1049,7 +1049,7 @@ async fn synchronized_dealer_plan_prunes_unbound_early_leaves_after_disk_reopen(
         .request(&id, &restarted.dealer.records[&id].proofs)?
         .is_some());
     reopened.shutdown().await?;
-    e3_data::SledDb::close_all_connections();
+    e3_data::SledDb::close_connection(directory.path());
     Ok(())
 }
 
@@ -1084,7 +1084,7 @@ async fn synchronized_dealer_flush_restart_reissues_only_unfinished_work() -> Re
     addr.send(StopDefinition).await?;
     store.shutdown().await?;
     drop(repositories);
-    e3_data::SledDb::close_all_connections();
+    e3_data::SledDb::close_connection(directory.path());
     let reopened = e3_data::DataStore::from_sled_store(&e3_data::SledStore::new(
         &bus,
         &directory.path().to_path_buf(),
@@ -1117,7 +1117,7 @@ async fn synchronized_dealer_flush_restart_reissues_only_unfinished_work() -> Re
         .accept_dealer_input(&stale.clone().into(), &ec(stale))
         .is_err());
     reopened.shutdown().await?;
-    e3_data::SledDb::close_all_connections();
+    e3_data::SledDb::close_connection(directory.path());
     Ok(())
 }
 

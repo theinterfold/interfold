@@ -45,9 +45,12 @@ pub(crate) fn plaintext_has_canonical_domain(
         let Some((pins, public)) = proof.public_signals.split_at_checked(64) else {
             return Some(false);
         };
-        // The same Minimum outer VK serves two profiles. Match both children of the
-        // reviewed insecure candidate before taking the writer's one intent slot.
-        let expected = match e3_request::canonical_key::SynchronizedChildPins::insecure_minimum() {
+        // The same Minimum outer VK serves two profiles. Match the confirmed request's
+        // children before taking the writer's one intent slot.
+        let expected = match e3_request::canonical_key::SynchronizedChildPins::for_profile(
+            plan.profile(),
+            plan.committee(),
+        ) {
             Ok(pins) => pins,
             Err(error) => {
                 tracing::error!(%error, "cannot validate synchronized plaintext");

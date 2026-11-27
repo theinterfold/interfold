@@ -85,6 +85,37 @@ pub fn solidity(params: &OperationParams) -> Result<String> {
             field.name.to_uppercase()
         ));
     }
+    // These are the recorded candidate VKs, not inputs supplied by a proof or a deployer.
+    // Snapshotting either Minimum wrapper must bind both children despite the shared outer VK.
+    text.push_str(
+        "
+    function isSynchronizedMinimum(bytes32 id) internal pure returns (bool) {
+        return
+            id == SYNC_INSECURE_64_MINIMUM_CONFIG_ID ||
+            id == SYNC_SECURE_8192_MINIMUM_CONFIG_ID;
+    }
+
+    function synchronizedMinimumChildKeys(
+        bytes32 id
+    ) internal pure returns (bytes32, bytes32) {
+",
+    );
+    for profile in [BfvProfile::SyncDecInsecure64, BfvProfile::SyncDecSecure8192] {
+        let pins = e3_zk_config::synchronized::verifier::SynchronizedChildPins::for_profile(
+            profile,
+            CiphernodesCommitteeSize::Minimum,
+        )?;
+        let label = profile.name().replace('-', "_").to_uppercase();
+        text.push_str(&format!(
+            "        if (id == {label}_MINIMUM_CONFIG_ID)
+            return (
+                {:#x},
+                {:#x}
+            );\n",
+            pins.c6, pins.c7
+        ));
+    }
+    text.push_str("        return (bytes32(0), bytes32(0));\n    }\n");
     text.push_str("}\n");
     Ok(text)
 }

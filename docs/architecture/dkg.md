@@ -39,15 +39,15 @@ distinction for both presets.
 Both insecure-64 and secure-8192 use three threshold Shamir rows. Each recipient bundle therefore
 contains one C2a, one C2b, three C3a, and three C3b proofs.
 
-The disabled synchronized insecure-64 profile has a separate native SK-share packing rule. A
-directed 32-byte PRF key uses 64 low little-endian bits; every higher bit is zero. For native
-ascending coefficient j in threshold limb zero, the transport plaintext is
-`share[0][j] + key_bit[j] * q_0`. Other limbs are unchanged. All original residues must be canonical
-under their own threshold modulus. The synchronized DKG plaintext modulus is twice `q_0`, the
-packing limb's modulus; these parameters are not interchangeable with the SS DKG pair. Unpacking
-rejects out-of-range packed coefficients and restores SK residues before aggregation. Native round
-trips exercise the existing encrypted SK-share transport, not a new key-bearing wire field or
-signature. The isolated
+Both disabled synchronized Minimum profiles pack the directed PRF key into the native SK share.
+Secure Minimum uses all 256 bits of the little-endian key; insecure Minimum uses the low 64 bits and
+requires every higher bit to be zero. For native ascending coefficient j in threshold limb zero, the
+transport plaintext is `share[0][j] + key_bit[j] * q_0`. Other limbs are unchanged. All original
+residues must be canonical under their own threshold modulus. The synchronized DKG plaintext modulus
+is twice `q_0`, the packing limb's modulus; these parameters are not interchangeable with the SS DKG
+pair. Unpacking rejects out-of-range packed coefficients and restores SK residues before
+aggregation. Native round trips exercise the existing encrypted SK-share transport, not a new
+key-bearing wire field or signature. The isolated
 [draft C0–C4 leaves](proof-statements.md#isolated-synchronized-dkg-leaves-draft-not-admitted) bind
 packed-message openings and directed-key roots/bundles. Native generation, encrypted proof-request
 preparation and keyshare planning now carry those keys without an SS smudging lane: synchronized
@@ -102,11 +102,14 @@ setup for the same batch; it does not acquire an H publication-consent slot. A s
 not a proof verdict: callers must admit the local worker source/correlation and cryptographic result
 before either helper.
 
-This handoff only reads setup that already reached the durable checkpoint. Today confirmed
-`KeyPublished` retires unfinished recipient work, including outside H.
-[#2461](https://github.com/theinterfold/interfold/issues/2461) requires qualifying a continuation
-against the same confirmed H batch without making all N setups a condition of publication or
-restarting consent.
+In the disabled synchronized path, `KeyPublished` ends dealer, publication and consent work. A local
+committee member outside confirmed H may still finish its recipient join through `CiphertextReady`.
+This requires its fixed native C4 intent, its already-produced C0, own C2 and C4 proofs, and
+authenticated dealer joins for H. Missing leaves do not authorize new leaf proving. The controller
+callback can arrive before the registry authority and proof logs. In that gap a previously
+dispatched join can finish, but the stage alone cannot release a new join or a local setup.
+Dispatch, retry and local handoff check the owner, request binding, ordered H, dealer batch and
+threshold-key commitments against confirmed history. Failure or completion retires pending work.
 
 This remains unactivated: admitted full-node synchronized startup and C6 dispatch are absent. The
 capability replay fixture below does not enable production admission. Synchronized runtime
@@ -117,8 +120,8 @@ before consumers freeze them.
 Typed local dealer/recipient/publication work uses a separate synchronized executor, not SS fold
 requests. Runtime admission rejects the disabled profile before touching proof artifacts; isolated
 qualification calls the explicit definition API. The existing shared compute gate waits for
-current-boot effects and retires this DKG work at confirmed key publication. Neither the gate nor a
-setup response authenticates peer inputs or replaces actor-owned correlation and durable phases.
+current-boot effects and applies the publication boundary above. Neither the gate nor a setup
+response authenticates peer inputs or replaces actor-owned correlation and durable phases.
 
 The node proof collector now has a distinct local dealer phase. It checks the request profile,
 configured Interfold controller, finalized committee/local owner, local source and canonical
@@ -152,9 +155,10 @@ reported failure can promote a compatible repair and retire its correlation, wit
 budget per dealer. Neither new bytes nor local worker retries invalidate a running join. A join
 failure is not a localized peer-invalid verdict. PK/batch expectations are derived from those dealer
 rows; this collector does not independently compare native PK shares. Its exclusive record flushes
-before work or output, preserves completed output, replaces restart correlations, and retires at
-canonical DKG termination. A peer setup is never a local recipient verdict. Only the correlated
-local worker result produces the local setup event and signed peer setup.
+before work or output, preserves completed output and replaces restart correlations. A peer setup is
+never a local recipient verdict. After publication only the matching local verdict is delivered to
+keyshare; no new signed peer setup is needed. Reopening a pending join reuses its inputs; reopening
+a completed join redelivers its saved proof locally without proving again.
 
 Recipient storage and bus delivery back off independently. Storage retry validates the latest
 retained record without dispatching unflushed work. Refused delivery retries from acknowledged
@@ -404,8 +408,15 @@ contributions, sealed material and native PK-share bytes through C5/publication 
 and Solidity. Selected C4 artifacts come from peers' reopened snapshots; the outside-H recipient
 uses its disk-restored C4 request and the verified publication's key/batch authority. Native H
 signatures then publish the real proof to a locally deployed registry. The fixture checks authority
-and PK-chunk readback, reopens the decoded confirmed journal and validates all N sealed setup
-handoffs. Its finalized selection and lifecycle controller remain test harnesses.
+and PK-chunk readback and reopens the decoded confirmed journal. Only H consents. One outside-H
+worker is in flight at the mined controller callback: its result cannot create setup until the
+registry observations are replayed. In a separate history the worker starts after the callback and
+confirmed batch. Each exclusive setup store reopens without another worker result. The fixed-set
+decryption rehearsal uses only `[0,2]`. Both
+[Minimum profiles](../../circuits/qualification/minimum-coexistence.md) exercised their
+request-bound registry route. Finalized selection and the lifecycle controller remain test
+harnesses; protocol-owner review is open under
+[#2461](https://github.com/theinterfold/interfold/issues/2461).
 
 The complementary
 [replay fixture](../../crates/orchestration/keyshare/src/tests/synchronized/recovery/replay.rs)

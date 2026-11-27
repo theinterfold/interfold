@@ -10,6 +10,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { bfvConfiguration } from "../../bfv";
 import {
   buildRequestParams,
   deployInterfoldSystem,
@@ -29,12 +30,30 @@ import {
 
 const coder = ethers.AbiCoder.defaultAbiCoder();
 const field = (value: number | bigint) => ethers.toBeHex(value, 32);
-const config = readFileSync("contracts/lib/BfvProtocol.sol", "utf8").match(
-  /SYNC_INSECURE_64_MINIMUM_CONFIG_ID\s*=\s*(0x[0-9a-f]+);/,
-)![1]!;
+const candidate = (profile: string) =>
+  JSON.parse(
+    readFileSync(
+      `../../circuits/qualification/${profile}/minimum/manifest.json`,
+      "utf8",
+    ),
+  ) as {
+    cryptoConfigId: string;
+    circuits: { role: string; vkHash: string }[];
+  };
+const insecure = candidate("sync-insecure-64");
+const secure = candidate("sync-secure-8192");
+const config = insecure.cryptoConfigId;
+const pins = (m: typeof insecure) =>
+  ["share_decryption", "decrypted_shares_aggregation"].map(
+    (role) => m.circuits.find((c) => c.role === role)!.vkHash,
+  );
 
 describe("Synchronized DKG registry authority", function () {
   async function setup() {
+    return setupProfile(config);
+  }
+
+  async function setupProfile(config: string) {
     const circuit = await ethers.deployContract("MockCircuitVerifier");
     await circuit.setReturnValue(true);
     const controller = await ethers.deployContract(
@@ -108,6 +127,7 @@ describe("Synchronized DKG registry authority", function () {
     ];
     return {
       registry,
+      config,
       circuit,
       controller,
       wrapper,
@@ -171,7 +191,7 @@ describe("Synchronized DKG registry authority", function () {
           {
             registry: await f.registry.getAddress(),
             e3Id: f.e3Id,
-            cryptoConfigId: config,
+            cryptoConfigId: f.config,
             setupBinding: f.binding,
             rosterHash: ethers.keccak256(coder.encode(["uint256[]"], [f.ids])),
             dealerBatch: f.fields[6],
@@ -284,12 +304,7 @@ describe("Synchronized DKG registry authority", function () {
         const bytes = (x: number[]) => ethers.hexlify(Uint8Array.from(x));
         const wrapper = await ethers.deployContract(
           "SynchronizedDecryptionVerifier",
-          [
-            await honk.getAddress(),
-            await f.registry.getAddress(),
-            expected.pins[0],
-            expected.pins[1],
-          ],
+          [await honk.getAddress(), await f.registry.getAddress(), f.config],
         );
         const dkg = JSON.parse(
           readFileSync(join(dir, "dkg", "publication.json"), "utf8"),
@@ -381,12 +396,7 @@ describe("Synchronized DKG registry authority", function () {
     await f.registry.publishSynchronizedCommittee(f.e3Id, await publication(f));
     const wrapper = await ethers.deployContract(
       "SynchronizedDecryptionVerifier",
-      [
-        await f.circuit.getAddress(),
-        await f.registry.getAddress(),
-        field(10),
-        field(11),
-      ],
+      [await f.circuit.getAddress(), await f.registry.getAddress(), f.config],
     );
     const committee = await f.registry.getCommitteeHash(f.e3Id);
     const domain = field(83);
@@ -405,8 +415,7 @@ describe("Synchronized DKG registry authority", function () {
       field(24),
     ]);
     const fields = [
-      field(10),
-      field(11),
+      ...pins(insecure),
       ...rows,
       ...Array<string>(50).fill(field(0)),
     ];
@@ -431,28 +440,71 @@ describe("Synchronized DKG registry authority", function () {
     await expect(call()).to.be.revertedWithCustomError(wrapper, "InvalidProof");
   });
 
-  it("requires two contracts and two nonzero scalar pins on deployment", async () => {
+  it("only constructs a verifier for a known synchronized profile and committee", async () => {
     const f = await networkHelpers.loadFixture(setup);
     const factory = await ethers.getContractFactory(
       "SynchronizedDecryptionVerifier",
     );
     const honk = await f.circuit.getAddress();
     const registry = await f.registry.getAddress();
-    const scalarModulus =
-      field(
-        21888242871839275222246405745257275088548364400416034343698204186575808495617n,
-      );
-    for (const [h, r, c6, c7] of [
-      [ethers.ZeroAddress, registry, field(10), field(11)],
-      [honk, ethers.ZeroAddress, field(10), field(11)],
-      [honk, registry, field(0), field(11)],
-      [honk, registry, field(10), field(0)],
-      [honk, registry, scalarModulus, field(11)],
-      [honk, registry, field(10), scalarModulus],
+    for (const [h, r, id] of [
+      [ethers.ZeroAddress, registry, config],
+      [honk, ethers.ZeroAddress, config],
+      [honk, registry, ethers.ZeroHash],
+      [honk, registry, field(123)],
+      [honk, registry, bfvConfiguration("ss-secure-8192", 0).configId],
     ] as const) {
-      await expect(factory.deploy(h, r, c6, c7)).to.be.revertedWithCustomError(
+      await expect(factory.deploy(h, r, id)).to.be.revertedWithCustomError(
         factory,
         "InvalidConfiguration",
+      );
+    }
+  });
+
+  it("selects both qualified keys from the frozen Minimum identity", async () => {
+    const f = await setupProfile(secure.cryptoConfigId);
+    await f.registry.publishSynchronizedCommittee(f.e3Id, await publication(f));
+    const registry = await f.registry.getAddress();
+    const honk = await f.circuit.getAddress();
+    for (const manifest of [insecure, secure]) {
+      const wrapper = await ethers.deployContract(
+        "SynchronizedDecryptionVerifier",
+        [honk, registry, manifest.cryptoConfigId],
+      );
+      expect([
+        await wrapper.C6_KEY_HASH(),
+        await wrapper.C7_KEY_HASH(),
+      ]).to.deep.equal(pins(manifest));
+      const committee = await f.registry.getCommitteeHash(f.e3Id);
+      const verify = (children: string[]) =>
+        wrapper.verify(
+          f.e3Id,
+          field(1),
+          field(1),
+          committee,
+          field(1),
+          coder.encode(
+            ["bytes", "bytes32[]"],
+            ["0x", [...children, ...Array(74).fill(field(0))]],
+          ),
+        );
+      const expected = pins(manifest);
+      const foreign = pins(manifest === secure ? insecure : secure);
+      for (const children of [
+        [expected[0]!, foreign[1]!],
+        [foreign[0]!, expected[1]!],
+        foreign,
+      ]) {
+        await expect(verify(children)).to.be.revertedWithCustomError(
+          wrapper,
+          "VkHashMismatch",
+        );
+      }
+      await expect(verify(expected)).to.be.revertedWithCustomError(
+        wrapper,
+        manifest === secure
+          ? "DomainBindingMismatch"
+          : "InvalidSynchronizedAuthority",
       );
     }
   });
@@ -736,7 +788,8 @@ describe("Synchronized DKG registry authority", function () {
   it("rejects an SS identity and noncanonical N/H before any proof can be accepted", async () => {
     const f = await networkHelpers.loadFixture(setup);
     for (const [identity, n, h] of [
-      [field(1), 3, 2],
+      [bfvConfiguration("ss-insecure-64", 0).configId, 3, 2],
+      [bfvConfiguration("ss-secure-8192", 0).configId, 3, 2],
       [config, 4, 2],
       [config, 3, 1],
     ] as const) {
@@ -763,13 +816,15 @@ describe("Synchronized DKG registry authority", function () {
       system.mocks.e3Program,
       system.mocks.decryptionVerifier,
     );
-    await expect(
-      system.interfold.request({
-        ...params,
-        expectedCryptoConfigId: config,
-        expectedFeeToken: await system.usdcToken.getAddress(),
-        maxFee: ethers.MaxUint256,
-      }),
-    ).to.be.revertedWithCustomError(system.interfold, "CryptoConfigChanged");
+    for (const { cryptoConfigId } of [insecure, secure]) {
+      await expect(
+        system.interfold.request({
+          ...params,
+          expectedCryptoConfigId: cryptoConfigId,
+          expectedFeeToken: await system.usdcToken.getAddress(),
+          maxFee: ethers.MaxUint256,
+        }),
+      ).to.be.revertedWithCustomError(system.interfold, "CryptoConfigChanged");
+    }
   });
 });

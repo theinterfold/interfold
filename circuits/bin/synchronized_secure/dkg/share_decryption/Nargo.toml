@@ -1,0 +1,7 @@
+[package]
+name = "share_decryption"
+type = "bin"
+authors = []
+
+[dependencies]
+lib = { path = "../../../../lib" }

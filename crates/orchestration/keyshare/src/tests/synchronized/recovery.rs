@@ -73,6 +73,7 @@ async fn artifacts(setup: &mut Setup, prover: Option<&ZkProver>) -> Result<Artif
                 prove_prepared(
                     &e3_zk_prover::PkCircuit,
                     prover,
+                    setup.config.profile,
                     &setup.config.pk,
                     &public,
                     owner as u64,
@@ -113,6 +114,7 @@ async fn artifacts(setup: &mut Setup, prover: Option<&ZkProver>) -> Result<Artif
                 prove_prepared(
                     &adapters::PkGenerationCircuit,
                     prover,
+                    setup.config.profile,
                     &setup.config,
                     &generation,
                     owner as u64,
@@ -147,6 +149,7 @@ async fn artifacts(setup: &mut Setup, prover: Option<&ZkProver>) -> Result<Artif
             let proof = prove_prepared(
                 &adapters::ShareComputationCircuit,
                 prover,
+                setup.config.profile,
                 &setup.config,
                 &input,
                 owner as u64,
@@ -170,6 +173,7 @@ async fn artifacts(setup: &mut Setup, prover: Option<&ZkProver>) -> Result<Artif
                     let proof = prove_prepared(
                         &e3_zk_prover::ShareEncryptionCircuit,
                         prover,
+                        setup.config.profile,
                         &setup.config.share_encryption,
                         &setup.c3_data(dealer, request)?,
                         dealer as u64,
@@ -514,7 +518,7 @@ impl Node {
             recovery_payloads: payloads,
             bus,
             cipher: cipher(owner).await?,
-            params_profile: PROFILE,
+            params_profile: selection.params_profile,
             interfold_address: setup.interfold,
             signer: setup.signers[owner].clone(),
             bfv_key,
@@ -576,7 +580,32 @@ async fn open(root: &Path, setup: &Setup) -> Result<Vec<Node>> {
     Ok(nodes)
 }
 
-async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
+fn signed_roster(setup: &Setup) -> Result<DkgCoordination> {
+    let e3 = &setup.selected[0].e3_id;
+    let dealers = DEALERS
+        .iter()
+        .map(|&id| {
+            crate::domain::dealer_identity_for_profile(
+                setup.config.profile,
+                e3,
+                id,
+                &setup.pending[id as usize].full_share.pk_share,
+                &setup.c2[&id],
+                None,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    DkgCoordination::sign(
+        e3.clone(),
+        setup.interfold,
+        0,
+        DkgCoordinationKind::Roster,
+        dealers,
+        &setup.signers[0],
+    )
+}
+
+async fn exercise(profile: BfvProfile, prover: Option<&ZkProver>) -> Result<()> {
     let _exclusive = DISK_RECOVERY.lock().await;
     let mut ciphers = Vec::new();
     for owner in 0..3 {
@@ -592,6 +621,7 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
         chain
             .as_ref()
             .map_or(Address::repeat_byte(0x11), |chain| chain.controller),
+        profile,
     )
     .await?;
     let artifacts = artifacts(&mut setup, prover).await?;
@@ -650,27 +680,7 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
     }
     stop(nodes).await?;
 
-    let dealers = DEALERS
-        .iter()
-        .map(|&id| {
-            crate::domain::dealer_identity_for_profile(
-                PROFILE,
-                e3,
-                id,
-                &setup.pending[id as usize].full_share.pk_share,
-                &setup.c2[&id],
-                None,
-            )
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let roster = DkgCoordination::sign(
-        e3.clone(),
-        setup.interfold,
-        0,
-        DkgCoordinationKind::Roster,
-        dealers,
-        &setup.signers[0],
-    )?;
+    let roster = signed_roster(&setup)?;
     let nodes = open(temp.path(), &setup).await?;
     for (owner, node) in nodes.iter().enumerate() {
         ensure!(node
@@ -854,6 +864,7 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
                 prove_prepared(
                     &adapters::ShareDecryptionCircuit,
                     prover,
+                    profile,
                     &setup.config,
                     &input,
                     owner as u64,
@@ -909,10 +920,10 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
             .incoming_keys
             .as_ref()
             .context("lost incoming keys")?
-            .open(PROFILE, binding, owner as u32, 2, &*cipher(owner).await?)?;
+            .open(profile, binding, owner as u32, 2, &*cipher(owner).await?)?;
         for (row, &dealer) in DEALERS.iter().enumerate() {
             let outgoing = setup.material[dealer as usize].outgoing_keys.open(
-                PROFILE,
+                profile,
                 binding,
                 dealer as u32,
                 3,
@@ -965,16 +976,24 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
     }
     let qualified = match prover {
         Some(prover) => {
-            publication::qualify(
-                &recovered,
-                &recovered_pending,
-                &accepted_c4,
-                prover,
-                temp.path(),
-                chain.as_ref().context("missing qualification chain")?,
-                &setup.signers,
-            )
-            .await
+            // Poll the registry/decryption rehearsal on its own task. Nesting its RPC futures
+            // under all three native recovery actors can overflow the default debug test stack.
+            let prover = prover.clone();
+            let directory = temp.path().to_path_buf();
+            let chain = chain.context("missing qualification chain")?;
+            actix::spawn(async move {
+                publication::qualify(
+                    &recovered,
+                    &recovered_pending,
+                    &accepted_c4,
+                    &prover,
+                    &directory,
+                    &chain,
+                    &setup.signers,
+                )
+                .await
+            })
+            .await?
         }
         None => Ok(()),
     };
@@ -993,26 +1012,35 @@ async fn exercise(prover: Option<&ZkProver>) -> Result<()> {
         });
     }
     stopped?;
-    ensure!(!PROFILE.admission_enabled());
+    ensure!(!profile.admission_enabled());
     Ok(())
 }
 
 #[actix::test]
 async fn synchronized_disk_reopen_restores_actor_work_and_releases_rejected_slots() -> Result<()> {
-    exercise(None).await
+    exercise(PROFILE, None).await
 }
 
 #[actix::test]
 #[ignore = "requires pinned nargo/bb, solc 0.8.28, Anvil, pnpm and built contract artifacts; restored setup through DKG and plaintext publication"]
 async fn synchronized_disk_reopen_uses_real_proofs_and_restored_private_inputs() -> Result<()> {
-    let mut circuits = CircuitName::SYNCHRONIZED_DKG.to_vec();
-    circuits.extend([
-        CircuitName::ThresholdShareDecryption,
-        CircuitName::DecryptedSharesAggregation,
-        CircuitName::DecryptionAggregator,
-    ]);
-    let (directory, prover) = real_prover(&circuits)?;
-    if let Err(error) = exercise(Some(&prover)).await {
+    let circuits: Vec<_> = CircuitName::synchronized_definitions().collect();
+    let profile = if std::env::var("E3_SYNC_SECURE_QUALIFICATION").as_deref() == Ok("1") {
+        let other = std::env::var_os("E3_SYNC_OTHER_PROFILE_EXPORT").context(
+            "secure signed qualification requires the insecure signed rehearsal's public export",
+        )?;
+        for file in ["publication.json", "proof", "public_inputs"] {
+            ensure!(
+                Path::new(&other).join(file).is_file(),
+                "missing insecure signed export: {file}"
+            );
+        }
+        BfvProfile::SyncDecSecure8192
+    } else {
+        PROFILE
+    };
+    let (directory, prover) = real_prover(profile, &circuits)?;
+    if let Err(error) = exercise(profile, Some(&prover)).await {
         let evidence = directory.keep();
         return Err(error.context(format!(
             "Proof artifacts retained at {}",

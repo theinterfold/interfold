@@ -21,6 +21,7 @@ use e3_events::{
     InterfoldEventData, Proof, Sequenced, SignedDkgFoldAttestation, ThresholdSharePending,
     TypedEvent, ZkRequest, ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
+use e3_request::canonical_key::CanonicalPublicKeys;
 use tracing::{debug, error, info, warn};
 
 use crate::domain::node_dkg_fold::{DkgProofCollectionState, NodeDkgFoldMeta};
@@ -44,6 +45,7 @@ pub struct NodeProofAggregator {
     pending_inner_proofs: HashMap<E3id, BTreeMap<usize, Proof>>,
     recovery_repositories: Option<Repositories>,
     recovery_index: NodeProofRecoveryIndex,
+    canonical_keys: CanonicalPublicKeys,
     dealer: dealer::DealerCollection,
     recipient: recipient::RecipientCollection,
 }
@@ -68,6 +70,7 @@ impl NodeProofAggregator {
             pending_inner_proofs: HashMap::new(),
             recovery_repositories: None,
             recovery_index: NodeProofRecoveryIndex::default(),
+            canonical_keys: CanonicalPublicKeys::default(),
             dealer: dealer::DealerCollection::default(),
             recipient: recipient::RecipientCollection::default(),
         }
@@ -106,6 +109,7 @@ impl NodeProofAggregator {
         proof_aggregation_enabled: bool,
         repositories: Repositories,
         recovery: NodeProofRecovery,
+        canonical_keys: CanonicalPublicKeys,
         dealer: dealer::DealerCollection,
         recipient: recipient::RecipientCollection,
     ) -> Addr<Self> {
@@ -117,6 +121,7 @@ impl NodeProofAggregator {
             proof_aggregation_enabled,
         )
         .with_recovery(repositories, recovery);
+        actor.canonical_keys = canonical_keys;
         actor.dealer = dealer;
         actor.recipient = recipient;
         let addr = actor.start();
@@ -142,6 +147,11 @@ impl NodeProofAggregator {
         bus.subscribe(EventType::E3RequestComplete, addr.clone().into());
         bus.subscribe(EventType::E3Failed, addr.clone().into());
         bus.subscribe(EventType::E3StageChanged, addr.clone().into());
+        bus.subscribe(EventType::EvmLogObserved, addr.clone().into());
+        bus.subscribe(
+            EventType::SynchronizedDkgContextEstablished,
+            addr.clone().into(),
+        );
         addr
     }
 }

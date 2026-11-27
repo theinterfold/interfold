@@ -64,9 +64,10 @@ not return a cached failure forever. Successful outcomes and same-correlation de
 The worker backs off on local generation failures at 5/15/60/300 seconds. Requesting actors own
 fresh-correlation redrive, including missing-outcome probes; every attempt still passes shared pool
 and lifecycle gates. A stale error cannot bypass queued/running work. Bus refusal retries the exact
-completed outcome instead of recomputing it. At key publication, new obsolete DKG work is refused,
-but already-forwarded SS attempts can still deliver their outcomes, including to waiting
-correlations.
+completed outcome instead of recomputing it. At key publication, already-forwarded SS attempts can
+still deliver their outcomes to waiting correlations. The only synchronized DKG work eligible for
+new dispatch is the local [outside-H recipient join](../../../docs/architecture/dkg.md) for the
+confirmed batch.
 
 A replacement publication request cancels the superseded wrapper attempts at the compute gate.
 Cancellation is node/E3/correlation scoped, interrupts worker backoff and skips semaphore/Rayon
@@ -84,10 +85,10 @@ instead of each using unrelated pool capacity.
 
 ## Event-driven workers
 
-`Multithread::attach` installs threshold-BFV dispatch. `attach_with_zk` additionally supplies the
-prover backend, restored lifecycle stages, and canonical keys. Both need the bus, RNG, local cipher,
-task pool, and node-specific task scope; see the [builder caller](../builder/src/extensions.rs) for
-the complete wiring. These are node-wide workers, not per-E3 router extensions.
+`Multithread::attach` installs threshold-BFV dispatch. `attach_with_zk` also takes the prover
+backend and the local signer's address for owner-bound work. Both use the restored lifecycle stages
+and canonical keys; see the [builder caller](../builder/src/extensions.rs) for the complete wiring.
+These are node-wide workers, not per-E3 router extensions.
 
 Dispatch correlates jobs with their request/E3 and gates recovery on current-boot effect readiness.
 Queued cancellation does not stop an executing closure. Prover process deadlines are separate, and

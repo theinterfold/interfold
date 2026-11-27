@@ -85,5 +85,10 @@ contract SynchronizedDkgControllerHarness {
         require(msg.sender == registries[e3Id]);
         if (reject) revert CallbackRejected();
         _requests[e3Id].committeePublicKey = pk;
+        emit IInterfold.E3StageChanged(
+            e3Id,
+            IInterfold.E3Stage.CommitteeFinalized,
+            IInterfold.E3Stage.KeyPublished
+        );
     }
 }

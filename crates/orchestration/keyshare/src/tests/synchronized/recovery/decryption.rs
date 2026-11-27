@@ -17,6 +17,10 @@ sol! {
         function seedCiphertext(uint256 id, bytes32 contentHash, bytes32 commitment, address verifier) external;
         function failureCondition(uint256 id) external view returns (bool expired, uint8 reason, uint256 deadline);
     }
+    #[sol(rpc)]
+    interface RequestVerifier {
+        function verify(uint256 e3Id, bytes32 domain, bytes32 plaintextHash, bytes32 committeeHash, bytes32 ciphertextCommitment, bytes proof) external view returns (bool);
+    }
 }
 
 struct Observe(UnboundedSender<InterfoldEvent>);
@@ -101,7 +105,7 @@ async fn contributor(
         recovery_payloads: payloads,
         bus: bus.clone(),
         cipher: cipher(owner).await?,
-        params_profile: PROFILE,
+        params_profile: selected.params_profile,
         interfold_address: restored.result().context.setup.interfold_address,
         signer: signer.clone(),
         bfv_key: repos.threshold_keyshare_bfv_key(id),
@@ -150,7 +154,9 @@ pub(super) async fn qualify(
     pk: &PublicKey,
     dir: &Path,
 ) -> Result<()> {
-    let id = &setups[0].selected().e3_id;
+    let selected = setups[0].selected();
+    let id = &selected.e3_id;
+    let profile = selected.params_profile;
     let numeric: U256 = id.clone().try_into()?;
     let controller = chain.controller;
     let honk: Value = serde_json::from_slice(&fs::read(dir.join("DecryptionHonk.json"))?)?;
@@ -170,25 +176,29 @@ pub(super) async fn qualify(
         &libs,
     )
     .await?;
-    let pins = e3_request::canonical_key::SynchronizedChildPins::insecure_minimum()?;
     let wrapper_artifact = artifact(
         "contracts/verifiers/bfv/SynchronizedDecryptionVerifier.sol/SynchronizedDecryptionVerifier.json",
     )?;
     let wrapper = deploy(
         &chain.provider,
         &wrapper_artifact,
-        (verifier, registry, pins.c6, pins.c7).abi_encode_params(),
+        (verifier, registry, B256::from(selected.crypto_config_id)).abi_encode_params(),
         &HashMap::new(),
     )
     .await?;
     let p = &pk.params;
-    let ct = e3_bfv_client::bfv_encrypt(
-        vec![37u64],
-        pk.to_bytes(),
-        p.degree(),
-        p.plaintext(),
-        p.moduli(),
-    )?;
+    // Compute one level-zero output under the published key.
+    let encrypt = |value: u64| -> Result<Ciphertext> {
+        let bytes = e3_bfv_client::bfv_encrypt(
+            vec![value],
+            pk.to_bytes(),
+            p.degree(),
+            p.plaintext(),
+            p.moduli(),
+        )?;
+        Ok(Ciphertext::from_bytes(&bytes, p)?)
+    };
+    let ct = (&encrypt(19)? + &encrypt(18)?).to_bytes();
     let commitment = e3_bfv_client::compute_ct_commitment_with_params(&ct, p)?;
     let checkpoint = Checkpoint::new(controller, &chain.provider);
     let receipt = checkpoint
@@ -313,7 +323,7 @@ pub(super) async fn qualify(
     ensure!(chain.provider.anvil_revert(snapshot).await?);
     let b = last_owner.signed().await?;
     let plan = keys
-        .synchronized_decryption_definition(id, PROFILE, &[ArcBytes::from_bytes(&ct)])?
+        .synchronized_decryption_definition(id, profile, &[ArcBytes::from_bytes(&ct)])?
         .unwrap();
     ensure!(!keys.take_first_reservation(&plan, 0) && !keys.take_first_reservation(&plan, 2));
     ensure!(!restarted.take_first_reservation(&plan, 0));
@@ -354,7 +364,7 @@ pub(super) async fn qualify(
     let circuit = prover
         .circuits_dir(
             e3_zk_config::CircuitVariant::Recursive,
-            &PROFILE.artifacts_dir_for_committee(COMMITTEE)?,
+            &profile.artifacts_dir_for_committee(COMMITTEE)?,
         )
         .join(c7.dir_path())
         .join(format!("{}.json", c7.as_str()));
@@ -462,6 +472,89 @@ pub(super) async fn qualify(
             .connect_http(chain.anvil.endpoint_url()),
     )
     .await?;
+    let final_proof = &intent.decryption_aggregator_proofs[0];
+    let pins = e3_request::canonical_key::SynchronizedChildPins::for_profile(profile, COMMITTEE)?;
+    let other_profile = if profile == PROFILE {
+        BfvProfile::SyncDecSecure8192
+    } else {
+        PROFILE
+    };
+    let other =
+        e3_request::canonical_key::SynchronizedChildPins::for_profile(other_profile, COMMITTEE)?;
+    let lifecycle = IInterfold::new(controller, &chain.provider);
+    let output = Bytes::copy_from_slice(&intent.decrypted_output[0]);
+    use e3_evm_contracts::decryption_errors::SynchronizedDecryptionVerifier::{
+        DomainBindingMismatch, VkHashMismatch,
+    };
+    for (c6, c7) in [
+        (other.c6, pins.c7),
+        (pins.c6, other.c7),
+        (other.c6, other.c7),
+    ] {
+        let mut swapped = final_proof.clone();
+        let mut fields = swapped.public_signals.to_vec();
+        fields[..32].copy_from_slice(c6.as_slice());
+        fields[32..64].copy_from_slice(c7.as_slice());
+        swapped.public_signals = ArcBytes::from_bytes(&fields);
+        let error = lifecycle
+            .publishPlaintextOutput(numeric, output.clone(), e3_evm::encode_zk_proof(&swapped)?)
+            .call()
+            .await
+            .expect_err("request verifier accepted a foreign child VK");
+        ensure!(
+            error.as_decoded_error::<VkHashMismatch>().is_some(),
+            "{error:#}"
+        );
+    }
+    if let Some(export) = std::env::var_os("E3_SYNC_OTHER_PROFILE_EXPORT") {
+        let export = Path::new(&export);
+        let fields = fs::read(export.join("public_inputs"))?;
+        ensure!(
+            fields.get(..32) == Some(other.c6.as_slice())
+                && fields.get(32..64) == Some(other.c7.as_slice())
+        );
+        let foreign = Proof::new(
+            final_proof.circuit,
+            ArcBytes::from_bytes(&fs::read(export.join("proof"))?),
+            ArcBytes::from_bytes(&fields),
+        );
+        let error = lifecycle
+            .publishPlaintextOutput(numeric, output.clone(), e3_evm::encode_zk_proof(&foreign)?)
+            .call()
+            .await
+            .expect_err("request verifier accepted the other profile's proof");
+        ensure!(
+            error.as_decoded_error::<VkHashMismatch>().is_some(),
+            "{error:#}"
+        );
+    }
+    // Leave the genuine proof and the lookup of the signed authority untouched. Change only
+    // the E3 ID in the domain, so missing authority cannot explain the rejection.
+    let context = keys
+        .get(id)
+        .context("missing published key")?
+        .domain(controller);
+    let verifier = RequestVerifier::new(wrapper, &chain.provider);
+    let proof = e3_evm::encode_zk_proof(final_proof)?;
+    let check_domain = |e3| {
+        verifier.verify(
+            numeric,
+            e3_committee_hash::hash_decryption_domain(id.chain_id(), e3, context, keccak256(&ct)),
+            keccak256(&output),
+            context.committee_hash,
+            commitment.into(),
+            proof.clone(),
+        )
+    };
+    ensure!(check_domain(numeric).call().await?);
+    let error = check_domain(numeric + U256::from(1))
+        .call()
+        .await
+        .expect_err("accepted the other E3's decryption domain");
+    ensure!(
+        error.as_decoded_error::<DomainBindingMismatch>().is_some(),
+        "{error:#}"
+    );
     for i in [0, 32, 64, 128, 320] {
         let mut wrong = intent.clone();
         let proof = &mut wrong.decryption_aggregator_proofs[0];
@@ -557,6 +650,10 @@ pub(super) async fn qualify(
                 .await?
                 == 5
     );
+    eprintln!(
+        "{profile} plaintext 37, designated [0,2]: {} gas",
+        mined.gas_used
+    );
     ensure!(
         e3_evm::publish_synchronized_plaintext_definition(writer, &keys, controller, &intent)
             .await?
@@ -587,5 +684,24 @@ pub(super) async fn qualify(
             && sibling.read_checked::<u64>().await? == Some(37)
     );
     node.close().await?;
+    if let Some(export) = std::env::var_os("E3_SYNC_DECRYPTION_EXPORT") {
+        let export = Path::new(&export);
+        fs::create_dir(export)?;
+        fs::write(export.join("proof"), &final_proof.data[..])?;
+        fs::write(
+            export.join("public_inputs"),
+            &final_proof.public_signals[..],
+        )?;
+        let mut publication: Value =
+            serde_json::from_slice(&fs::read(dir.join("publication.json"))?)?;
+        let object = publication.as_object_mut().context("missing publication")?;
+        object.remove("vk");
+        object.remove("decryption_vk");
+        fs::write(
+            export.join("publication.json"),
+            serde_json::to_vec(&publication)?,
+        )?;
+        fs::copy(dir.join("SynchronizedHonk.sol"), export.join("DkgHonk.sol"))?;
+    }
     Ok(())
 }

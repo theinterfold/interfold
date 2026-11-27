@@ -31,10 +31,11 @@ DIRS=(
   "bin/synchronized/dkg"
   "bin/synchronized/threshold"
   "bin/synchronized/recursive_aggregation"
-  "bin/synchronized_secure/threshold/share_decryption"
-  "bin/synchronized_secure/threshold/decrypted_shares_aggregation"
   "bin/chonk"
 )
+for manifest in bin/synchronized_secure/*/*/Nargo.toml; do
+    DIRS+=("${manifest%/*}")
+done
 
 for dir in "${DIRS[@]}"; do
     if [ ! -d "$dir" ]; then

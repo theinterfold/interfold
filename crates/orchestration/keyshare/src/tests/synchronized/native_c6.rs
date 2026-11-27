@@ -143,7 +143,7 @@ async fn synchronized_native_worker_real_c6_and_signed_reuse() -> Result<()> {
     use fhe::trbfv::{DecryptionShare, SynchronizedDecryptor};
     use fhe_traits::FheDecoder;
     let _exclusive = super::super::recovery::DISK_RECOVERY.lock().await;
-    let (dir, prover) = real_prover(&[CircuitName::ThresholdShareDecryption])?;
+    let (dir, prover) = real_prover(PROFILE, &[CircuitName::ThresholdShareDecryption])?;
     let setup = Setup::new().await?;
     let inputs = inputs(&setup)?;
     let ct_bytes = &inputs.ciphertext[0];

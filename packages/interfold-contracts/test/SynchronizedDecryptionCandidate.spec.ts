@@ -44,6 +44,13 @@ const fixture = process.env.E3_SYNC_CANDIDATE_FIXTURE;
       const verify = () =>
         verifier.getFunction("verify").staticCall(proof, fields);
       expect(await verify()).to.equal(true);
+      const control = process.env.E3_SYNC_OTHER_PROFILE_EXPORT;
+      if (control) {
+        const other = readFileSync(join(control, "proof"));
+        await expect(
+          verifier.getFunction("verify").staticCall(other, fields),
+        ).to.be.revert(ethers);
+      }
       fields[75] = ethers.toBeHex(BigInt(fields[75]!) ^ 1n, 32);
       await expect(verify()).to.be.revert(ethers);
     });

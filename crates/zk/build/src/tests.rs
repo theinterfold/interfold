@@ -52,6 +52,7 @@ fn source_refresh_normalizes_matrix_selections_without_touching_artifacts() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
+    seed_sync_entrypoints(&repo, root);
     artifacts::copy_tree(
         &repo.join("circuits/lib"),
         &root.join("circuits/lib"),
@@ -397,6 +398,27 @@ fn synchronized_sources_and_targets_are_isolated_and_missing_descendants_never_f
     }
     full.circuits = vec!["e_sm_share_computation".into()];
     assert!(artifacts::discover(&repo, &full).is_err());
+    // Hash and build the exact statement graph even though both C4 and C6 are named
+    // share_decryption. Selecting by basename alone would include the wrong package.
+    let mut candidate = selected.clone();
+    candidate.circuits.clear();
+    candidate.preset = PresetSelection::Single(BfvProfile::SyncDecSecure8192);
+    for (op, group, count) in [
+        (Operation::DkgCandidate, "dkg", 9),
+        (Operation::DecryptionCandidate, "threshold", 3),
+    ] {
+        candidate.operation = op;
+        let definitions = artifacts::discover(&repo, &candidate).unwrap();
+        assert_eq!(definitions.len(), count);
+        assert_eq!(
+            definitions
+                .iter()
+                .filter(|c| c.name == "share_decryption")
+                .map(|c| c.group.as_str())
+                .collect::<Vec<_>>(),
+            [group]
+        );
+    }
     // `c6_chonk_root` is SS-only; a sync selection must not fall back to its SS definition.
     full.circuits = vec!["c6_chonk_root".into()];
     assert!(artifacts::discover(&repo, &full).is_err());
@@ -1094,6 +1116,7 @@ fn full_source_checks_detect_stale_missing_and_wrong_alias_declarations_without_
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
+    seed_sync_entrypoints(&repo, root);
     artifacts::copy_tree(
         &repo.join("circuits/lib"),
         &root.join("circuits/lib"),
@@ -1147,6 +1170,22 @@ fn full_source_checks_detect_stale_missing_and_wrong_alias_declarations_without_
         "{error}"
     );
     assert_eq!(snapshot(root), before);
+}
+
+fn seed_sync_entrypoints(repo: &Path, root: &Path) {
+    for profile in [BfvProfile::SyncDecInsecure64, BfvProfile::SyncDecSecure8192] {
+        for role in e3_zk_config::CircuitName::SYNCHRONIZED_DKG {
+            let path = Path::new("circuits/bin").join(role.source_path(profile).unwrap());
+            for name in ["Nargo.toml", "src/main.nr"] {
+                let file = path.join(name);
+                write(
+                    root,
+                    file.to_str().unwrap(),
+                    fs::read(repo.join(&file)).unwrap(),
+                );
+            }
+        }
+    }
 }
 
 #[cfg(unix)]

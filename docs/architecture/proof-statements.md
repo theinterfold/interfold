@@ -171,11 +171,12 @@ local synchronized artifacts; it checks the roster, setup, domain, ciphertext, d
 anchors and plaintext against independent expectations before verifying the outer proof. A generated
 Honk verifier alone authenticates no chain state. The isolated
 [synchronized Solidity wrapper](../../packages/interfold-contracts/contracts/verifiers/bfv/SynchronizedDecryptionVerifier.sol)
-pins both child VK hashes and resolves v1 Minimum authority and the published committee hash from
-its fixed registry by E3 ID. It checks every designated row against the published setup, roster and
-SK/bundle columns, and checks the lifecycle-supplied domain, SAFE ciphertext commitment and hash of
-the 400-byte little-endian plaintext. The recursive proof authenticates the share and `c0` openings.
-This wrapper has no deployed route.
+selects both child VK hashes by its immutable Minimum configuration ID. It requires that ID on the
+v1 authority and resolves the published committee hash from its fixed registry by E3 ID. It checks
+every designated row against the published setup, roster and SK/bundle columns, and checks the
+lifecycle-supplied domain, SAFE ciphertext commitment and hash of the 400-byte little-endian
+plaintext. The recursive proof authenticates the share and `c0` openings. This wrapper has no
+deployed route.
 
 At `sync-insecure-64/minimum`, bb 6.0.0 measured 2,242,265 gates for the outer circuit. Its
 generated Solidity verifier (solc 0.8.28) accepted the real 76-field statement and rejected a
@@ -203,8 +204,9 @@ the public statement or choosing keys.
 
 ### Isolated synchronized DKG leaves (draft, not admitted)
 
-`circuits/bin/synchronized/` defines C0–C5 and draft setup/publication joins only for
-`sync-insecure-64/minimum`. C0 and C3 reuse the SS arithmetic with the separate transport
+The two synchronized Minimum profiles use the same C0–C5 and draft setup/publication statements.
+`sync-sources` generates the secure DKG entrypoints from the degree-64 statements with the secure
+threshold and transport configuration. C0 and C3 reuse the SS arithmetic with the separate transport
 parameters. C1 proves a bounded threshold-key contribution without SS's dealt smudging branch. C2
 proves the existing degree-T sharing relation, then commits the native packed messages and an N-wide
 outgoing-key root. C4 opens those packed messages, extracts incoming keys, and commits the centered

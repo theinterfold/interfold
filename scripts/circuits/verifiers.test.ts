@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -165,4 +166,34 @@ else {
   }
   writeFileSync(input, '{invalid')
   assert.throws(() => verifySynchronizedPublication(root, input), SyntaxError)
+})
+
+test('signed secure qualification requires its control and stops on a failed rehearsal', (t) => {
+  const root = fixture(t)
+  const control = 'insecure export'
+  mkdirSync(join(root, control))
+  writeFileSync(join(root, 'bin/solc'), '#!/bin/sh\necho "Version: 0.8.28+fixture"\n', { mode: 0o755 })
+  writeFileSync(
+    join(root, 'bin/python3'),
+    '#!/bin/sh\nprintf "%s\\n" "$E3_SYNC_SECURE_QUALIFICATION" "$E3_SYNC_OTHER_PROFILE_EXPORT" "$E3_SYNC_DECRYPTION_EXPORT" "$1" "$2"\nexit 23\n',
+    { mode: 0o755 },
+  )
+  const run = (otherProfileExport: string) =>
+    spawnSync('bash', [resolve(__dirname, 'qualify-sync-decryption.sh'), 'sync-secure-8192', 'new export', '--signed'], {
+      cwd: root,
+      env: { ...process.env, E3_SYNC_OTHER_PROFILE_EXPORT: otherProfileExport },
+      encoding: 'utf8',
+    })
+  const missing = run('')
+  assert.notEqual(missing.status, 0)
+  assert.equal(missing.stdout, '')
+  const failed = run(control)
+  assert.equal(failed.status, 23)
+  assert.deepEqual(failed.stdout.trimEnd().split('\n'), [
+    '1',
+    realpathSync(join(root, control)),
+    join(realpathSync(root), 'new export'),
+    'scripts/circuits/guard-proof-rss.py',
+    'cargo',
+  ])
 })

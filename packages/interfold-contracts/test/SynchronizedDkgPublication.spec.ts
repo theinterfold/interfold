@@ -136,6 +136,17 @@ prepared("SynchronizedDkgPublication real proof", function () {
         5 + 2 * fixture.dealers.length,
       ),
     );
+    const control = process.env.E3_SYNC_OTHER_PROFILE_EXPORT;
+    if (control) {
+      const other = JSON.parse(
+        fs.readFileSync(path.join(control, "publication.json"), "utf8"),
+      );
+      expect(other.crypto_config_id).not.to.equal(fixture.crypto_config_id);
+      // Keep all authenticated public inputs. Only the foreign proof reaches Honk.
+      await expect(
+        call(encode(fixture.public_inputs, other.proof)),
+      ).to.be.revert(ethers);
+    }
     const ss = await deploy(
       "contracts/verifiers/bfv/BfvPkVerifier.sol",
       "BfvPkVerifier",

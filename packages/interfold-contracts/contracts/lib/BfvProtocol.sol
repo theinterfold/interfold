@@ -83,4 +83,26 @@ library BfvProtocol {
     uint256 internal constant DEC_DOMAIN_HI_IDX = 4;
     uint256 internal constant DEC_DOMAIN_LO_IDX = 5;
     uint256 internal constant DEC_CIPHERTEXT_COMMITMENT_IDX = 6;
+
+    function isSynchronizedMinimum(bytes32 id) internal pure returns (bool) {
+        return
+            id == SYNC_INSECURE_64_MINIMUM_CONFIG_ID ||
+            id == SYNC_SECURE_8192_MINIMUM_CONFIG_ID;
+    }
+
+    function synchronizedMinimumChildKeys(
+        bytes32 id
+    ) internal pure returns (bytes32, bytes32) {
+        if (id == SYNC_INSECURE_64_MINIMUM_CONFIG_ID)
+            return (
+                0x0b11c8bc109d0c0f8722741b403cc2ce1a9d8a509e6ff792c4cac1e10173ef8f,
+                0x256cc15a481c10fe45827039b8f7aaea4f91ee6f0a5c99e5d80e1fce6dfd963d
+            );
+        if (id == SYNC_SECURE_8192_MINIMUM_CONFIG_ID)
+            return (
+                0x075592c054e5bc09e4a7488c078460b607f78e601619eefc1768f5c83239e470,
+                0x1ce8f5c3d31d52edfdc905884917a67ef2025f0654151e5cd48f8932c735a4f8
+            );
+        return (bytes32(0), bytes32(0));
+    }
 }

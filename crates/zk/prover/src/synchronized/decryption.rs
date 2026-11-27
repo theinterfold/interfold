@@ -54,22 +54,21 @@ pub(super) fn child_key(
         .artifacts_dir_for_committee(config.committee)?;
     let dir = prover.circuits_dir(CircuitVariant::Recursive, &namespace);
     let artifacts = vk::load_vk_artifacts(&dir, role)?;
-    if config.profile == e3_fhe_params::BfvProfile::SyncDecInsecure64
-        && config.committee == e3_committee::CiphernodesCommitteeSize::Minimum
-    {
-        let pins = e3_request::canonical_key::SynchronizedChildPins::insecure_minimum()?;
-        let expected = match role {
-            CircuitName::ThresholdShareDecryption => pins.c6,
-            CircuitName::DecryptedSharesAggregation => pins.c7,
-            _ => anyhow::bail!("not a synchronized decryption child: {role}"),
-        };
-        ensure!(
-            artifacts.key_hash_bytes == expected.0,
-            e3_zk_witness::WitnessError::VerificationKey(format!(
-                "installed {role} VK differs from the qualified request pin {expected}"
-            ))
-        );
-    }
+    let pins = e3_zk_config::synchronized::verifier::SynchronizedChildPins::for_profile(
+        config.profile,
+        config.committee,
+    )?;
+    let expected = match role {
+        CircuitName::ThresholdShareDecryption => pins.c6,
+        CircuitName::DecryptedSharesAggregation => pins.c7,
+        _ => anyhow::bail!("not a synchronized decryption child: {role}"),
+    };
+    ensure!(
+        artifacts.key_hash_bytes == expected.0,
+        e3_zk_witness::WitnessError::VerificationKey(format!(
+            "installed {role} VK differs from the qualified request pin {expected}"
+        ))
+    );
     key(&artifacts)
         .validate_recursive_honk()
         .with_context(|| format!("Invalid local {role} VK in {}", dir.display()))?;

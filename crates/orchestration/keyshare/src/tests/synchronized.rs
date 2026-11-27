@@ -94,13 +94,17 @@ impl Setup {
     }
 
     async fn with_ciphers(ciphers: Vec<Arc<Cipher>>) -> Result<Self> {
-        Self::with_ciphers_at(ciphers, Address::repeat_byte(0x11)).await
+        Self::with_ciphers_at(ciphers, Address::repeat_byte(0x11), PROFILE).await
     }
 
-    async fn with_ciphers_at(ciphers: Vec<Arc<Cipher>>, interfold: Address) -> Result<Self> {
+    async fn with_ciphers_at(
+        ciphers: Vec<Arc<Cipher>>,
+        interfold: Address,
+        profile: BfvProfile,
+    ) -> Result<Self> {
         ensure!(ciphers.len() == 3);
         let cipher = ciphers[0].clone();
-        let config = Configs::for_profile(PROFILE, COMMITTEE)?;
+        let config = Configs::for_profile(profile, COMMITTEE)?;
         let mut rngs: Vec<_> = (0..3)
             .map(|owner| rand_chacha::ChaCha20Rng::seed_from_u64(245603 + owner))
             .collect();
@@ -121,8 +125,8 @@ impl Setup {
                 party_id: owner,
                 threshold_m: 1,
                 threshold_n: 3,
-                params_profile: PROFILE,
-                crypto_config_id: PROFILE.crypto_config_id(COMMITTEE).unwrap().into(),
+                params_profile: profile,
+                crypto_config_id: profile.crypto_config_id(COMMITTEE).unwrap().into(),
                 params: ArcBytes::from_bytes(&encode_bfv_params(&config.threshold)),
                 committee: committee.clone(),
                 ..Default::default()
@@ -164,10 +168,10 @@ impl Setup {
                     crp: ArcBytes::from_bytes(
                         &create_deterministic_crp_from_default_seed(&config.threshold).to_bytes(),
                     ),
-                    lambda: PROFILE.threshold_preset().lambda_config(),
+                    lambda: profile.threshold_preset().lambda_config(),
                     num_ciphertexts: 1,
                     synchronized: Some(SynchronizedDkgGeneration {
-                        profile: PROFILE,
+                        profile,
                         committee: COMMITTEE,
                         owner: context.party_id,
                         setup_binding: setup_binding(&context, &selection.e3_id)?,
@@ -193,7 +197,7 @@ impl Setup {
             saved.validate(selection, interfold, cipher)?;
             let plan = build_shares_generated_plan(
                 cipher,
-                PROFILE,
+                profile,
                 selection.party_id,
                 COMMITTEE,
                 output.pk_share,
@@ -261,14 +265,14 @@ impl Setup {
                     .access(&setup.ciphers[owner])?,
             )?;
             let keys = setup.material[owner].outgoing_keys.open(
-                PROFILE,
+                profile,
                 binding,
                 owner as u32,
                 3,
                 &setup.ciphers[owner],
             )?;
             for (recipient, key) in keys.iter().enumerate() {
-                let packed = pack_key(PROFILE, &shares.extract_party_share(recipient)?, key)?;
+                let packed = pack_key(profile, &shares.extract_party_share(recipient)?, key)?;
                 for row in packed.rows() {
                     fields.push(commitment_field(
                         &e3_zk_witness::compute_share_encryption_commitment_from_message(
@@ -309,7 +313,7 @@ impl Setup {
         };
         build_decryption_key_plan(
             &self.ciphers[owner],
-            PROFILE,
+            self.config.profile,
             owner as u64,
             COMMITTEE,
             TrBFVConfig::new(self.selected[owner].params.clone(), 3, 1),
@@ -1060,24 +1064,21 @@ fn run(command: &mut std::process::Command) -> Result<std::process::Output> {
 fn prove_prepared<C: e3_zk_prover::Provable>(
     circuit: &C,
     prover: &e3_zk_prover::ZkProver,
+    profile: BfvProfile,
     config: &C::Config,
     inputs: &C::Input,
     owner: u64,
 ) -> Result<Proof> {
+    let namespace = profile.artifacts_dir_for_committee(COMMITTEE)?;
+    let start = std::time::Instant::now();
     let proof = circuit.prove(
         prover,
         config,
         inputs,
         "sync-runtime-definition",
-        "sync-insecure-64/minimum",
+        &namespace,
     )?;
-    ensure!(circuit.verify(
-        prover,
-        &proof,
-        "sync-runtime-definition",
-        owner,
-        "sync-insecure-64/minimum"
-    )?);
+    ensure!(circuit.verify(prover, &proof, "sync-runtime-definition", owner, &namespace)?);
     let mut altered = proof.clone();
     let mut signals = altered.public_signals.to_vec();
     *signals.last_mut().context("missing public signals")? ^= 1;
@@ -1087,12 +1088,20 @@ fn prove_prepared<C: e3_zk_prover::Provable>(
         &altered,
         "sync-runtime-definition",
         owner,
-        "sync-insecure-64/minimum"
+        &namespace
     )?);
+    eprintln!(
+        "{namespace} {} owner {owner}: prove and verify {:.2}s",
+        proof.circuit,
+        start.elapsed().as_secs_f64()
+    );
     Ok(proof)
 }
 
-fn real_prover(circuits: &[CircuitName]) -> Result<(tempfile::TempDir, e3_zk_prover::ZkProver)> {
+fn real_prover(
+    profile: BfvProfile,
+    circuits: &[CircuitName],
+) -> Result<(tempfile::TempDir, e3_zk_prover::ZkProver)> {
     use e3_zk_prover::{BBPath, ZkBackend, ZkProver};
     use std::{
         fs,
@@ -1126,11 +1135,12 @@ fn real_prover(circuits: &[CircuitName]) -> Result<(tempfile::TempDir, e3_zk_pro
     let artifact_root = directory.path().join("artifacts");
     // Explicit proof variants in private temporary artifacts, not an installable archive.
     for circuit in circuits {
-        let package = directory.path().join(circuit.as_str());
+        let package = directory.path().join(circuit.dir_path());
+        eprintln!("Preparing {profile} {circuit}");
         fs::create_dir_all(package.join("src"))?;
         let source = root.join("circuits/bin").join(
             circuit
-                .source_path(PROFILE)
+                .source_path(profile)
                 .context("missing sync source")?,
         );
         let mut manifest: toml::Value =
@@ -1141,18 +1151,11 @@ fn real_prover(circuits: &[CircuitName]) -> Result<(tempfile::TempDir, e3_zk_pro
         fs::write(package.join("Nargo.toml"), toml::to_string(&manifest)?)?;
         fs::copy(source.join("src/main.nr"), package.join("src/main.nr"))?;
         run(Command::new("nargo").arg("compile").current_dir(&package))?;
-        // Explicit variants for this private qualification, not a release/staging variant table.
-        let variant = match circuit {
-            CircuitName::NodeFold | CircuitName::NodesFold | CircuitName::PkAggregation => {
-                e3_zk_config::CircuitVariant::Default
-            }
-            CircuitName::DkgAggregator | CircuitName::DecryptionAggregator => {
-                e3_zk_config::CircuitVariant::Evm
-            }
-            _ => e3_zk_config::CircuitVariant::Recursive,
-        };
+        let variant = circuit
+            .synchronized_variant()
+            .context("not a synchronized proof role")?;
         let target = artifact_root
-            .join(PROFILE.artifacts_dir_for_committee(COMMITTEE)?)
+            .join(profile.artifacts_dir_for_committee(COMMITTEE)?)
             .join(variant.as_str())
             .join(circuit.dir_path());
         fs::create_dir_all(&target)?;
@@ -1182,12 +1185,15 @@ fn real_prover(circuits: &[CircuitName]) -> Result<(tempfile::TempDir, e3_zk_pro
 #[ignore = "requires pinned nargo and E3_CUSTOM_BB; proves production sync DKG preparation, not recursive/runtime admission"]
 async fn synchronized_prepared_runtime_requests_prove_with_real_crypto() -> Result<()> {
     use e3_zk_prover::synchronized as adapters;
-    let (_directory, prover) = real_prover(&[
-        CircuitName::PkGeneration,
-        CircuitName::SkShareComputation,
-        CircuitName::ShareEncryption,
-        CircuitName::DkgShareDecryption,
-    ])?;
+    let (_directory, prover) = real_prover(
+        PROFILE,
+        &[
+            CircuitName::PkGeneration,
+            CircuitName::SkShareComputation,
+            CircuitName::ShareEncryption,
+            CircuitName::DkgShareDecryption,
+        ],
+    )?;
     let mut setup = Setup::new().await?;
     for owner in 0..3 {
         let e3 = &setup.selected[owner].e3_id;
@@ -1200,6 +1206,7 @@ async fn synchronized_prepared_runtime_requests_prove_with_real_crypto() -> Resu
         let c1 = prove_prepared(
             &adapters::PkGenerationCircuit,
             &prover,
+            setup.config.profile,
             &setup.config,
             &generation,
             owner as u64,
@@ -1213,6 +1220,7 @@ async fn synchronized_prepared_runtime_requests_prove_with_real_crypto() -> Resu
         let c2 = prove_prepared(
             &adapters::ShareComputationCircuit,
             &prover,
+            setup.config.profile,
             &setup.config,
             &computation,
             owner as u64,
@@ -1246,6 +1254,7 @@ async fn synchronized_prepared_runtime_requests_prove_with_real_crypto() -> Resu
     prove_prepared(
         &e3_zk_prover::ShareEncryptionCircuit,
         &prover,
+        setup.config.profile,
         &setup.config.share_encryption,
         &setup.c3_data(0, encryption)?,
         0,
@@ -1264,6 +1273,7 @@ async fn synchronized_prepared_runtime_requests_prove_with_real_crypto() -> Resu
         let c4 = prove_prepared(
             &adapters::ShareDecryptionCircuit,
             &prover,
+            setup.config.profile,
             &setup.config,
             &input,
             owner as u64,

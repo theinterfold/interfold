@@ -578,6 +578,25 @@ impl ThresholdKeyshare {
         }
         let ec = recovery.last_ec.clone().unwrap_or(effects_context);
         self.discard_unanchored_synchronized_c4(&ec)?;
+        if recovery
+            .ciphernode_selected
+            .as_ref()
+            .is_some_and(|selected| self.synchronized_dkg_published(&selected.e3_id))
+        {
+            match self.state.try_get()?.state {
+                KeyshareState::ReadyForDecryption(_) => {
+                    return self.publish_synchronized_recipient_inputs(ec)
+                }
+                KeyshareState::Init
+                | KeyshareState::CollectingEncryptionKeys(_)
+                | KeyshareState::GeneratingThresholdShare(_)
+                | KeyshareState::AggregatingDecryptionKey(_) => {
+                    // Publication cannot restart missing dealer, roster or leaf work.
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
         // The saved expulsions can already explain a held Ready update: the write that applies it
         // is separate from the expulsion's, and a refused write must not strand the update.
         self.apply_held_ready_updates(ec.clone())?;

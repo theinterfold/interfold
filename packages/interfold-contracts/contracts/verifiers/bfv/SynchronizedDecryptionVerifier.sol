@@ -29,20 +29,23 @@ contract SynchronizedDecryptionVerifier is IDecryptionVerifier {
 
     ICircuitVerifier public immutable CIRCUIT_VERIFIER;
     ISynchronizedDkgPublication public immutable REGISTRY;
+    bytes32 public immutable CRYPTO_CONFIG_ID;
     bytes32 public immutable C6_KEY_HASH;
     bytes32 public immutable C7_KEY_HASH;
 
-    constructor(address honk, address registry, bytes32 c6, bytes32 c7) {
+    constructor(address honk, address registry, bytes32 configId) {
+        (bytes32 c6, bytes32 c7) = BfvProtocol.synchronizedMinimumChildKeys(
+            configId
+        );
         if (
             honk.code.length == 0 ||
             registry.code.length == 0 ||
             c6 == 0 ||
-            uint256(c6) >= SCALAR_MODULUS ||
-            c7 == 0 ||
-            uint256(c7) >= SCALAR_MODULUS
+            c7 == 0
         ) revert InvalidConfiguration();
         CIRCUIT_VERIFIER = ICircuitVerifier(honk);
         REGISTRY = ISynchronizedDkgPublication(registry);
+        CRYPTO_CONFIG_ID = configId;
         C6_KEY_HASH = c6;
         C7_KEY_HASH = c7;
     }
@@ -72,8 +75,7 @@ contract SynchronizedDecryptionVerifier is IDecryptionVerifier {
             .getSynchronizedDkgAuthority(e3Id);
         if (
             a.version != 1 ||
-            a.cryptoConfigId !=
-            BfvProtocol.SYNC_INSECURE_64_MINIMUM_CONFIG_ID ||
+            a.cryptoConfigId != CRYPTO_CONFIG_ID ||
             a.partyIds.length != H ||
             a.skAggCommits.length != H ||
             a.keyBundleCommits.length != H

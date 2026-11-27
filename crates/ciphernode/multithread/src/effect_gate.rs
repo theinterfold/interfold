@@ -7,11 +7,15 @@
 //! Replay-safe gate for value-bearing compute effects.
 
 use actix::{Actor, Context, Handler, Recipient};
+use alloy::primitives::Address;
 use e3_events::{
     BusHandle, ComputeRequest, ComputeRequestError, ComputeRequestKind, ComputeResponse,
     CorrelationId, E3Stage, E3id, Event, EventContextAccessors, EventPublisher, EventSubscriber,
     EventType, InterfoldEvent, InterfoldEventData, ProofType, TypedEvent, VerifyShareProofsRequest,
     ZkRequest,
+};
+use e3_request::canonical_key::{
+    CanonicalDkgAnchors, CanonicalPublicKey, CanonicalPublicKeys, SynchronizedDkgAuthority,
 };
 use e3_utils::MAILBOX_LIMIT;
 use std::collections::{HashMap, HashSet};
@@ -142,7 +146,8 @@ pub(crate) struct ComputeEffectGate {
     superseded: HashSet<(E3id, CorrelationId)>,
     replayed_responses: HashMap<RequestKey, ComputeOutcome>,
     stages: HashMap<E3id, E3Stage>,
-    canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
+    canonical_keys: CanonicalPublicKeys,
+    local_signer: Option<Address>,
     running: RunningJobs,
     reforward_after: Duration,
 }
@@ -160,6 +165,7 @@ impl ComputeEffectGate {
             replayed_responses: HashMap::new(),
             stages: initial_stages,
             canonical_keys: Default::default(),
+            local_signer: None,
             running: RunningJobs::default(),
             reforward_after: REFORWARD_AFTER,
         }
@@ -230,7 +236,17 @@ impl ComputeEffectGate {
     }
 
     fn request_is_obsolete(&self, e3_id: &E3id, kind: &ComputeRequestKind) -> bool {
-        Self::request_is_obsolete_at_stage(self.stages.get(e3_id), kind)
+        let key = if Self::is_dkg_request(kind) {
+            self.canonical_keys.get(e3_id)
+        } else {
+            None
+        };
+        Self::request_is_obsolete_at_stage(
+            self.stages.get(e3_id),
+            kind,
+            key.as_ref(),
+            self.local_signer,
+        )
     }
 
     /// Accusation work of a failed E3 runs until the request completes, so that a node can still
@@ -242,14 +258,28 @@ impl ComputeEffectGate {
         )
     }
 
-    fn request_is_obsolete_at_stage(stage: Option<&E3Stage>, kind: &ComputeRequestKind) -> bool {
-        match stage {
-            Some(E3Stage::Failed) if Self::is_accusation_request(kind) => false,
-            Some(E3Stage::Complete | E3Stage::Failed) => true,
-            Some(stage) if Self::stage_rank(stage) >= Self::stage_rank(&E3Stage::KeyPublished) => {
-                Self::is_dkg_request(kind)
-            }
-            _ => false,
+    fn request_is_obsolete_at_stage(
+        stage: Option<&E3Stage>,
+        kind: &ComputeRequestKind,
+        key: Option<&CanonicalPublicKey>,
+        signer: Option<Address>,
+    ) -> bool {
+        if stage.is_some_and(E3Stage::is_terminal) {
+            return stage != Some(&E3Stage::Failed) || !Self::is_accusation_request(kind);
+        }
+        let published = matches!(
+            stage,
+            Some(E3Stage::KeyPublished | E3Stage::CiphertextReady)
+        ) || key
+            .is_some_and(|key| matches!(key.dkg_anchors, CanonicalDkgAnchors::Synchronized(_)));
+        if !published {
+            return false;
+        }
+        match kind {
+            ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(work)) => !key
+                .zip(signer)
+                .is_some_and(|(key, owner)| key.matches_late_recipient_work(owner, work)),
+            _ => Self::is_dkg_request(kind),
         }
     }
 
@@ -264,20 +294,17 @@ impl ComputeEffectGate {
             })
             .unwrap_or(true);
         if should_advance {
-            self.stages.insert(e3_id.clone(), new_stage);
+            self.stages.insert(e3_id, new_stage);
         }
-
-        let current_stage = self.stages.get(&e3_id).cloned();
-        self.pending.retain(|(pending_id, kind), _| {
-            pending_id != &e3_id
-                || !Self::request_is_obsolete_at_stage(current_stage.as_ref(), kind)
-        });
     }
 
     /// Extract the dedup key from a ComputeRequest event, if it is one.
     fn request_key(event: &InterfoldEvent) -> Option<RequestKey> {
         match event.get_data() {
-            InterfoldEventData::ComputeRequest(request) => {
+            InterfoldEventData::ComputeRequest(request)
+                if event.source() == e3_events::EventSource::Local
+                    || !Self::synchronized_generation(&request.request) =>
+            {
                 Some((request.e3_id.clone(), request.request.clone()))
             }
             _ => None,
@@ -446,6 +473,10 @@ impl ComputeEffectGate {
             .request_keys_by_correlation
             .get(&correlation_id)
             .filter(|key| &key.0 == outcome_e3)
+            .filter(|key| {
+                event.source() == e3_events::EventSource::Local
+                    || !Self::synchronized_generation(&key.1)
+            })
             .cloned();
         let forwarded_key = key.as_ref().filter(|key| {
             self.forwarded
@@ -522,11 +553,13 @@ impl ComputeEffectGate {
         bus: &BusHandle,
         target: Recipient<ForwardedCompute>,
         initial_stages: HashMap<E3id, E3Stage>,
-        canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
+        canonical_keys: CanonicalPublicKeys,
+        local_signer: Option<Address>,
         running: RunningJobs,
     ) {
         let mut gate = Self::new(target, initial_stages).with_bus(bus.clone());
         gate.canonical_keys = canonical_keys;
+        gate.local_signer = local_signer;
         gate.running = running;
         let gate = gate.start();
         bus.subscribe_all(
@@ -535,9 +568,12 @@ impl ComputeEffectGate {
                 EventType::ComputeResponse,
                 EventType::ComputeRequestError,
                 EventType::EffectsEnabled,
+                EventType::E3Requested,
+                EventType::SynchronizedDkgContextEstablished,
                 EventType::E3RequestComplete,
                 EventType::E3Failed,
                 EventType::E3StageChanged,
+                EventType::EvmLogObserved,
             ],
             gate.recipient(),
         );
@@ -547,7 +583,9 @@ impl ComputeEffectGate {
         let InterfoldEventData::ComputeRequest(request) = event.get_data() else {
             return;
         };
-        let key = (request.e3_id.clone(), request.request.clone());
+        let Some(key) = Self::request_key(&event) else {
+            return;
+        };
         self.request_keys_by_correlation
             .insert(request.correlation_id, key.clone());
         match self.pending.entry(key) {
@@ -578,15 +616,48 @@ impl ComputeEffectGate {
     /// accusation work; a complete request keeps nothing.
     fn cancel(&mut self, e3_id: &E3id) {
         let stage = self.stages.get(e3_id).cloned();
-        let ends = |(request_id, kind): &RequestKey| {
-            // Publication still stops new obsolete DKG requests, but must not suppress the
-            // outcomes (including waiting correlations) of already-dispatched SS work.
-            request_id == e3_id
-                && Self::request_is_obsolete_at_stage(stage.as_ref(), kind)
-                && (stage.as_ref().is_some_and(E3Stage::is_terminal)
-                    || Self::synchronized_generation(kind))
+        let key = self.canonical_keys.get(e3_id);
+        let obsolete = |(id, kind): &RequestKey| {
+            id == e3_id
+                && Self::request_is_obsolete_at_stage(
+                    stage.as_ref(),
+                    kind,
+                    key.as_ref(),
+                    self.local_signer,
+                )
         };
-        self.pending.retain(|key, _| !ends(key));
+        self.pending.retain(|work, _| !obsolete(work));
+        let selection = self.canonical_keys.synchronized_selection(e3_id);
+        let synchronized =
+            selection.is_some() || self.canonical_keys.synchronized_context(e3_id).is_some();
+        let local_owner = |party: u32| {
+            self.local_signer.is_some_and(|signer| {
+                selection
+                    .as_ref()
+                    .is_none_or(|s| s.committee.get(party as usize) == Some(&signer))
+            })
+        };
+        let ends = |work @ (_, kind): &RequestKey| {
+            if !obsolete(work) {
+                return false;
+            }
+            if stage.as_ref().is_some_and(E3Stage::is_terminal) {
+                return true;
+            }
+            // The controller callback precedes the two registry logs. A join dispatched locally
+            // before that callback may finish; no new dispatch or setup is authorized in the gap.
+            if key.is_none()
+                && matches!(kind, ComputeRequestKind::Zk(ZkRequest::SynchronizedDkg(work))
+                    if matches!(&work.job, e3_events::SynchronizedDkgProofJob::Recipient { expected, .. }
+                        if expected.recipient == work.context.party_id && local_owner(expected.recipient)
+                        && !expected.dealers.contains(&expected.recipient)))
+            {
+                return false;
+            }
+            // C0–C4 use shared job shapes. Retire them for a known synchronized request;
+            // already-dispatched SS work still owes its outcomes to waiting correlations.
+            synchronized || Self::synchronized_generation(kind)
+        };
         for (_, request) in self.forwarded.iter().filter(|(key, _)| ends(key)) {
             if request.outcome.is_none() {
                 for id in &request.correlation_ids {
@@ -640,6 +711,16 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
                 self.record_stage(stage.e3_id.clone(), stage.new_stage.clone());
                 self.cancel(&stage.e3_id);
             }
+            data if event.source() == e3_events::EventSource::Evm => {
+                if let Some(id) = SynchronizedDkgAuthority::observation_id(data) {
+                    if self.canonical_keys.get(id).is_some_and(|key| {
+                        matches!(key.dkg_anchors, CanonicalDkgAnchors::Synchronized(_))
+                    }) {
+                        self.record_stage(id.clone(), E3Stage::KeyPublished);
+                        self.cancel(id);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -647,6 +728,8 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    mod late_recipient;
+
     use super::*;
     use actix::{Addr, Message, ResponseFuture};
     use e3_committee::CiphernodesCommitteeSize;
