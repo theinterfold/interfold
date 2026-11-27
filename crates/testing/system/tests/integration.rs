@@ -43,6 +43,35 @@ async fn trbfv_scenario_standby_node() -> Result<()> {
     Ok(())
 }
 
+/// The insecure l-BFV parameters: every party online, the key published through the l-BFV path.
+/// The `trbfv_scenario_` prefix keeps this full-proof run out of the CI `integration` leg's skip
+/// filter. The DKG window stays open: the contract refuses a secure-16384 window below 21,600 s.
+#[actix::test]
+#[serial_test::serial]
+async fn trbfv_scenario_lbfv_insecure() -> Result<()> {
+    run_and_check(&Scenario {
+        dkg_window: None,
+        ..Scenario::lbfv(trbfv::scenario::Preset::InsecureLbfv)
+    })
+    .await?;
+    Ok(())
+}
+
+/// The secure-16384 l-BFV parameters. Needs the secure-16384 circuit artifacts. The key wait of
+/// this preset is far longer than the standby scenario's 1,200 s DKG window, so the window stays
+/// open.
+#[actix::test]
+#[serial_test::serial]
+#[ignore = "requires secure-16384 circuit artifacts"]
+async fn trbfv_scenario_lbfv_secure_16384() -> Result<()> {
+    run_and_check(&Scenario {
+        dkg_window: None,
+        ..Scenario::lbfv(trbfv::scenario::Preset::Secure16384)
+    })
+    .await?;
+    Ok(())
+}
+
 /// Party 1 goes offline after publishing C0; the aggregator selects a roster without it.
 #[actix::test]
 #[serial_test::serial]
