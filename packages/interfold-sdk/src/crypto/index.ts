@@ -17,7 +17,8 @@ export {
   encryptVectorAndGenProof,
 } from './encrypt'
 
-export { generateProof } from './user-data-encryption'
+export { generateProof, getUserDataEncryptionVkChains } from './user-data-encryption'
+export type { UserDataEncryptionVkChains } from './user-data-encryption'
 
 export type { BfvParams, ThresholdBfvParamsPresetName, VerifiableEncryptionResult, EncryptedValueAndPublicInputs } from './types'
 

@@ -1556,6 +1556,7 @@ jobs:
           include-hidden-files: true
           path: |
             packages/interfold-sdk/dist
+            packages/interfold-sdk/circuits/dist
             packages/interfold-contracts/dist
             packages/interfold-contracts/artifacts
             packages/interfold-contracts/cache

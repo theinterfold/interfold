@@ -8,9 +8,9 @@ import { Barretenberg, UltraHonkBackend, type ProofData } from '@aztec-foundatio
 import userDataEncryptionCircuit from '../../../../circuits/bin/threshold/target/user_data_encryption.json'
 import { CompiledCircuit, Noir } from '@noir-lang/noir_js'
 
-import type { CircuitInputs } from './user-data-encryption'
+import type { TrbfvCircuitInputs } from './user-data-encryption'
 
-export const proveUserDataEncryption = async (circuitInputs: CircuitInputs): Promise<ProofData> => {
+export const proveUserDataEncryption = async (circuitInputs: TrbfvCircuitInputs): Promise<ProofData> => {
   // The circuit needs 2^21 SRS points. Pass the size to `new`: on the WASM backend that
   // browsers use, a later `initSRSChonk` call does not enlarge the SRS that `new` loads.
   const api = await Barretenberg.new({ srsSize: 2 ** 21 })

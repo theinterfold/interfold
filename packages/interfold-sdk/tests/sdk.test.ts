@@ -4,12 +4,35 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+import { readFileSync } from 'node:fs'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { InterfoldSDK } from '../src/interfold-sdk'
-import { zeroAddress } from 'viem'
+import { BFV_ENCRYPTION_SCHEME_ID, bfvPresetForParamSet } from '@interfold/contracts/bfv'
+import { encodeAbiParameters, keccak256, stringToBytes, zeroAddress } from 'viem'
 import { hardhat } from 'viem/chains'
 import { generatePublicKey } from '../src/crypto'
+
+describe('crypto configuration IDs', () => {
+  it('uses the current circuit identity for every on-chain BFV parameter set', () => {
+    const fixture = JSON.parse(
+      readFileSync(new URL('../../../crates/bfv/params/tests/fixtures/bfv_protocol.json', import.meta.url), 'utf8'),
+    )
+    const current = fixture.vectors.filter((vector: { name: string }) => vector.name.startsWith('current-'))
+    expect(current.map((vector: { paramSet: number }) => vector.paramSet).sort()).to.deep.equal([3, 4, 5, 6])
+    for (const vector of current) {
+      const preset = bfvPresetForParamSet(vector.paramSet)
+      expect(preset).toBeDefined()
+      const id = keccak256(
+        encodeAbiParameters(
+          [{ type: 'bytes32' }, { type: 'bytes32' }, { type: 'bytes32' }],
+          [BFV_ENCRYPTION_SCHEME_ID as `0x${string}`, preset!.paramSetHash, keccak256(stringToBytes(vector.circuitVersion))],
+        ),
+      )
+      expect(id).to.equal(vector.cryptoConfigId)
+    }
+  })
+})
 
 let publicKey: Uint8Array
 beforeAll(async () => {
