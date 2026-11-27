@@ -648,6 +648,15 @@ function validateActiveBfvCommitteeConfig(config: ProtocolConfigFile): void {
   }
 
   const routes = bfvConfigsForChain(config.chainId);
+  if (
+    routes.some((active) => active.preset === "secure-16384") &&
+    BigInt(config.interfold.timeoutConfig.dkgWindow) < 21_600n
+  ) {
+    throw new Error(
+      "interfold.timeoutConfig.dkgWindow must be at least 21600 seconds when the chain supports secure-16384",
+    );
+  }
+
   for (const active of routes) {
     const found = config.interfold.committeeThresholds.some(
       (threshold) =>

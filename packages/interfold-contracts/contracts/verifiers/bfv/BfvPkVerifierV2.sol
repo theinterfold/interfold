@@ -1,0 +1,293 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+pragma solidity 0.8.28;
+
+import { E3 } from "../../interfaces/IE3.sol";
+import { ICiphernodeRegistry } from "../../interfaces/ICiphernodeRegistry.sol";
+import { ICircuitVerifier } from "../../interfaces/ICircuitVerifier.sol";
+import { IInterfold } from "../../interfaces/IInterfold.sol";
+import { IPkVerifier } from "../../interfaces/IPkVerifier.sol";
+import { ActiveCryptoConfig } from "../../lib/ActiveCryptoConfig.sol";
+import { BfvPkV2Layout } from "../../lib/BfvPkV2Layout.sol";
+import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
+
+/// @notice Verifies a V2 l-BFV DKG aggregator proof.
+contract BfvPkVerifierV2 is IPkVerifier {
+    error InvalidCircuitVerifier(address verifier);
+    error InvalidRegistry(address registry);
+    error InvalidParamSet(uint8 paramSet);
+    error InvalidVerificationKeyHash();
+
+    uint256 private constant LBFV_PROOF_DOMAIN_VERSION = 1;
+    uint256 public constant LBFV_PROTOCOL_VERSION = 11;
+    uint256 private constant LBFV_CONSTANTS_VERSION = 1;
+    bytes32 private constant LBFV_PROOF_DOMAIN_LABEL_HASH =
+        keccak256("interfold.lbfv.proof-domain:v1");
+    bytes32 private constant LBFV_ACCEPTED_SET_LABEL_HASH =
+        keccak256("interfold.lbfv.accepted-party-set:v1");
+
+    /// @notice Honest-party count compiled into the V2 circuit.
+    uint256 public immutable override h;
+
+    /// @notice Total committee count compiled into the V2 circuit.
+    uint256 public immutable committeeN;
+
+    /// @notice Parameter-set identifier accepted by this route.
+    uint8 public immutable expectedParamSet;
+
+    /// @notice Number of l-BFV rows compiled into this route.
+    uint256 public immutable lbfvRows;
+
+    /// @notice Public-input count accepted by the generated Honk verifier.
+    uint256 public immutable expectedPublicInputsLen;
+
+    /// @notice Registry used to resolve request-time root and Interfold context.
+    ICiphernodeRegistry public immutable ciphernodeRegistry;
+
+    /// @notice Generated V2 Honk verifier.
+    ICircuitVerifier public immutable circuitVerifier;
+
+    bytes32 public immutable expectedNodesFoldKeyHash;
+    bytes32 public immutable expectedSkC2ChunkKeyHash;
+    bytes32 public immutable expectedESmC2ChunkKeyHash;
+    bytes32[15] public expectedLegacyVkBinding;
+    bytes32[11] public expectedV2VkBinding;
+
+    constructor(
+        address _circuitVerifier,
+        address _ciphernodeRegistry,
+        uint8 _paramSet,
+        uint256 _committeeH,
+        uint256 _committeeN,
+        bytes32 _expectedNodesFoldKeyHash,
+        bytes32 _expectedSkC2ChunkKeyHash,
+        bytes32 _expectedESmC2ChunkKeyHash,
+        bytes32[15] memory _expectedLegacyVkBinding,
+        bytes32[11] memory _expectedV2VkBinding
+    ) {
+        if (_circuitVerifier.code.length == 0) {
+            revert InvalidCircuitVerifier(_circuitVerifier);
+        }
+        if (_ciphernodeRegistry.code.length == 0) {
+            revert InvalidRegistry(_ciphernodeRegistry);
+        }
+        // The V2 statement exists only on the l-BFV path.
+        if (!BfvPkV2Layout.isLbfvParamSet(_paramSet)) {
+            revert InvalidParamSet(_paramSet);
+        }
+        if (_committeeH == 0 || _committeeN == 0 || _committeeH > _committeeN) {
+            revert InvalidParamSet(_paramSet);
+        }
+        if (
+            _expectedNodesFoldKeyHash == bytes32(0) ||
+            _expectedSkC2ChunkKeyHash == bytes32(0) ||
+            _expectedESmC2ChunkKeyHash == bytes32(0)
+        ) revert InvalidVerificationKeyHash();
+
+        for (uint256 i = 0; i < BfvPkV2Layout.LEGACY_VK_BINDING_LEN; ++i) {
+            if (_expectedLegacyVkBinding[i] == bytes32(0)) {
+                revert InvalidVerificationKeyHash();
+            }
+            expectedLegacyVkBinding[i] = _expectedLegacyVkBinding[i];
+        }
+        for (uint256 i = 0; i < BfvPkV2Layout.V2_VK_BINDING_LEN; ++i) {
+            if (_expectedV2VkBinding[i] == bytes32(0)) {
+                revert InvalidVerificationKeyHash();
+            }
+            expectedV2VkBinding[i] = _expectedV2VkBinding[i];
+        }
+
+        h = _committeeH;
+        committeeN = _committeeN;
+        expectedParamSet = _paramSet;
+        lbfvRows = BfvPkV2Layout.rowCount(_paramSet);
+        expectedPublicInputsLen = BfvPkV2Layout.publicInputsLength(
+            _committeeH,
+            lbfvRows
+        );
+        ciphernodeRegistry = ICiphernodeRegistry(_ciphernodeRegistry);
+        circuitVerifier = ICircuitVerifier(_circuitVerifier);
+        expectedNodesFoldKeyHash = _expectedNodesFoldKeyHash;
+        expectedSkC2ChunkKeyHash = _expectedSkC2ChunkKeyHash;
+        expectedESmC2ChunkKeyHash = _expectedESmC2ChunkKeyHash;
+    }
+
+    /// @inheritdoc IPkVerifier
+    function verify(
+        uint256 e3Id,
+        uint256 committeeRoot,
+        address[] calldata sortedNodes,
+        bytes32 pkCommitment,
+        bytes32 committeeHash,
+        bytes calldata proof
+    ) external view override returns (bool) {
+        (bytes memory rawProof, bytes32[] memory publicInputs) = abi.decode(
+            proof,
+            (bytes, bytes32[])
+        );
+
+        if (publicInputs.length != expectedPublicInputsLen) {
+            revert InvalidPublicInputsLength();
+        }
+        if (sortedNodes.length != committeeN) {
+            revert DomainBindingMismatch();
+        }
+        if (
+            committeeHash != CommitteeHashLib.hash(sortedNodes) ||
+            ciphernodeRegistry.rootAt(e3Id) != committeeRoot
+        ) {
+            revert DomainBindingMismatch();
+        }
+
+        _checkV2VkAnchors(publicInputs);
+        _checkPartyIds(publicInputs);
+        _checkCommitteeHash(publicInputs, committeeHash);
+        _checkAcceptedPartySet(publicInputs);
+
+        if (publicInputs[BfvPkV2Layout.pkCommitmentIdx(h)] != pkCommitment) {
+            revert PkCommitmentMismatch();
+        }
+        _checkSession(e3Id, committeeHash, publicInputs);
+
+        if (!circuitVerifier.verify(rawProof, publicInputs)) {
+            revert InvalidProof();
+        }
+        return true;
+    }
+
+    function _checkV2VkAnchors(bytes32[] memory publicInputs) private view {
+        if (publicInputs[0] != expectedNodesFoldKeyHash) {
+            revert VkHashMismatch();
+        }
+        if (
+            publicInputs[BfvPkV2Layout.skC2ChunkKeyHashIdx(h)] !=
+            expectedSkC2ChunkKeyHash
+        ) {
+            revert VkHashMismatch();
+        }
+        if (
+            publicInputs[BfvPkV2Layout.esmC2ChunkKeyHashIdx(h)] !=
+            expectedESmC2ChunkKeyHash
+        ) {
+            revert VkHashMismatch();
+        }
+        uint256 legacyVkBindingStart = BfvPkV2Layout.legacyVkBindingStart(h);
+        for (uint256 i = 0; i < BfvPkV2Layout.LEGACY_VK_BINDING_LEN; ++i) {
+            if (
+                publicInputs[legacyVkBindingStart + i] !=
+                expectedLegacyVkBinding[i]
+            ) {
+                revert VkHashMismatch();
+            }
+        }
+        uint256 v2VkBindingStart = BfvPkV2Layout.v2VkBindingStart(h, lbfvRows);
+        for (uint256 i = 0; i < BfvPkV2Layout.V2_VK_BINDING_LEN; ++i) {
+            if (publicInputs[v2VkBindingStart + i] != expectedV2VkBinding[i]) {
+                revert VkHashMismatch();
+            }
+        }
+    }
+
+    function _checkPartyIds(bytes32[] memory publicInputs) private view {
+        uint256 previous;
+        for (uint256 i = 0; i < h; ++i) {
+            uint256 partyId = uint256(
+                publicInputs[BfvPkV2Layout.PARTY_ID_START + i]
+            );
+            if (partyId >= committeeN || (i > 0 && partyId <= previous)) {
+                revert DomainBindingMismatch();
+            }
+            previous = partyId;
+        }
+        if (
+            uint256(publicInputs[BfvPkV2Layout.aggregatorIdIdx(h)]) >=
+            committeeN
+        ) {
+            revert DomainBindingMismatch();
+        }
+    }
+
+    function _checkCommitteeHash(
+        bytes32[] memory publicInputs,
+        bytes32 committeeHash
+    ) private view {
+        if (
+            publicInputs[BfvPkV2Layout.committeeHashHiIdx(h)] !=
+            CommitteeHashLib.hi(committeeHash) ||
+            publicInputs[BfvPkV2Layout.committeeHashLoIdx(h)] !=
+            CommitteeHashLib.lo(committeeHash)
+        ) {
+            revert DomainBindingMismatch();
+        }
+    }
+
+    function _checkAcceptedPartySet(
+        bytes32[] memory publicInputs
+    ) private view {
+        bytes memory acceptedSetPreimage = abi.encodePacked(
+            LBFV_ACCEPTED_SET_LABEL_HASH,
+            uint32(h)
+        );
+        for (uint256 i = 0; i < h; ++i) {
+            acceptedSetPreimage = bytes.concat(
+                acceptedSetPreimage,
+                abi.encodePacked(
+                    uint32(
+                        uint256(publicInputs[BfvPkV2Layout.PARTY_ID_START + i])
+                    )
+                )
+            );
+        }
+        bytes32 acceptedSetHash = keccak256(acceptedSetPreimage);
+        if (
+            publicInputs[BfvPkV2Layout.acceptedSetHiIdx(h)] !=
+            CommitteeHashLib.hi(acceptedSetHash) ||
+            publicInputs[BfvPkV2Layout.acceptedSetLoIdx(h)] !=
+            CommitteeHashLib.lo(acceptedSetHash)
+        ) {
+            revert DomainBindingMismatch();
+        }
+    }
+
+    function _checkSession(
+        uint256 e3Id,
+        bytes32 committeeHash,
+        bytes32[] memory publicInputs
+    ) private view {
+        IInterfold interfold = ciphernodeRegistry.interfold();
+        E3 memory e3 = interfold.getE3(e3Id);
+        if (e3.paramSet != expectedParamSet) {
+            revert DomainBindingMismatch();
+        }
+
+        bytes32 sessionId = keccak256(
+            abi.encode(
+                LBFV_PROOF_DOMAIN_LABEL_HASH,
+                LBFV_PROOF_DOMAIN_VERSION,
+                LBFV_PROTOCOL_VERSION,
+                block.chainid,
+                address(interfold),
+                e3Id,
+                ActiveCryptoConfig.configIdForRequest(
+                    e3.paramSet,
+                    uint8(e3.committeeSize)
+                ),
+                committeeHash,
+                LBFV_CONSTANTS_VERSION,
+                uint256(0),
+                uint256(0)
+            )
+        );
+        if (
+            publicInputs[BfvPkV2Layout.sessionHiIdx(h)] !=
+            CommitteeHashLib.hi(sessionId) ||
+            publicInputs[BfvPkV2Layout.sessionLoIdx(h)] !=
+            CommitteeHashLib.lo(sessionId)
+        ) {
+            revert DomainBindingMismatch();
+        }
+    }
+}

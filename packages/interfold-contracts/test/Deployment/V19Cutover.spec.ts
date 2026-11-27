@@ -169,10 +169,10 @@ describe("v0.19 cutover", function () {
       decryptionWindow: 21600n,
     };
     expect(() => requireTimeoutConfig(live, configured)).to.throw(
-      /dkgWindow is 1800 s; the configuration sets 7200 s/,
+      /dkgWindow is 1800 s; the configuration sets 21600 s/,
     );
     expect(() =>
-      requireTimeoutConfig({ ...live, dkgWindow: 7200n }, configured),
+      requireTimeoutConfig({ ...live, dkgWindow: 21600n }, configured),
     ).not.to.throw();
   });
 

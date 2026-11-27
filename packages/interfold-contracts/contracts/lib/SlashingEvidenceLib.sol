@@ -9,6 +9,7 @@ pragma solidity 0.8.28;
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
+import { BfvPkV2Layout } from "./BfvPkV2Layout.sol";
 
 /// @notice Verifies signed committee accusations outside the size-constrained manager.
 library SlashingEvidenceLib {
@@ -18,9 +19,13 @@ library SlashingEvidenceLib {
             "address voter,bytes32 dataHash,uint256 issuedAt,uint256 deadline)"
         );
     uint256 internal constant CLOCK_SKEW = 30 seconds;
+    uint256 internal constant FIRST_MULTIROW_PROOF_TYPE = 11;
+    uint256 internal constant RLK_AGGREGATION_PROOF_TYPE = 14;
+    uint256 internal constant LBFV_ROW_INSTANCES = BfvPkV2Layout.MAX_ROWS;
 
     struct AttestationEvidence {
         uint256 proofType;
+        uint256 proofInstance;
         address[] voters;
         bytes32[] dataHashes;
         bytes evidence;
@@ -51,6 +56,16 @@ library SlashingEvidenceLib {
     ) external view {
         ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
         AttestationEvidence memory attestation = _decodeEvidence(proof);
+        if (_isMultirow(attestation.proofType)) {
+            // RLK aggregation identifies both d0 and d2 as component * rowCount + row.
+            uint256 instanceLimit = attestation.proofType ==
+                RLK_AGGREGATION_PROOF_TYPE
+                ? 2 * LBFV_ROW_INSTANCES
+                : LBFV_ROW_INSTANCES;
+            if (attestation.proofInstance >= instanceLimit) {
+                revert ISlashingManager.InvalidProof();
+            }
+        }
         uint256 numVotes = attestation.voters.length;
         if (
             numVotes != attestation.dataHashes.length ||
@@ -78,13 +93,11 @@ library SlashingEvidenceLib {
         AttestationContext memory context = AttestationContext({
             e3Id: e3Id,
             operator: operator,
-            accusationId: keccak256(
-                abi.encodePacked(
-                    block.chainid,
-                    e3Id,
-                    operator,
-                    attestation.proofType
-                )
+            accusationId: _accusationId(
+                e3Id,
+                operator,
+                attestation.proofType,
+                attestation.proofInstance
             ),
             sharedDataHash: sharedDataHash,
             issuedAt: attestation.issuedAt,
@@ -95,11 +108,46 @@ library SlashingEvidenceLib {
         _verifyVotes(attestation, context);
     }
 
+    /// @dev Proof types 11-14 are the l-BFV row families. Each one names its row, so its evidence
+    ///      carries `proofInstance`. Every other proof type has one instance, and its evidence
+    ///      keeps the layout without that field.
+    function _isMultirow(uint256 proofType) private pure returns (bool) {
+        return
+            proofType >= FIRST_MULTIROW_PROOF_TYPE &&
+            proofType <= RLK_AGGREGATION_PROOF_TYPE;
+    }
+
     function _decodeEvidence(
         bytes calldata proof
     ) private pure returns (AttestationEvidence memory attestation) {
+        attestation.proofType = abi.decode(proof, (uint256));
+        if (_isMultirow(attestation.proofType)) {
+            (
+                ,
+                attestation.proofInstance,
+                attestation.voters,
+                attestation.dataHashes,
+                attestation.evidence,
+                attestation.issuedAt,
+                attestation.deadline,
+                attestation.signatures
+            ) = abi.decode(
+                proof,
+                (
+                    uint256,
+                    uint256,
+                    address[],
+                    bytes32[],
+                    bytes,
+                    uint256,
+                    uint256,
+                    bytes[]
+                )
+            );
+            return attestation;
+        }
         (
-            attestation.proofType,
+            ,
             attestation.voters,
             attestation.dataHashes,
             attestation.evidence,
@@ -110,6 +158,30 @@ library SlashingEvidenceLib {
             proof,
             (uint256, address[], bytes32[], bytes, uint256, uint256, bytes[])
         );
+    }
+
+    function _accusationId(
+        uint256 e3Id,
+        address operator,
+        uint256 proofType,
+        uint256 proofInstance
+    ) private view returns (bytes32) {
+        if (proofInstance == 0) {
+            return
+                keccak256(
+                    abi.encodePacked(block.chainid, e3Id, operator, proofType)
+                );
+        }
+        return
+            keccak256(
+                abi.encodePacked(
+                    block.chainid,
+                    e3Id,
+                    operator,
+                    proofType,
+                    proofInstance
+                )
+            );
     }
 
     function _verifyVotes(

@@ -60,6 +60,9 @@ export const BFV_PARAMS_DEFAULT = encodeBfvParams(BFV_PARAMS.insecure64);
 /** The secure-8192 parameter set that Sepolia/local deployments can also register. */
 export const BFV_PARAMS_SECURE = encodeBfvParams(BFV_PARAMS.secure8192);
 
+/** The secure-16384 parameter set that Sepolia/local deployments can also register. */
+export const BFV_PARAMS_SECURE_16384 = encodeBfvParams(BFV_PARAMS.secure16384);
+
 /** Circuit, BFV parameters, and verifier generation used by this build. */
 export const ACTIVE_CRYPTO_CONFIG_ID = bfvConfiguration(
   "ss-insecure-64",
@@ -70,6 +73,12 @@ export const ACTIVE_CRYPTO_CONFIG_ID = bfvConfiguration(
 export const PRODUCTION_CRYPTO_CONFIG_ID = bfvConfiguration(
   "ss-secure-8192",
   2,
+).configId;
+
+/** Circuit configuration ID of the secure-16384 minimum committee (l-BFV path). */
+export const SECURE_16384_CRYPTO_CONFIG_ID = bfvConfiguration(
+  "ss-secure-16384",
+  0,
 ).configId;
 
 // ── Timeout configs ──────────────────────────────────────────────────────────

@@ -26,6 +26,7 @@ import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
 library InterfoldPricing {
     using SafeERC20 for IERC20;
     uint16 internal constant BPS_BASE = 10000;
+    uint256 private constant SECURE_16384_MIN_DKG_WINDOW = 21_600;
     event RewardCredited(
         uint256 indexed e3Id,
         address indexed account,
@@ -395,6 +396,11 @@ library InterfoldPricing {
 
         if (!ActiveCryptoConfig.isParamSetSupported(paramSet))
             revert IInterfold.UnsupportedCryptoConfig();
+        ActiveCryptoConfig.validateParamSetCommittee(paramSet, committeeSize);
+        if (
+            paramSet == ActiveCryptoConfig.SECURE_16384_PARAM_SET &&
+            tc.dkgWindow < SECURE_16384_MIN_DKG_WINDOW
+        ) revert IInterfold.InvalidTimeoutWindow();
         IInterfold.CommitteeSize size = IInterfold.CommitteeSize(committeeSize);
         if (threshold[1] == 0)
             revert IInterfold.CommitteeSizeNotConfigured(size);

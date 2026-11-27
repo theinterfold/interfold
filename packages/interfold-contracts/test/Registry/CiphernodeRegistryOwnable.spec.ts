@@ -12,6 +12,8 @@ import {
   ACTIVE_CRYPTO_CONFIG_ID,
   ADDRESS_ONE as AddressOne,
   ADDRESS_TWO as AddressTwo,
+  BFV_PARAMS_SECURE_16384,
+  SECURE_16384_CRYPTO_CONFIG_ID,
   SEVEN_DAYS,
   TICKET_PRICE,
   deployInterfoldSystem,
@@ -29,6 +31,10 @@ const { loadFixture } = networkHelpers;
 const data = "0xda7a";
 const dataHash = ethers.id(data);
 const SORTITION_SUBMISSION_WINDOW = 60;
+const PUBLIC_KEY_CHUNK_BYTES = 90 * 1024;
+const TRBFV_MAX_PUBLIC_KEY_BYTES = 512 * 1024;
+const LBFV_MAX_PUBLIC_KEY_BYTES = 16 * 1024 * 1024;
+const SECURE_16384_KEY_ENVELOPE_BYTES = 7_833_906;
 
 // Literal boundary vectors are also checked by the Rust transport owner, independently of its formulas.
 const publicKeyChunkCases: {
@@ -105,6 +111,7 @@ describe("CiphernodeRegistryOwnable", function () {
     mockDecryptionVerifier: any,
     signer?: Signer,
     mineEntropyBlock: boolean = true,
+    overrides: Record<string, unknown> = {},
   ) {
     const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 
@@ -125,6 +132,7 @@ describe("CiphernodeRegistryOwnable", function () {
       expectedFeeToken: await usdcToken.getAddress(),
       expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
       maxFee: ethers.MaxUint256,
+      ...overrides,
     };
 
     const fee = await interfold.getE3Quote(requestParams);
@@ -948,6 +956,129 @@ describe("CiphernodeRegistryOwnable", function () {
       }
       expect(await registry.committeePublicKey(firstE3Id)).to.equal(dataHash);
     });
+    it("bounds the public key by the E3's parameter set", async function () {
+      const {
+        registry,
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+      await interfold.setParamSet(5, BFV_PARAMS_SECURE_16384);
+      const timeouts = await interfold.getTimeoutConfig();
+      await interfold.setTimeoutConfig({
+        dkgWindow: 21_600,
+        computeWindow: timeouts.computeWindow,
+        decryptionWindow: timeouts.decryptionWindow,
+      });
+      const trbfvE3Id = firstE3Id;
+      const lbfvE3Id = firstE3Id + 1n;
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+        undefined,
+        true,
+        {
+          paramSet: 5,
+          expectedCryptoConfigId: SECURE_16384_CRYPTO_CONFIG_ID,
+        },
+      );
+      // Both E3s take tickets before either sortition window closes; finalizing the first moves
+      // time past its deadline, which is also the second E3's ticket window.
+      for (const e3Id of [trbfvE3Id, lbfvE3Id]) {
+        await registry.connect(operator1).submitTicket(e3Id, 1);
+        await registry.connect(operator2).submitTicket(e3Id, 1);
+        await registry.connect(operator3).submitTicket(e3Id, 1);
+      }
+      for (const e3Id of [trbfvE3Id, lbfvE3Id]) {
+        await finalizeCommitteeAfterWindow(registry, e3Id);
+      }
+      for (const e3Id of [trbfvE3Id, lbfvE3Id]) {
+        await registry.publishCommittee(
+          e3Id,
+          dataHash,
+          encodeMockDkgProof(dataHash),
+          "0x01",
+        );
+      }
+
+      const publish = (
+        e3Id: bigint,
+        totalLength: number,
+        chunkIndex: number,
+        chunkLength: number,
+      ) =>
+        registry
+          .connect(operator1)
+          .getFunction(
+            "publishCommitteePublicKey(uint256,bytes32,uint16,uint16,uint32,bytes)",
+          )(
+          e3Id,
+          ethers.keccak256("0xcafe"),
+          chunkIndex,
+          Math.ceil(totalLength / PUBLIC_KEY_CHUNK_BYTES),
+          totalLength,
+          new Uint8Array(chunkLength),
+        );
+      const lastChunkLength = (totalLength: number) =>
+        totalLength -
+        (Math.ceil(totalLength / PUBLIC_KEY_CHUNK_BYTES) - 1) *
+          PUBLIC_KEY_CHUNK_BYTES;
+
+      expect(await registry.MAX_COMMITTEE_PUBLIC_KEY_BYTES()).to.equal(
+        BigInt(TRBFV_MAX_PUBLIC_KEY_BYTES),
+      );
+      // A trBFV key envelope above 512 KiB is refused, even one an l-BFV E3 accepts.
+      const trbfvTooLong = TRBFV_MAX_PUBLIC_KEY_BYTES + 1;
+      await expect(
+        publish(trbfvE3Id, trbfvTooLong, 0, PUBLIC_KEY_CHUNK_BYTES),
+      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
+      await expect(
+        publish(
+          trbfvE3Id,
+          SECURE_16384_KEY_ENVELOPE_BYTES,
+          0,
+          PUBLIC_KEY_CHUNK_BYTES,
+        ),
+      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
+
+      // The l-BFV E3 accepts the secure-16384 envelope and the 16 MiB bound, and refuses one
+      // byte more.
+      for (const totalLength of [
+        SECURE_16384_KEY_ENVELOPE_BYTES,
+        LBFV_MAX_PUBLIC_KEY_BYTES,
+      ]) {
+        const chunkCount = Math.ceil(totalLength / PUBLIC_KEY_CHUNK_BYTES);
+        await expect(
+          publish(
+            lbfvE3Id,
+            totalLength,
+            chunkCount - 1,
+            lastChunkLength(totalLength),
+          ),
+        ).to.emit(registry, "CommitteePublicKeyChunkPublished");
+      }
+      await expect(
+        publish(
+          lbfvE3Id,
+          LBFV_MAX_PUBLIC_KEY_BYTES + 1,
+          0,
+          PUBLIC_KEY_CHUNK_BYTES,
+        ),
+      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
+    });
+
     it("rejects malformed chunks and accepts a committee member's valid candidate", async function () {
       const {
         registry,
@@ -992,7 +1123,11 @@ describe("CiphernodeRegistryOwnable", function () {
         publishPublicKey(firstE3Id, ethers.ZeroHash, 0, 1, 2, "0xdead"),
       ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
 
+      // The shared vectors use the transport's 16 MiB bound; this E3 uses the trBFV parameter set,
+      // whose registry bound is 512 KiB.
       for (const testCase of publicKeyChunkCases) {
+        const valid =
+          testCase.valid && testCase.total_length <= TRBFV_MAX_PUBLIC_KEY_BYTES;
         const chunk = ethers.hexlify(
           new Uint8Array(testCase.chunk_length).fill(0x5a),
         );
@@ -1008,7 +1143,7 @@ describe("CiphernodeRegistryOwnable", function () {
           testCase.total_length,
           chunk,
         );
-        if (testCase.valid) {
+        if (valid) {
           await expect(transaction, testCase.name)
             .to.emit(registry, "CommitteePublicKeyChunkPublished")
             .withArgs(

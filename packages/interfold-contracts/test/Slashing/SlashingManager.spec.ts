@@ -443,6 +443,174 @@ describe("SlashingManager", function () {
   });
 
   describe("proposeSlash() — Lane A (proof-based, permissionless)", function () {
+    // Six l-BFV rows (secure-16384 has six CRT moduli); RLK aggregation has two instances per row.
+    for (const [proofType, proofInstance, accepted] of [
+      [11, 5, true],
+      [12, 5, true],
+      [13, 5, true],
+      [14, 5, true],
+      [14, 6, true],
+      [14, 11, true],
+      [11, 6, false],
+      [12, 6, false],
+      [13, 6, false],
+      [14, 12, false],
+    ] as const) {
+      it(`${accepted ? "accepts" : "rejects"} proof family ${proofType} instance ${proofInstance}`, async function () {
+        const {
+          slashingManager,
+          proposer,
+          operatorAddress,
+          voter1,
+          voter2,
+          mockCiphernodeRegistry,
+        } = await loadFixture(setup);
+        const reason = ethers.keccak256(
+          ethers.solidityPacked(["uint256"], [proofType]),
+        );
+        await slashingManager.setSlashPolicy(reason, buildProofPolicy());
+        const smallD2 = proofType === 14 && proofInstance === 11;
+        const candidates = smallD2
+          ? (await ethers.getSigners()).filter(
+              (signer) => signer.address !== operatorAddress,
+            )
+          : [voter1, voter2];
+        const voters = candidates.slice(0, smallD2 ? 14 : 2);
+        await mockCiphernodeRegistry.setCommitteeNodes(0, [
+          operatorAddress,
+          ...(await Promise.all(
+            candidates
+              .slice(0, smallD2 ? 18 : 2)
+              .map((signer) => signer.getAddress()),
+          )),
+        ]);
+        await mockCiphernodeRegistry.setThreshold(0, voters.length);
+
+        const proof = await signAndEncodeAttestation(
+          voters,
+          0,
+          operatorAddress,
+          await slashingManager.getAddress(),
+          proofType,
+          31337,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          proofInstance,
+        );
+
+        const proposal = slashingManager
+          .connect(proposer)
+          .proposeSlash(0, operatorAddress, proof);
+        if (accepted) {
+          await expect(proposal).to.emit(slashingManager, "SlashProposed");
+        } else {
+          await expect(proposal).to.be.revertedWithCustomError(
+            slashingManager,
+            "InvalidProof",
+          );
+        }
+        if (proofType === 14 && proofInstance === 11) {
+          const anotherRow = await signAndEncodeAttestation(
+            voters,
+            0,
+            operatorAddress,
+            await slashingManager.getAddress(),
+            proofType,
+            31337,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            8,
+          );
+          await expect(
+            slashingManager
+              .connect(proposer)
+              .proposeSlash(0, operatorAddress, anotherRow),
+          ).to.be.revertedWithCustomError(slashingManager, "DuplicateEvidence");
+        }
+      });
+    }
+
+    // Main's evidence has no `proofInstance` field and the l-BFV row families add it after
+    // `proofType`. Each family must use its own shape.
+    for (const [proofType, withInstanceField] of [
+      [0, true],
+      [10, true],
+      [11, false],
+      [14, false],
+    ] as const) {
+      it(`rejects proof type ${proofType} evidence ${withInstanceField ? "with" : "without"} a proofInstance field`, async function () {
+        const {
+          slashingManager,
+          proposer,
+          operatorAddress,
+          voter1,
+          voter2,
+          mockCiphernodeRegistry,
+        } = await loadFixture(setup);
+        const reason = ethers.keccak256(
+          ethers.solidityPacked(["uint256"], [proofType]),
+        );
+        await slashingManager.setSlashPolicy(reason, buildProofPolicy());
+        await mockCiphernodeRegistry.setCommitteeNodes(0, [
+          operatorAddress,
+          await voter1.getAddress(),
+          await voter2.getAddress(),
+        ]);
+        await mockCiphernodeRegistry.setThreshold(0, 2);
+
+        const valid = await signAndEncodeAttestation(
+          [voter1, voter2],
+          0,
+          operatorAddress,
+          await slashingManager.getAddress(),
+          proofType,
+        );
+        // Re-encode the valid evidence in the other family's shape.
+        const multirowTypes = [
+          "uint256",
+          "uint256",
+          "address[]",
+          "bytes32[]",
+          "bytes",
+          "uint256",
+          "uint256",
+          "bytes[]",
+        ];
+        const singletonTypes = [multirowTypes[0], ...multirowTypes.slice(2)];
+        const decoded = [
+          ...abiCoder.decode(
+            withInstanceField ? singletonTypes : multirowTypes,
+            valid,
+          ),
+        ];
+        if (withInstanceField) {
+          decoded.splice(1, 0, 0n);
+        } else {
+          decoded.splice(1, 1);
+        }
+        const wrongShape = abiCoder.encode(
+          withInstanceField ? multirowTypes : singletonTypes,
+          decoded,
+        );
+
+        await expect(
+          slashingManager
+            .connect(proposer)
+            .proposeSlash(0, operatorAddress, wrongShape),
+        ).to.be.revert(ethers);
+        // The right shape is accepted.
+        await expect(
+          slashingManager
+            .connect(proposer)
+            .proposeSlash(0, operatorAddress, valid),
+        ).to.emit(slashingManager, "SlashProposed");
+      });
+    }
+
     it("should revert if committee attestation has insufficient votes", async function () {
       const {
         slashingManager,

@@ -17,6 +17,14 @@ const RELEASE_CONTRACTS = [
   "SynchronizedDkgPublicationVerifier",
   "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
   "contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
+  // Every verifier a secure-16384 route deploys: the V2 DKG aggregator and the decryption
+  // aggregator of each committee. The insecure l-BFV pairs are test-only and not budgeted.
+  "contracts/verifiers/bfv/honk/secure-16384/minimum/DkgAggregatorV2Verifier.sol:DkgAggregatorV2Verifier",
+  "contracts/verifiers/bfv/honk/secure-16384/minimum/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
+  "contracts/verifiers/bfv/honk/secure-16384/micro/DkgAggregatorV2Verifier.sol:DkgAggregatorV2Verifier",
+  "contracts/verifiers/bfv/honk/secure-16384/micro/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
+  "contracts/verifiers/bfv/honk/secure-16384/small/DkgAggregatorV2Verifier.sol:DkgAggregatorV2Verifier",
+  "contracts/verifiers/bfv/honk/secure-16384/small/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
 ] as const;
 
 let failed = false;

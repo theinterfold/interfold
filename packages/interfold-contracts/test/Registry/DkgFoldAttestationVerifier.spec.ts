@@ -8,6 +8,7 @@ import { expect } from "chai";
 import {
   buildMockDkgAttestationFixtureData,
   deployInterfoldSystem,
+  encodeMockDkgV2ProofForAttestation,
   ethers,
   networkHelpers,
 } from "../fixtures";
@@ -26,9 +27,27 @@ describe("DkgFoldAttestationVerifier", function () {
     const verifier = await ethers.deployContract("DkgFoldAttestationVerifier");
     const signers = await ethers.getSigners();
     const operators = [signers[2], signers[3], signers[4]];
+    const mockRegistry = sys.mockCiphernodeRegistry!;
+    // The verifier reads the parameter set of the E3 from the registry's Interfold.
+    const useParamSet = async (
+      deployed: { getAddress(): Promise<string> },
+      paramSet = 4,
+    ) => {
+      const registry = await ethers.getContractAt(
+        "MockCiphernodeRegistry",
+        await deployed.getAddress(),
+      );
+      const mockInterfold = await ethers.deployContract("MockBfvV2Interfold", [
+        paramSet,
+        0,
+      ]);
+      await registry.setInterfold(await mockInterfold.getAddress());
+    };
+    await useParamSet(mockRegistry);
     return {
       owner: sys.owner,
-      mockRegistry: sys.mockCiphernodeRegistry!,
+      mockRegistry,
+      useParamSet,
       verifier,
       operators,
     };
@@ -63,11 +82,105 @@ describe("DkgFoldAttestationVerifier", function () {
     expect(esmAggCommits).to.deep.equal(esmCommits);
   });
 
+  it("verifies a secure-16384 V2 bundle", async function () {
+    const { owner, mockRegistry, useParamSet, verifier, operators } =
+      await loadFixture(setup);
+    await useParamSet(mockRegistry, 5);
+    const fixture = await buildMockDkgAttestationFixtureData(
+      operators.slice(0, 2),
+      e3Id,
+      ethers.id(`pk-v2-${e3Id}`),
+      await verifier.getAddress(),
+      await mockRegistry.getAddress(),
+    );
+    await mockRegistry.connect(owner).setCommitteeNodes(
+      e3Id,
+      fixture.ordered.map((o) => o.addr),
+    );
+    const proof = encodeMockDkgV2ProofForAttestation(
+      ethers.id(`pk-v2-${e3Id}`),
+      await mockRegistry.getCommitteeHash(e3Id),
+      fixture.partyIds,
+      fixture.skCommits,
+      fixture.esmCommits,
+    );
+
+    const [partyIds, skAggCommits, esmAggCommits] = await verifier.verify(
+      await mockRegistry.getAddress(),
+      31337,
+      e3Id,
+      proof,
+      fixture.bundle,
+    );
+
+    expect(partyIds.map((v: bigint) => Number(v))).to.deep.equal([0, 1]);
+    expect(skAggCommits).to.deep.equal(fixture.skCommits);
+    expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
+  });
+
+  // 3 * 16 + 6 = 54 public inputs, the same length as an insecure l-BFV V2 statement with h = 2.
+  it("parses a sixteen-party trBFV statement by its E3's parameter set", async function () {
+    const { owner, mockRegistry, verifier } = await loadFixture(setup);
+    const signers = await ethers.getSigners();
+    const fixture = await buildMockDkgAttestationFixtureData(
+      signers.slice(2, 18),
+      e3Id,
+      ethers.id(`pk-legacy-h16-${e3Id}`),
+      await verifier.getAddress(),
+      await mockRegistry.getAddress(),
+    );
+    await mockRegistry.connect(owner).setCommitteeNodes(
+      e3Id,
+      fixture.ordered.map((operator) => operator.addr),
+    );
+
+    const [partyIds, skAggCommits, esmAggCommits] = await verifier.verify(
+      await mockRegistry.getAddress(),
+      31337,
+      e3Id,
+      fixture.proof,
+      fixture.bundle,
+    );
+
+    expect(partyIds).to.have.length(16);
+    expect(skAggCommits).to.deep.equal(fixture.skCommits);
+    expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
+  });
+
+  it("rejects a trBFV statement on an l-BFV E3", async function () {
+    const { owner, mockRegistry, useParamSet, verifier, operators } =
+      await loadFixture(setup);
+    await useParamSet(mockRegistry, 5);
+    const { ordered, proof, bundle } = await buildMockDkgAttestationFixtureData(
+      operators,
+      e3Id,
+      ethers.id(`pk-${e3Id}`),
+      await verifier.getAddress(),
+      await mockRegistry.getAddress(),
+    );
+    await mockRegistry.connect(owner).setCommitteeNodes(
+      e3Id,
+      ordered.map((o) => o.addr),
+    );
+
+    await expect(
+      verifier.verify(
+        await mockRegistry.getAddress(),
+        31337,
+        e3Id,
+        proof,
+        bundle,
+      ),
+    ).to.be.revertedWithCustomError(mockRegistry, "InvalidFoldAttestation");
+  });
+
   it("rejects a bundle signed for another registry", async function () {
-    const { mockRegistry, verifier, operators } = await loadFixture(setup);
+    const { mockRegistry, useParamSet, verifier, operators } =
+      await loadFixture(setup);
     const secondRegistry = await ethers.deployContract(
       "MockCiphernodeRegistry",
     );
+    await useParamSet(secondRegistry);
     const { ordered, proof, bundle } = await buildMockDkgAttestationFixtureData(
       operators,
       e3Id,

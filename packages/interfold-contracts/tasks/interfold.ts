@@ -200,7 +200,7 @@ export const requestCommittee = task(
   .addOption({
     name: "profile",
     description:
-      "BFV profile (ss-insecure-64 or ss-secure-8192; synchronized admission is disabled)",
+      "BFV profile (ss-insecure-64, ss-secure-8192, ss-insecure-lbfv or ss-secure-16384; synchronized admission is disabled)",
     defaultValue: BFV_PRESETS[ACTIVE_BFV_PRESET].profile,
     type: ArgumentType.STRING,
   })

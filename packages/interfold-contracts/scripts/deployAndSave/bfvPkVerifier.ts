@@ -4,18 +4,33 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import type { HardhatRuntimeEnvironment } from "hardhat/types/hre";
+import path from "path";
 
 import {
   BfvPkVerifier,
   BfvPkVerifier__factory as BfvPkVerifierFactory,
+  BfvPkVerifierV2,
+  BfvPkVerifierV2__factory as BfvPkVerifierV2Factory,
 } from "../../types";
+import { currentNodeRelease } from "../protocol/nodeRelease";
 import {
+  ACTIVE_BFV_COMMITTEE_N,
+  ACTIVE_BFV_PARAM_SET,
+  ACTIVE_LBFV_CONFIG,
   BFV_DKG_H,
   assertBfvPkVerifierSubCircuitVkHashes,
+  assertBfvPkVerifierV2VkHashes,
+  bfvHonkSource,
+  getBfvPkSubCircuitVkHashPaths,
+  getBfvPkVkBindingHashPaths,
+  getBfvV2SubCircuitVkHashPaths,
+  getBfvV2VkBindingHashPaths,
   getBfvVkCommitments,
   readDeploymentArgs,
+  readVkRecursiveHash,
   storeDeploymentArgs,
 } from "../utils";
+import { deployAndSaveVerifier } from "./verifiers";
 
 export const deployAndSaveBfvPkVerifier = async (
   hre: HardhatRuntimeEnvironment,
@@ -54,16 +69,25 @@ export const deployAndSaveBfvPkVerifier = async (
           "Redeploy after the circuit verifier changes.",
       );
     }
-    await assertBfvPkVerifierSubCircuitVkHashes(
-      bfvPkVerifier,
-      existing.address,
-    );
+    try {
+      await assertBfvPkVerifierSubCircuitVkHashes(
+        bfvPkVerifier,
+        existing.address,
+      );
+    } catch (error) {
+      throw new Error(
+        `BfvPkVerifier at ${existing.address} is incompatible with the current VK-anchor ABI. ` +
+          "Redeploy the verifier before reuse.",
+        { cause: error },
+      );
+    }
     return { bfvPkVerifier };
   }
 
   const { nodesFold: expectedNodesFoldKeyHash, c5: expectedC5KeyHash } =
     getBfvVkCommitments();
 
+  // The trBFV verifier anchors the nodes-fold VK tree and C5; the tree binds every inner VK.
   const bfvPkVerifierFactory = await ethers.getContractFactory("BfvPkVerifier");
   const bfvPkVerifier = await bfvPkVerifierFactory.deploy(
     circuitVerifierArgs.address,
@@ -94,4 +118,134 @@ export const deployAndSaveBfvPkVerifier = async (
   );
 
   return { bfvPkVerifier: bfvPkVerifierContract };
+};
+
+export const deployAndSaveBfvPkVerifierV2 = async (
+  hre: HardhatRuntimeEnvironment,
+  ciphernodeRegistryAddress: string,
+): Promise<{
+  bfvPkVerifierV2: BfvPkVerifierV2;
+  dkgAggregatorV2Verifier: string;
+}> => {
+  const { ethers } = await hre.network.connect();
+  const [signer] = await ethers.getSigners();
+  const chain = hre.globalOptions.network ?? "localhost";
+
+  // The V2 verifier exists only under the l-BFV pair's directory, never at the canonical root.
+  // `deployAndSaveVerifier` reuses a recorded deployment only when its bytecode hash is current.
+  const zkTranscriptLib = readDeploymentArgs("ZKTranscriptLib", chain);
+  const relationsLib = readDeploymentArgs("RelationsLib", chain);
+  if (!zkTranscriptLib?.address || !relationsLib?.address) {
+    throw new Error(
+      "DkgAggregatorV2Verifier requires deployed Honk libraries. " +
+        "Run deployAndSaveAllVerifiers or deploy verifiers.",
+    );
+  }
+  const circuitVerifierArgs = await deployAndSaveVerifier(
+    "DkgAggregatorV2Verifier",
+    hre,
+    {
+      zkTranscriptLibAddress: zkTranscriptLib.address,
+      relationsLibAddress: relationsLib.address,
+    },
+    path.posix.dirname(
+      bfvHonkSource(ACTIVE_LBFV_CONFIG, "DkgAggregatorV2Verifier"),
+    ),
+  );
+
+  const expectedNodesFoldKeyHash = readVkRecursiveHash(
+    getBfvV2SubCircuitVkHashPaths().nodesFold,
+  );
+  const pkPaths = getBfvPkSubCircuitVkHashPaths();
+  const expectedSkC2ChunkKeyHash = readVkRecursiveHash(pkPaths.skC2Chunk);
+  const expectedESmC2ChunkKeyHash = readVkRecursiveHash(pkPaths.esmC2Chunk);
+  const expectedLegacyVkBinding = getBfvPkVkBindingHashPaths().map((filePath) =>
+    readVkRecursiveHash(filePath),
+  );
+  const expectedV2VkBinding = getBfvV2VkBindingHashPaths().map((filePath) =>
+    readVkRecursiveHash(filePath),
+  );
+
+  const existing = readDeploymentArgs("BfvPkVerifierV2", chain);
+  if (existing?.address) {
+    console.log(`   BfvPkVerifierV2 already deployed at ${existing.address}`);
+    const bfvPkVerifierV2 = BfvPkVerifierV2Factory.connect(
+      existing.address,
+      signer,
+    );
+    const [onChainCircuitVerifier, onChainRegistry, onChainProtocolVersion] =
+      await Promise.all([
+        bfvPkVerifierV2.circuitVerifier(),
+        bfvPkVerifierV2.ciphernodeRegistry(),
+        bfvPkVerifierV2.getFunction("LBFV_PROTOCOL_VERSION").staticCall(),
+      ]);
+    const expectedProtocolVersion = BigInt(
+      currentNodeRelease().protocolVersion,
+    );
+    if (
+      onChainCircuitVerifier.toLowerCase() !==
+        circuitVerifierArgs.address.toLowerCase() ||
+      onChainRegistry.toLowerCase() !==
+        ciphernodeRegistryAddress.toLowerCase() ||
+      onChainProtocolVersion !== expectedProtocolVersion
+    ) {
+      throw new Error(
+        `BfvPkVerifierV2 at ${existing.address} has stale verifier dependencies. ` +
+          `Expected circuitVerifier=${circuitVerifierArgs.address}, ciphernodeRegistry=${ciphernodeRegistryAddress}, ` +
+          `protocolVersion=${expectedProtocolVersion}. ` +
+          "Redeploy after the verifier dependencies change.",
+      );
+    }
+    try {
+      await assertBfvPkVerifierV2VkHashes(bfvPkVerifierV2, existing.address);
+    } catch (error) {
+      throw new Error(
+        `BfvPkVerifierV2 at ${existing.address} is incompatible with the current VK-anchor ABI. ` +
+          "Redeploy the verifier before reuse.",
+        { cause: error },
+      );
+    }
+    return {
+      bfvPkVerifierV2,
+      dkgAggregatorV2Verifier: circuitVerifierArgs.address,
+    };
+  }
+
+  const bfvPkVerifierV2Factory =
+    await ethers.getContractFactory("BfvPkVerifierV2");
+  const bfvPkVerifierV2 = await bfvPkVerifierV2Factory.deploy(
+    circuitVerifierArgs.address,
+    ciphernodeRegistryAddress,
+    ACTIVE_BFV_PARAM_SET,
+    BFV_DKG_H,
+    ACTIVE_BFV_COMMITTEE_N,
+    expectedNodesFoldKeyHash,
+    expectedSkC2ChunkKeyHash,
+    expectedESmC2ChunkKeyHash,
+    expectedLegacyVkBinding,
+    expectedV2VkBinding,
+  );
+
+  await bfvPkVerifierV2.waitForDeployment();
+  const bfvPkVerifierV2Address = await bfvPkVerifierV2.getAddress();
+  const blockNumber = await ethers.provider.getBlockNumber();
+
+  storeDeploymentArgs(
+    {
+      blockNumber,
+      address: bfvPkVerifierV2Address,
+    },
+    "BfvPkVerifierV2",
+    chain,
+  );
+
+  console.log(`   BfvPkVerifierV2 deployed to: ${bfvPkVerifierV2Address}`);
+
+  return {
+    bfvPkVerifierV2: BfvPkVerifierV2Factory.connect(
+      bfvPkVerifierV2Address,
+      signer,
+    ),
+    dkgAggregatorV2Verifier: circuitVerifierArgs.address,
+  };
 };

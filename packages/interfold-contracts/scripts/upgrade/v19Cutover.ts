@@ -938,7 +938,7 @@ export async function readCommitteeThreshold(
 /**
  * Require the live E3 windows to equal the configured ones. The cutover batch does not set them, so
  * a chain whose governance skipped the manual `setTimeoutConfig` (Sepolia: `dkgWindow` 1800 s, where
- * a Large committee needs 7200 s) must not resume.
+ * the configured window is 21600 s) must not resume.
  */
 export function requireTimeoutConfig(
   live: { dkgWindow: bigint; computeWindow: bigint; decryptionWindow: bigint },

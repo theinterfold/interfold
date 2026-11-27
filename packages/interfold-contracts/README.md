@@ -448,10 +448,12 @@ pnpm run hardhat committee:new --network [network]
 ```
 
 The task defaults to the SS profile of the active circuit build. Select another
-with `--profile ss-insecure-64` or `--profile ss-secure-8192`; the profile and
-committee derive the configuration ID and registry slot. Synchronized admission
-is disabled. Unknown or disabled profiles and unregistered parameter sets stop
-the task before it sends a transaction.
+with `--profile ss-insecure-64`, `--profile ss-secure-8192`,
+`--profile ss-insecure-lbfv` (registry slot 6), or `--profile ss-secure-16384`
+(registry slot 5); the profile and committee derive the configuration ID and
+registry slot. The two l-BFV profiles run the l-BFV protocol path. Synchronized
+admission is disabled. Unknown or disabled profiles and unregistered parameter
+sets stop the task before it sends a transaction.
 
 To publish the public key of a committee, run
 
