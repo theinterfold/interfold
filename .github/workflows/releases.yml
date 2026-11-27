@@ -236,7 +236,8 @@ jobs:
 
       # `pnpm build:ts` builds the SDK, whose prebuild compiles the threshold
       # circuits via `nargo` (packages/interfold-sdk/scripts/compile-circuits.sh).
-      # Without nargo on PATH the build fails with "nargo is not installed".
+      # Without nargo on PATH the build fails with "nargo is not installed". The l-BFV circuit builds
+      # also write verification keys with `bb`; `pnpm run` takes it from @aztec-foundation/bb.js.
       - name: Install Nargo
         uses: noir-lang/noirup@bedac8fbe6a059177c35e565f9f76db54a795976 # v0.1.5
         with:
@@ -309,7 +310,7 @@ jobs:
           pnpm store:circuits pull
 
       - name: Verify circuit artifacts match source
-        # This check requires exactly one source-bound build stamp for each of the eight supported
+        # This check requires exactly one source-bound build stamp for each of the supported
         # preset/committee pairs before the archive can be created.
         run: pnpm store:circuits verify-release --source-hash "${{ steps.pull.outputs.source_hash }}"
 

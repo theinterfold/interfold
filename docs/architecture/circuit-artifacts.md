@@ -82,12 +82,22 @@ tree** under the old hash scheme. Another tree needs a rebuild, not a new label.
 | OpenVM application commitments and receipt identity | Guest executable, VM configuration, proving/deployed verifier boundary | Artifact SHA-256 or source reproducibility by itself.            |
 
 `required_circuits_version` equals Interfold release version without v; binary resolves GitHub tag
-`v{version}` / `circuits-{version}.tar.gz`. Release workflow rejects mismatch. All eight pairs in
+`v{version}` / `circuits-{version}.tar.gz`. Release workflow rejects mismatch. All pairs in
 [supported-configurations](../../crates/zk/prover/supported-configurations.json) must ship:
-insecure-64 and secure-8192 × minimum/micro/small/large. That matrix is canonical for
-release/installation and must be a subset of `scripts/circuits/build-pairs.json` (tooling test).
-Both Rust and TypeScript read that build policy. Wildcards preserve its order, not a Cartesian
-product; an unsupported explicit pair fails before tools or writes.
+insecure-64 and secure-8192 × minimum/micro/small/large, plus the l-BFV pairs insecure-lbfv and
+secure-16384 × minimum/micro/small. That matrix is canonical for release/installation and must be a
+subset of `scripts/circuits/build-pairs.json` (tooling test). Both Rust and TypeScript read that
+build policy. Wildcards preserve its order, not a Cartesian product; an unsupported explicit pair
+fails before tools or writes.
+
+The l-BFV circuits live under `circuits/bin/lbfv/{dkg,threshold,recursive_aggregation}`. The build
+policy also generates deployment configuration declarations/testnet routes and Solidity pair
+admission. Network admission is separate and remains secure-8192-only on mainnet. Secure-16384/micro
+uses the existing `(N,T,H) = (9,4,5)` committee and six l-BFV rows; its V2 PK layout has 72 public
+fields; small has 99. Enabling a new pair requires a complete matching artifact build, real-proof
+acceptance, and replacement/installation of the matching PK/decryption router routes before requests
+are admitted. Wrapper generation alone does not qualify the full proof chain or an existing
+deployment.
 
 The builder's legacy `--preset` option now selects a protocol profile; SS retains its existing
 `insecure-64`/`secure-8192` artifact namespaces. The disabled `sync-insecure-64` definition uses
@@ -162,11 +172,14 @@ access.
 Both download and local install require nonempty SHA-256 checksums.json, verify every entry, reject
 uncovered artifacts, and require every path in
 [required-artifacts](../../crates/zk/prover/required-artifacts.json) for required/included pairs.
-SOURCE_HASH/root manifests/stamps are metadata, not prover artifacts. Required pairs cannot be
-chosen by archive contents. Explicit nonempty subsets are available through installer APIs and
-repeated `--circuits-configuration` only with `--circuits-archive`. Local archives need the same
-version pin unless explicit `--allow-unpinned-archive`; without that flag a missing pin fails closed
-too. CI candidate fixtures deliberately use that flag/subsets, not production policy.
+Also require `required-artifacts-trbfv.json` for trBFV pairs and `required-artifacts-lbfv.json` for
+l-BFV pairs. The insecure-lbfv archive serves both paths (l-BFV and the off-chain degree-128 trBFV
+twin); insecure-64 and secure-8192 serve trBFV and secure-16384 serves l-BFV. SOURCE_HASH/root
+manifests/stamps are metadata, not prover artifacts. Required pairs cannot be chosen by archive
+contents. Explicit nonempty subsets are available through installer APIs and repeated
+`--circuits-configuration` only with `--circuits-archive`. Local archives need the same version pin
+unless explicit `--allow-unpinned-archive`; without that flag a missing pin fails closed too. CI
+candidate fixtures deliberately use that flag/subsets, not production policy.
 `ZkBackend::install_circuits_dir` is the unpinned path for a local circuits tree (a dist directory
 or staged `circuits/bin`) in local builds and tests: it applies the same manifest and
 required-artifact rules, without a release pin.
@@ -186,11 +199,13 @@ it.
 
 ## Verifier and deployment compatibility
 
-Complete pair builds generate `nodes_fold.vk_tree_hash`/`c6_fold.vk_tree_hash` from all recursive
-keys. The C6 anchor keeps the retired `c6_fold` path, although C6 now runs over Chonk. Subset
-builds, skip-VK, or any circuit failure remove **both** pair/bin anchors to prevent stale pins.
-Cache markers and release validation require both; hydration copies them. Final wrappers pin these
-tree hashes at input zero and C5/C7 separately, not an immediate fold VK hash.
+Complete pair builds generate `nodes_fold.vk_tree_hash` (trBFV pairs), `c6_fold.vk_tree_hash`, and
+`c3ab_fold_chunked.vk_tree_hash` (l-BFV pairs) from all recursive keys. The C6 anchor keeps the
+retired `c6_fold` path, although C6 now runs over Chonk. The l-BFV anchor is the C3 Chonk chain hash
+that the legacy VK binding pins in slot 13. Subset builds, skip-VK, or any circuit failure remove
+**every** pair/bin anchor to prevent stale pins. Cache markers and release validation require the
+pair's anchors; hydration copies them. Final wrappers pin the nodes/C6 tree hashes at input zero and
+C5/C7 separately, not an immediate fold VK hash.
 
 The builder writes the `.vk_hash` of every Chonk app, kernel, and hiding circuit, not bb:
 `write_vk --scheme chonk` writes a key only, and the hash is `e3_safe::bb_poseidon2_hash` over its
@@ -222,8 +237,9 @@ nested layout, and bad gap consumption fail. Creating a baseline is explicit mai
 an automatic fix. Tracked contract artifacts feed CLI `sol!`; after `pnpm evm:build`,
 `pnpm check:bindings` compares fresh ABI and requires regenerated artifacts for changed
 functions/events/errors. Size CI reserves >=128 bytes below EIP-170 for Interfold, BondingRegistry,
-CiphernodeRegistryOwnable, and canonical insecure-minimum aggregator verifiers. **Limit:** every
-variant must fit, but other verifier variants are not measured by that gate. See
+CiphernodeRegistryOwnable, canonical insecure-minimum aggregator verifiers, the secure-16384 minimum
+V2 verifier, and all secure-16384 micro/small aggregator verifiers. **Limit:** every variant must
+fit, but the remaining verifier variants are not measured by that gate. See
 [registration](registration-and-bonding.md) for library links.
 
 Configuration writes in deployInterfold/configureLocalSlashingPolicies use `scripts/utils.ts`'s

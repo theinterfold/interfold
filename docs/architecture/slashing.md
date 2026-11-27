@@ -125,6 +125,42 @@ key binds chain/E3/accused/proof type. Lane B's consumed evidence key binds E3/o
 evidence. Policies snapshot penalty amounts, ban/committee flags, and appeal window at proposal
 time.
 
+For l-BFV row families, signed evidence includes `proofInstance` to identify the failed row. The
+economic replay key deliberately excludes it: one operator can receive only one Lane A penalty per
+E3 and proof family, not one penalty per row. Retired limb-generation circuits have no produced
+`ProofType`. C1/C5 accusations apply only to trBFV; l-BFV smudging failure belongs to its C2b chunk
+proof.
+
+The trBFV accusation events do not carry a row. `ProofFailureAccusation`, `AccusationQuorumReached`,
+`PartyProofData`, `CommitmentConsistencyCheckRequested` and `CommitmentConsistencyViolation` keep
+the layout that earlier releases stored and sent. An l-BFV E3 uses `LbfvProofFailureAccusation`,
+`LbfvAccusationQuorumReached`, `LbfvPartyProofData`, `LbfvCommitmentConsistencyCheckRequested` and
+`LbfvCommitmentConsistencyViolation`. Each one adds the `ProofIdentity` of the disputed proof. A
+trBFV event converts to its l-BFV form with row zero. The accusation workflow runs on the l-BFV
+forms. It publishes the form of the E3's proving path and drops an event of the other path.
+
+The same rule holds for other trBFV events that l-BFV needed to extend.
+`ShareVerificationDispatched` and `ShareVerificationComplete` keep their trBFV layout. Verification
+of the l-BFV generation kind uses `LbfvShareVerificationDispatched` and
+`LbfvShareVerificationComplete`, which add the l-BFV context and the candidate-set identity. The
+share verifier publishes the trBFV form whenever it can represent the event. `NodeDkgFoldRequest`
+keeps a required C1 proof. The l-BFV node fold, which has no C1 proof, uses
+`ZkRequest::LbfvNodeDkgFold`. `DkgShareDecryptionProofRequest` has no recipient field; the l-BFV
+share-decryption proof, which commits under the recipient's row, uses
+`ZkRequest::LbfvDkgShareDecryption`.
+
+Proof types 11–14 are the l-BFV row families. Their attestation evidence has a `proofInstance` field
+after `proofType`. Every other proof type has one instance, and its evidence has no such field, so a
+trBFV report has the same bytes as before l-BFV. The Rust encoder and `SlashingEvidenceLib` use this
+rule.
+
+RLK aggregation encodes `proofInstance = component * rowCount + row` (`d0 = 0`, `d2 = 1`).
+Solidity's attestation envelope admits instances 0–11 for that family (two components × six rows,
+`LBFV_ROW_INSTANCES = 6`) and 0–5 for the other l-BFV row families. Attestors still validate the
+actual preset's row count; this envelope does not re-verify a ZK proof. Signatures bind the
+instance, while the economic replay key remains per E3/operator/proof family, including across
+different d0/d2 rows.
+
 Valid policies require at least one nonzero penalty; `!requiresProof` requires `appealWindow > 0`.
 Retained `failureReason` is zero or `InsufficientCommitteeMembers`; it does not choose attribution
 on execution. Both lanes open the same proposal-scoped registry lock and, if expelling, an

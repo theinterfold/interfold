@@ -32,13 +32,15 @@ Before accepting a paid request it requires:
 
 Mainnet supports secure-8192. The contract accepts any committee size whose threshold governance has
 set; the mainnet configuration sets minimum/micro/small, and launch `minCommitteeSize = 19` admits
-Small only. Sepolia/local also support insecure-64 and set Large. A route being configured does not
-itself authorize its price-policy committee size. Different tuples, H/N, or verifier thresholds
-require matching artifacts and contracts. Requests and saved contexts must retain the identity bound
-to their selected profile; shared threshold bytes do not authorize profile substitution.
-Confirmed-chain ingestion resolves the exact request identity. Synchronized profiles and older
-threshold-only identities are not admitted. [Upgrades](upgrades.md) preserves historical
-parameter-set indices 0, 1 and 2 and registers the current tuples at indices 3 and 4; never
+Small only. Sepolia/local also support insecure-64 and set Large, and the l-BFV routes insecure-lbfv
+(degree 128) and secure-16384 at minimum/micro/small; the large committee exists only on the trBFV
+profiles. A route being configured does not itself authorize its price-policy committee size.
+Different tuples, H/N, or verifier thresholds require matching artifacts and contracts. Requests and
+saved contexts must retain the identity bound to their selected profile; shared threshold bytes do
+not authorize profile substitution. Confirmed-chain ingestion resolves the exact request identity.
+Synchronized profiles and older threshold-only identities are not admitted. [Upgrades](upgrades.md)
+preserves historical parameter-set indices 0, 1 and 2, registers the current tuples at indices 3 and
+4, and registers the l-BFV tuples at indices 5 (secure-16384) and 6 (insecure-lbfv); never
 reinterpret old requests.
 
 Recovery re-derives the profile/committee identity and requires the exact threshold parameter bytes

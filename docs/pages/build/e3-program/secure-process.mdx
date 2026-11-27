@@ -25,7 +25,7 @@ An E3 program crate exports two functions from `program/src/lib.rs`:
 | `policy`        | `fn() -> InputPolicy`                  | How each input becomes a tree leaf, and which inputs to compute over. |
 
 The crate is named `e3-user-program` in the template (`program/Cargo.toml`). It depends on `fhe` and
-`fhe-traits` (fhe.rs, tag `v0.6.0`), `e3-compute-provider`, and `e3-fhe-params`. The dev runner, the
+`fhe-traits` (fhe.rs, tag `v0.7.0`), `e3-compute-provider`, and `e3-fhe-params`. The dev runner, the
 OpenVM service, and the OpenVM guest in `guest/` link a crate with this name and call these two
 functions. See
 [The guest must match your E3 program](/build/e3-program/compute-provider#the-guest-must-match-your-e3-program).
@@ -96,10 +96,15 @@ The same bytes reach `IE3Program.validate` as `e3ProgramParams`. The program con
 Keccak-256 hash. The proof must carry the same parameter hash. See
 [Program Contract](/build/e3-program/program-contract#validate).
 
-| `paramSet` | Preset                | Degree | Plaintext modulus | Ciphertext moduli |
-| ---------- | --------------------- | ------ | ----------------- | ----------------- |
-| `4`        | `InsecureThreshold64` | 64     | 17000000          | 3                 |
-| `3`        | `SecureThreshold8192` | 8192   | 17000000          | 3                 |
+| `paramSet` | Preset                  | Degree | Plaintext modulus | Ciphertext moduli |
+| ---------- | ----------------------- | ------ | ----------------- | ----------------- |
+| `4`        | `InsecureThreshold64`   | 64     | 17000000          | 3                 |
+| `3`        | `SecureThreshold8192`   | 8192   | 17000000          | 3                 |
+| `5`        | `SecureThreshold16384`  | 16384  | 65537             | 6                 |
+| `6`        | `InsecureThresholdLbfv` | 128    | 100               | 3                 |
+
+Sets `5` and `6` run the l-BFV protocol path. Sepolia and local chains accept them; mainnet does
+not.
 
 Sources: `BfvPreset::from_on_chain_param_set` in `crates/bfv/params/src/presets.rs` and the preset
 constants in `crates/bfv/params/src/constants.rs`.
@@ -226,7 +231,7 @@ The processor has no secret key. It cannot read the value of a ciphertext, so it
 encrypted data. Control flow can use only public data, for example the number of inputs, their
 indices, and the parameters.
 
-| Operation (fhe.rs `v0.6.0`)                   | Result                                              |
+| Operation (fhe.rs `v0.7.0`)                   | Result                                              |
 | --------------------------------------------- | --------------------------------------------------- |
 | Ciphertext plus or minus ciphertext, negation | Two components. The output can be published.        |
 | Ciphertext plus, minus, or times plaintext    | Two components. The output can be published.        |
@@ -239,14 +244,15 @@ components. The Interfold does not publish a relinearization key, so the run the
 
 Other limits:
 
-- BFV arithmetic is modulo the plaintext modulus. Both parameter sets use the modulus 17,000,000, so
-  10,000,000 + 8,000,000 decrypts to 1,000,000.
+- BFV arithmetic is modulo the plaintext modulus. Parameter sets `3` and `4` use the modulus
+  17,000,000, so 10,000,000 + 8,000,000 decrypts to 1,000,000. Set `5` uses 65,537 and set `6`
+  uses 100.
 - Each preset has an addition budget, `z` (`SEARCH_Z` in `crates/bfv/params/src/constants.rs`). The
   ciphernodes make the smudging noise of their decryption shares large enough for an output of at
-  most `z` fresh ciphertexts added together. `z` is 100,000 for parameter set `3` and for parameter
-  set `4`. With a larger sum, the smudging noise protects the secret key shares with less
-  statistical security than the preset specifies. A product with a plaintext also increases the
-  noise, and `z` does not count it.
+  most `z` fresh ciphertexts added together. `z` is 100,000 for parameter sets `3` and `4`, 5,000
+  for parameter set `5`, and 3 for parameter set `6`. With a larger sum, the smudging noise protects
+  the secret key shares with less statistical security than the preset specifies. A product with a
+  plaintext also increases the noise, and `z` does not count it.
 - The processor returns `Vec<u8>`, not a `Result`. An `unwrap` that fails panics. Inside the zkVM a
   panic stops the guest, and the E3 gets no output.
 - When `select` returns no inputs, `Ciphertext::zero` has no components. The output commitment then

@@ -55,6 +55,12 @@ configured executable/VM commitments, and verifies against the native predicted 
 returning a seal. Missing configuration or failure cannot choose fake-proof mode. Development mode
 is separate.
 
+On l-BFV requests, private compute input also carries the published version-3 `IFLBFVKE` envelope.
+`process_bound` and the streamed guest's `bind_committee_key` validate its complete PK/RLK
+commitment against `domain.committee_public_key_hash` before processing. The RLK exposed to the
+processor must come from that validated envelope. Retaining the runner library does not permit
+falling back to an unbound process call or trusting a serialized public-key prefix.
+
 The request-time scheme verifier reconstructs protocol fields; the request-time program reconstructs
 application fields and verifies the same receipt. `OpenVmBfvCiphertextVerifier` authenticates
 inputRoot but compares it with **no expected root**. Every program must compare it with its own
@@ -121,7 +127,7 @@ stored parent commitment needs injectivity. See [proof contracts](proof-statemen
 
 The circuit always returns `sum_ct_commitment`; digest, stored commitment, published ciphertext, SDK
 path, and `prepareBallot` server request have one shape for votes/updates/masks. Distinct shape or
-request pattern would disclose the private choice. Contract supplies C5-proven round key at
+request pattern would disclose the private choice. Contract supplies the proof-backed round key at
 `noirPublicInputs[8]`; ballot circuits bound both key components before commitment generation.
 Off-circuit anchors still need injective in-circuit packing.
 
@@ -166,13 +172,16 @@ caller identities.
 
 TREE_DEPTH 20 gives 2^20 entries, but every operation consumes the round's smaller `inputLimit`, at
 most 100,000 (`MAX_INPUTS_PER_ROUND`), on both publish and validation. Every input adds at most one
-fresh ciphertext. Both presets set `SEARCH_Z` to 100,000, covering that maximum. Masks require no
-voter signature, so anyone with valid proofs/attestations/transactions can fill the limit; no
-implemented rate policy makes this impossible.
+fresh ciphertext. Both presets CRISP uses (insecure-64 and secure-8192) set `SEARCH_Z` to 100,000,
+covering that maximum. Masks require no voter signature, so anyone with valid
+proofs/attestations/transactions can fill the limit; no implemented rate policy makes this
+impossible. The l-BFV presets have other budgets (`SEARCH_Z` 3 for insecure-lbfv and 5,000 for
+secure-16384); these limits are for the presets CRISP uses.
 
-Every option total must remain below the round's plaintext modulus t (17,000,000 for both presets).
-`CRISPProgram.validate` reads that modulus from the request's ABI-encoded `e3ProgramParams`, not a
-local preset constant, before initializing the round's limits.
+Every option total must remain below the round's plaintext modulus t (17,000,000 for both presets
+CRISP uses; 100 for insecure-lbfv and 65,537 for secure-16384). `CRISPProgram.validate` reads that
+modulus from the request's ABI-encoded `e3ProgramParams`, not a local preset constant, before
+initializing the round's limits.
 
 - CONSTANT: reject `credits >= t`; input limit is `min((t-1)/credits,100000)`. Zero credits use
   100,000.

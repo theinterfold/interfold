@@ -170,14 +170,16 @@ const sdk = InterfoldSDK.create({
 The preset selects the BFV parameters that the client uses to encrypt. It must match the `profile`
 of the E3 request, which also sets the `paramSet` of the E3.
 
-| Preset name             | Request `profile` | `paramSet` | Ring degree | CRT moduli (L) | Use                             |
-| ----------------------- | ----------------- | ---------- | ----------- | -------------- | ------------------------------- |
-| `INSECURE_THRESHOLD_64` | `ss-insecure-64`  | 4          | 64          | 3              | Local development and tests     |
-| `SECURE_THRESHOLD_8192` | `ss-secure-8192`  | 3          | 8192        | 3              | Production and secure test runs |
+| Preset name               | Request `profile`  | `paramSet` | Ring degree | CRT moduli (L) | Use                                               |
+| ------------------------- | ------------------ | ---------- | ----------- | -------------- | ------------------------------------------------- |
+| `INSECURE_THRESHOLD_64`   | `ss-insecure-64`   | 4          | 64          | 3              | Local development and tests                       |
+| `SECURE_THRESHOLD_8192`   | `ss-secure-8192`   | 3          | 8192        | 3              | Production and secure test runs                   |
+| `SECURE_THRESHOLD_16384`  | `ss-secure-16384`  | 5          | 16384       | 6              | l-BFV with a `minimum` committee; not on mainnet  |
+| `INSECURE_THRESHOLD_LBFV` | `ss-insecure-lbfv` | 6          | 128         | 3              | Test-only l-BFV path with the insecure parameters |
 
 The insecure preset has no production security. Use it only for tests.
-`ThresholdBfvParamsPresetNames` lists both names, and `DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME` is
-`INSECURE_THRESHOLD_64`.
+`ThresholdBfvParamsPresetNames` lists these four names, and
+`DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME` is `INSECURE_THRESHOLD_64`.
 
 <Callout type='warning'>
   The SDK does not compare the preset with the profile of the E3. A mismatch encrypts inputs under
@@ -237,9 +239,9 @@ required `paramSet` field (`number`) in its place, for example `paramSet: 0` for
 
 - `expectedFeeToken` is the `feeToken` address from the SDK configuration.
 - `paramSet` and `expectedCryptoConfigId` come from `profile` and `committeeSize`. Only
-  `'ss-insecure-64'` and `'ss-secure-8192'` are accepted. Other profiles fail, including
-  `'sync-insecure-64'`, which this release disables.
-- `committeeSize` must be 0, 1, 2, or 3.
+  `'ss-insecure-64'`, `'ss-secure-8192'`, `'ss-insecure-lbfv'`, and `'ss-secure-16384'` are
+  accepted. Other profiles fail, including `'sync-insecure-64'`, which this release disables.
+- `committeeSize` must be 0, 1, 2, or 3. The l-BFV profiles accept only 0, 1, or 2.
 
 `requestE3` simulates the call first, then sends it, and returns the transaction hash. To get the E3
 ID, watch `InterfoldEventType.E3_REQUESTED` and read `event.data.e3Id`. For the contract rules
@@ -284,9 +286,18 @@ await sdk.onInterfoldEvent(
   `publicKey`) when a candidate is complete and its Keccak-256 hash matches. Otherwise it returns
   `undefined`.
 - It accepts only the first candidate from each publisher.
-- It rejects keys larger than `MAX_COMMITTEE_PUBLIC_KEY_BYTES` (512 KiB). Each chunk is at most
+- It rejects keys larger than `MAX_COMMITTEE_PUBLIC_KEY_BYTES` (16 MiB). Each chunk is at most
   `MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES` (90 KiB).
-- It tracks 128 E3s by default. `clear(e3Id)` removes the state for one E3.
+- It tracks 128 E3s by default (`DEFAULT_MAX_TRACKED_COMMITTEE_KEYS`) and evicts the least recently
+  used E3 first. `clear(e3Id)` removes the state for one E3 and makes the assembler ignore its later
+  chunks, so other publishers' chunks of the same key are not buffered again.
+- It holds at most 64 MiB of chunks from incomplete keys
+  (`DEFAULT_MAX_BUFFERED_COMMITTEE_KEY_BYTES`). When the buffer is full, it evicts older E3s first
+  and then drops the incoming chunk without marking its candidate invalid. `bufferedByteLength`
+  reports the bytes it holds.
+- It accepts at most 19 candidates for one E3 (`DEFAULT_MAX_COMMITTEE_KEY_ASSEMBLIES_PER_E3`), one
+  per publisher. 19 is the largest committee that supports l-BFV (`Small`). Both limits are
+  constructor parameters, after the number of tracked E3s.
 
 `sdk.getE3PublicKey(e3Id)` returns the 32-byte public key commitment from the registry. It is not
 the key. The call fails with `GET_E3_PUBLIC_KEY_FAILED` before the committee publishes.
@@ -318,19 +329,40 @@ encrypted to it. For the full encrypt and submit flow, see
 ### Encryption proofs
 
 The `*AndGenProof` functions and `generateProof` use circuits that ship in the SDK. The SDK compiles
-them with the `insecure-64` preset and the `minimum` committee
-(`packages/interfold-sdk/scripts/compile-circuits.sh`). The proofs target recursive verification
-(`noir-recursive-no-zk`), not a Solidity verifier. A `noir-recursive-no-zk` proof is not zero
-knowledge, so keep it on the client: verify it inside your own circuit there (as the CRISP fold
-does). Generate that outer circuit's proof in a zero-knowledge mode supported by its verifier, not
-`noir-recursive-no-zk`, and publish only that outer proof.
+the trBFV circuit with the `insecure-64` preset and the `minimum` committee, and the l-BFV proof
+trees for each l-BFV preset (`packages/interfold-sdk/scripts/compile-circuits.sh`). The proofs
+target recursive verification (`noir-recursive-no-zk`), not a Solidity verifier. A
+`noir-recursive-no-zk` proof is not zero knowledge, so keep it on the client: verify it inside your
+own circuit there (as the CRISP fold does). Generate that outer circuit's proof in a zero-knowledge
+mode supported by its verifier, not `noir-recursive-no-zk`, and publish only that outer proof.
+
+The circuit depends on the key type of the preset. For a trBFV preset (`INSECURE_THRESHOLD_64`,
+`SECURE_THRESHOLD_8192`), the SDK proves one circuit, `user_data_encryption`, which proves both
+ciphertext legs. Its public inputs are `pk_commitment`, `ct_commitment`, and `k1_commitment`. For an
+l-BFV preset (`INSECURE_THRESHOLD_LBFV`, `SECURE_THRESHOLD_16384`), the SDK proves the chunked proof
+tree and the `user_data_encryption_chunked` wrapper. The wrapper proof has five public inputs, in
+this order: `ct0_vk_chain`, `ct1_vk_chain`, `pk_commitment`, `ct_commitment`, and `k1_commitment`.
+
+<Callout type='warning'>
+  A verifier of an l-BFV proof must compare `ct0_vk_chain` and `ct1_vk_chain` (as field elements) to
+  the values that `getUserDataEncryptionVkChains(presetName)` returns. They bind the verification
+  key of every circuit in the proof tree. Without the comparison, the verifier accepts a proof from
+  any circuit that has the same public-input shape at any level of the tree.
+</Callout>
+
+<Callout type='warning'>
+  A `noir-recursive-no-zk` proof is not zero knowledge. It can show information about the private
+  witness. For `user_data_encryption`, that witness includes the plaintext `k1` and the randomness
+  `u`. Do not publish this proof. Keep it on the client, verify it inside your own circuit, and
+  publish only the proof of your circuit.
+</Callout>
 
 In Node.js, `generateProof` checks the circuit stamp file (`.active-preset.json`) when it finds one.
 It fails with one of these codes when the stamp does not match:
 
 - `SDK_CIRCUIT_STAMP_MISSING` or `SDK_CIRCUIT_STAMP_INVALID`: the stamp file is missing or broken.
 - `SDK_CIRCUIT_COMMITTEE_MISMATCH`: the circuits are not for the `minimum` committee.
-- `SDK_CIRCUIT_PRESET_MISMATCH`: the circuits are not for `insecure-64`.
+- `SDK_CIRCUIT_PRESET_MISMATCH`: the circuits are not for a supported preset.
 
 For another preset, another committee size, or an on-chain verifier, compile your own circuits. Use
 `encryptNumberAndGenInputs` or `encryptVectorAndGenInputs` to get the witness for your prover. See

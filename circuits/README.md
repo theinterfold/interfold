@@ -17,8 +17,10 @@ circuits/
 │       ├── core/threshold/    # Shared logic: C1, C5, P3, C6, C7
 │       └── math/              # Polynomials, SAFE, commitments, modular arithmetic
 ├── bin/
+│   ├── chonk/                 # trBFV C3 and C6 Chonk stacks (app and kernel circuits)
 │   ├── config/                # Deployment-time consistency checks on presets
 │   ├── dkg/                   # DKG packages and C2 proof pipeline
+│   ├── lbfv/                  # l-BFV packages: dkg/, threshold/, recursive_aggregation/
 │   ├── threshold/             # TrBFV, user encryption, threshold decryption
 │   └── recursive_aggregation/ # Folds and the two on-chain aggregators
 └── benchmarks/
@@ -57,6 +59,12 @@ limb and carry the aggregate commitment sponge between them. Its commitments equ
 C4's, so C6 is unchanged. `c4ab_fold` verifies the final C4a and C4b proofs and hashes each one's
 limb key tree into its key hash.
 
+On the l-BFV path (`bin/lbfv/`), C2a and C2b are proven one chunk at a time by
+`sk_share_computation_chunk` and `esm_share_computation_chunk`. `c2_chunk_batch` groups chunk
+proofs, and the type-bound finalizers `sk_c2_chunk_finalize` and `esm_c2_chunk_finalize` reconstruct
+the root commitments the remaining fold pipeline consumes. Gossip and threshold signing use one
+terminal C2 proof per type.
+
 ### DKG (`bin/dkg/`)
 
 | Path                                | ID        | `CircuitName`                  | Role                                                               |
@@ -76,13 +84,13 @@ limb key tree into its key hash.
 
 ### Threshold (`bin/threshold/`)
 
-| Path                           | ID  | `CircuitName`                | Role                                              |
-| ------------------------------ | --- | ---------------------------- | ------------------------------------------------- |
-| `pk_generation`                | C1  | `PkGeneration`               | Threshold public-key contribution                 |
-| `pk_aggregation`               | C5  | `PkAggregation`              | Aggregate contributions into threshold public key |
-| `user_data_encryption`         | P3  | —                            | User ciphertext: both legs over one `u`           |
-| `share_decryption`             | C6  | `ThresholdShareDecryption`   | Partial decryption share                          |
-| `decrypted_shares_aggregation` | C7  | `DecryptedSharesAggregation` | Combine shares; CRT; decode                       |
+| Path                           | ID  | `CircuitName`                | Role                                                         |
+| ------------------------------ | --- | ---------------------------- | ------------------------------------------------------------ |
+| `pk_generation`                | C1  | `PkGeneration`               | Threshold public-key contribution                            |
+| `pk_aggregation`               | C5  | `PkAggregation`              | Aggregate contributions into threshold public key            |
+| `user_data_encryption`         | P3  | —                            | trBFV user ciphertext: both legs over one `u` in one circuit |
+| `share_decryption`             | C6  | `ThresholdShareDecryption`   | Partial decryption share                                     |
+| `decrypted_shares_aggregation` | C7  | `DecryptedSharesAggregation` | Combine shares; CRT; decode                                  |
 
 ### Recursive aggregation (`bin/recursive_aggregation/`)
 
@@ -101,6 +109,36 @@ limb key tree into its key hash.
 For recursive trust and public-input bindings, see
 [proof statements](../docs/architecture/proof-statements.md#recursive-trust-and-exported-values).
 
+### l-BFV (`bin/lbfv/`)
+
+The l-BFV packages mirror the trBFV groups under `bin/lbfv/{dkg,threshold,recursive_aggregation}/`.
+They build only for the l-BFV presets (`insecure-lbfv` and `secure-16384`). Their `lib` dependency
+is `../../../../lib`.
+
+| Path                                                                                                | ID         | Role                                                                                        |
+| --------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------- |
+| `dkg/sk_share_computation_chunk`                                                                    | C2a        | Secret-key Shamir-share coefficient chunk (`y`)                                             |
+| `dkg/esm_share_computation_chunk`                                                                   | C2b        | Smudging-noise coefficient chunk (`y`), with its own `\|e\| <= B` check                     |
+| `dkg/share_encryption_chunked`                                                                      | C3         | `share_encryption` with the share committed as a chunk root keyed by `(party_idx, mod_idx)` |
+| `dkg/share_decryption_chunked`                                                                      | C4         | Decrypt shares from the packed carriers; commit the centred aggregate                       |
+| `threshold/lbfv_pk_generation`, `threshold/lbfv_pk_aggregation`                                     | C1, C5     | One l-BFV public-key row: generation per node, aggregation of `H` contributions             |
+| `threshold/rlk_generation`, `threshold/rlk_aggregation`                                             | —          | One RLK gadget row: generation per node, aggregation of `H` contributions per component     |
+| `threshold/user_data_encryption_chunked`                                                            | P3 wrapper | Verifies the chunked ct0 and ct1 legs, shared `u` root                                      |
+| `threshold/user_data_encryption_ct0_chunked`, `threshold/user_data_encryption_ct1_chunked`          | P3         | Leg top-level circuits over `ct*_chunk_main`, `ct*_pk_ct_commit`, `ct*_eval_chunk_identity` |
+| `threshold/decrypted_shares_aggregation_wide`                                                       | C7         | `decrypted_shares_aggregation` for ciphertext moduli wider than the field (secure-16384)    |
+| `recursive_aggregation/c2_chunk_batch`                                                              | C2         | Verifies a fixed batch of C2 chunk proofs                                                   |
+| `recursive_aggregation/sk_c2_chunk_finalize`, `recursive_aggregation/esm_c2_chunk_finalize`         | C2a, C2b   | Verify C2 chunk batches and rebuild the SK and ESM C2 public layouts                        |
+| `recursive_aggregation/c2ab_chunk_fold`                                                             | C2ab       | Combines the type-bound terminal C2a and C2b proofs                                         |
+| `recursive_aggregation/c3ab_fold_chunked`, `recursive_aggregation/c4ab_fold_chunked`                | C3ab, C4ab | l-BFV counterparts of `c3ab_fold` and `c4ab_fold`; `c3ab_fold_chunked` adds the VK manifest |
+| `recursive_aggregation/node_fold_chunked`                                                           | —          | Per-node fold: C0, `c2ab_chunk_fold`, `c3ab_fold`, `c4ab_fold`                              |
+| `recursive_aggregation/lbfv_generation_fold`, `recursive_aggregation/lbfv_generation_fold_kernel`   | —          | Fold ordered public-key and RLK generation proof pairs                                      |
+| `recursive_aggregation/lbfv_aggregation_fold`, `recursive_aggregation/lbfv_aggregation_fold_kernel` | —          | Fold ordered public-key and RLK aggregation proofs                                          |
+| `recursive_aggregation/node_fold_v2`                                                                | —          | Binds a `node_fold_chunked` proof to the terminal generation fold                           |
+| `recursive_aggregation/nodes_fold_v2`, `recursive_aggregation/nodes_fold_v2_kernel`                 | —          | Fold exactly `H` `node_fold_v2` proofs in ascending party order                             |
+| `recursive_aggregation/dkg_aggregator_v2`                                                           | —          | Verifies the V2 node fold and the aggregation fold                                          |
+
+The l-BFV C3 app circuit `c3_chonk_app_chunked` stays in `bin/chonk/`.
+
 ### Configuration
 
 | Path     | Role                                                   |
@@ -114,7 +152,7 @@ From the repository root:
 ```bash
 pnpm build:circuits                # compile circuits, verification keys, artifacts
 pnpm noir:lint                    # nargo fmt --check; nargo check (skipped if nargo absent)
-pnpm noir:test                    # nargo test: lib, decryption_aggregator, dkg_aggregator and node_fold (3 preset/committee pairs); nargo execute: config
+pnpm noir:test                    # every package with Noir tests, l-BFV presets and committee matrix; nargo execute: config
 ```
 
 Pin **nargo** and **bb** to the versions in `crates/zk/prover` and `versions.json`. For local work,

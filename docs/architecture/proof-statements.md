@@ -21,6 +21,9 @@ audit remediation is not completeness evidence.
 | C6      | The decryption share derives from the anchored SK/ESM and ciphertext, in one canonical E3 domain. Full `d` enters Fiat-Shamir; the C7-facing commitment binds the configured native tail. |
 | C7      | Exactly T+1 distinct ordered shares reconstruct every claimed message coefficient, including zeros.                                                                                       |
 
+This table names the trBFV chain. l-BFV has no C1/C5: PK/RLK row generation and aggregation replace
+them, linked to C2a's secret root, and C2b chunk leaves prove their own lifted ESM bound.
+[DKG](dkg.md#l-bfv-generation-collection-and-publication) describes the V2 chain and key envelope.
 **C0 does not prove key generation.** A party can publish a bounded key it holds no secret for, such
 as a copy of another party's key or zero. That key only receives the shares dealt to its owner:
 dealers draw fresh encryption randomness per recipient and limb, C4 aggregates plaintext shares
@@ -62,7 +65,7 @@ DKG `error1_variance <= 16` keeps `e0_bound = 2 * variance` (20 for both presets
 `q_i/2`; witness generation asserts this. Raising it enters a different uniform-sampler bound and
 requires reconsidering the assumption. C3 and user-data-encryption `k1` are non-centered `[0,t-1]`
 residues; Rust witnesses, Noir equations, and asymmetric quotient bounds must agree. The workspace
-pins fhe.rs **v0.6.0**, with both native decryption features compiled but synchronized profile
+pins fhe.rs **v0.7.0**, with both native decryption features compiled but synchronized profile
 admission disabled; do not substitute synchronized partials or local noise for the SS statement. The
 additive smudging contract is `2^(lambda+1) * degree * B_C`, with preset/committee-specific bounds
 generated from the matching Rust sampler. The preset search (`crates/bfv/params/src/search`) sizes
@@ -463,6 +466,11 @@ ciphertext indices. User encryption prepares from the exact typed ciphertext and
 `encrypt_and_prepare` encrypts once and returns both ciphertext and Inputs. Preserve lifted-e0 ct0
 correction and separate `r`/`r_ct1` JSON quotients.
 
+Those quotient names describe unchunked trBFV. Chunked user encryption retains `r1is`/`p1is`, full
+lifted `e0`, and PK/ciphertext component commitments. Do not replace that witness shape with the
+unchunked API while moving crates. The generic SDK selects the tree by the requested protocol path:
+l-BFV presets use the chunked tree and trBFV presets use the single circuit.
+
 The unpublished `e3-zk-samples` owns artificial inputs. Production consumers use dev-dependencies;
 the unpublished benchmark runner is the only normal-dependency exception. `pnpm check:repository`
 enforces aliases and target-specific tables. The builder depends on witness/config, not samples.
@@ -504,6 +512,12 @@ writes beside `write_vk --scheme chonk --circuit_kind app|kernel|hiding` output 
 kernel and hiding keys against separate Mega flavors). A chain has at least two stacks, so it ends
 on an accumulator, and `c3ab_fold` rejects a chain that ends on a bare tube.
 
+The l-BFV path uses the same kernels, tube and accumulator with `c3_chonk_app_chunked`, whose
+`share_encryption_chunked` leaves also expose their party and modulus. The app requires both to
+match each real leaf's slot (`party * L_THRESHOLD + modulus`); the sentinel place is not checked.
+`c3ab_fold_chunked` closes both chains as `c3ab_fold` does and exports the C3 manifest
+`hash(C3a key, C3b key, C3a leaf, C3b leaf, C3a chain, C3b chain)` for `node_fold_chunked`.
+
 Slot indices are private app witnesses; only the rows they place are public. A place with nothing to
 verify carries the sentinel slot `C3_SLOTS` and writes nothing. Its proof position still needs a
 proof that verifies under the leaf key; the prover repeats the stack's first leaf, but the circuit
@@ -530,6 +544,8 @@ C2b chain  = hash(e_sm_share_computation_chain, e_sm_share_computation_chain_las
 C2 tree    = hash(C2a, C2a chain, C2b, C2b chain)
 C3 chain   = hash(c3_chonk_accumulate, c3_chonk_tube, hiding kernel, C3, app, init, tail)
 C3 tree    = hash(C3a chain, C3b chain)
+l-BFV C3   = hash(c3_chonk_accumulate, c3_chonk_tube, hiding kernel, chunked C3, chunked app,
+                  init, tail)
 C4 chain   = hash(share_decryption_limb_0, share_decryption_limb_1, share_decryption_limb_2)
 C4 tree    = hash(C4a, C4 chain, C4b, C4 chain)
 node tree  = hash(C0, C1, c2ab_fold, C2 tree, c3ab_fold, C3 tree, c4ab_fold, C4 tree)
@@ -601,6 +617,34 @@ commitment then the hash of the limb keys. `c4ab_fold` folds that hash into the 
 verifying a C4 directly compares it with its own limb keys (`zk_verify_share_proof_bundle`). The
 limb circuits are proven non-ZK and only verified inside the final circuit, so the build publishes
 them in the `default` variant alone.
+
+## l-BFV and user-encryption recursive anchors
+
+For l-BFV, the legacy manifest has 15 entries with no C1, and the independent V2 manifest has 11. Do
+not equate corresponding legacy/V2 VKs. Its C3 entries are the accumulator key (slot 10), the
+chunked C3 key (11) and the l-BFV C3 chain hash (13), which the builder writes as
+`c3ab_fold_chunked.vk_tree_hash` in archives that serve l-BFV; `dkg_aggregator_v2` rebuilds the C3
+manifest from them. Each row kernel starts at row zero; a fold accepts only the next row, and
+terminal consumers require the final configured row. Generation PK rows open fixed CRS commitments;
+RLK rows open fixed URS and CRS commitments and bind both output components. All prover-chosen
+secret, error, quotient, and key data must reach the transcript before challenge derivation.
+Aggregation opens the creator's range-checked packed carriers and normalizes their sum in circuit;
+checked openings and canonical carry windows remain necessary.
+
+Every chunked user-encryption descendant VK reaches an anchor: identity outputs the leaf hash; the
+leg manifest hashes `(identity, leaf, pk_ct)` in that order; the wrapper exports
+`hash(top_level, manifest)` for each leg. The wrapper's public outputs are
+`(ct0_vk_chain, ct1_vk_chain, pk_commitment, ct_commitment, k1_commitment)`; consumers compare both
+chains, not just top-level VKs (the SDK's `getUserDataEncryptionVkChains` returns the expected
+values). The wrapper requires one shared `u` root. ct0 rebuilds the complete `k1` root before
+exporting its whole-polynomial commitment. Leaves, identity circuits opening private `u`, and the
+ct0 top-level opening private `k1` require the ZK recursive target. The trBFV single encryption
+circuit has no recursive children, shares one `u`, and hard-codes the CRS `pk1`; restoring a `pk1is`
+witness would require a checked opening again.
+
+The l-BFV wide C7 follows bounded interpolation and mixed-radix Garner reconstruction, not unbounded
+CRT quotient witnesses. Secure-16384 decode uses U384 for the numerator, including `u = Q-1`; U256
+or field arithmetic silently loses the required integer width.
 
 ## Evidence and change review
 

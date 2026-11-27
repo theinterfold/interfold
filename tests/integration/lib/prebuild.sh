@@ -52,7 +52,8 @@ if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
     --hydrate-bin-only \
     --no-clean-targets)
   (cd "$ROOT_DIR" && pnpm build:circuits prepare-vk-commitments)
-  for preset in insecure-64 secure-8192; do
+  # `insecure-lbfv` feeds the l-BFV scenario leg (`trbfv_scenario_lbfv_insecure`).
+  for preset in insecure-64 secure-8192 insecure-lbfv; do
     mkdir -p "${INTEGRATION_NOIR}/circuits/${preset}"
     cp -R "${ROOT_DIR}/dist/circuits/${preset}/minimum" \
       "${INTEGRATION_NOIR}/circuits/${preset}/"

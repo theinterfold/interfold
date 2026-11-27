@@ -142,7 +142,7 @@ party.
 
 `default_links(preset)` in `crates/zk/prover/src/commitment_links/mod.rs` registers 12 links. The C2
 to C4 links take `l = preset.metadata().num_moduli`. The preset is the E3 threshold preset, so `l`
-is 3 for `insecure-64` and for `secure-8192`.
+is 3 for `insecure-64` and for `secure-8192`, 3 for `insecure-lbfv`, and 6 for `secure-16384`.
 
 ### DKG links
 
@@ -269,6 +269,10 @@ pub struct CommitmentConsistencyViolation {
     pub evidence: Bytes,        // abi.encode(proof.data, public_signals), the preimage of data_hash
 }
 ```
+
+An l-BFV E3 publishes `LbfvCommitmentConsistencyViolation`. It has the same fields and a
+`proof_instance: u32` that names the row of the source proof. The trBFV event keeps the layout
+above.
 
 ### Off-chain voting
 

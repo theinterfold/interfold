@@ -38,6 +38,7 @@ but the ID does not decide eligibility.
 | v0.18.0          | 4                  | 2                 | 7              | 4 and 3                       |
 | v0.19.0, v0.19.1 | 8                  | 2                 | 8              | 5 and 4                       |
 | v0.20.0          | 10                 | 2                 | 9              | 7 and 6                       |
+| Next (l-BFV)     | 11                 | 2                 | 9              | 8 and 7                       |
 
 Nodes on releases v0.15.1 through v0.18.0 share `protocol_version` 4 and the same P2P wire versions,
 so they can connect to each other. A node on generation 1 can connect, but it cannot be active when
@@ -53,6 +54,11 @@ proofs and verification keys do not verify against `bb` 5.2.0 nodes or verifiers
 node during the paused cutover, after active E3 work completes. Schema 9 does not read schema 8
 state, so [reset the state](#reset-node-state) before the first start. Protocol version 9 appeared
 only in prereleases.
+
+The next release adds l-BFV. It uses protocol version 11 and gossip/sync wire versions 8 and 7, and
+keeps storage schema 9. The wire versions are part of the gossip topic and the sync protocol name,
+so nodes on v0.20.0 and nodes on the next release do not exchange events. Upgrade every node during
+the same paused cutover, before the chain requires protocol version 11.
 
 ## The on-chain release gate
 

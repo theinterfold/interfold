@@ -73,7 +73,7 @@ protocol 7 does not satisfy this cutover; the source's compiled values are expli
 from SemVer.
 
 Sampler/smudging/BFV validation and non-centered C3/user-encryption/CRISP k1 scale change witnesses
-and bounds. That cutover used fhe.rs v0.4.2; the workspace now pins fhe.rs v0.6.0, with both native
+and bounds. That cutover used fhe.rs v0.4.2; the workspace now pins fhe.rs v0.7.0, with both native
 decryption features compiled but synchronized profile admission disabled. Node, client configuration
 IDs, circuit archives, and OpenVM guest/receipt identity must match; v1–v4 requests cannot be
 treated as v5. Runtime/SDK tooling reject old configuration IDs for new requests.
@@ -213,16 +213,17 @@ rounds.
 The current source declares protocol **10**, generation **2**. `bb` 6.0.0 and Noir `v1.0.0-rc.3`
 change every verification key, VK tree anchor, and Honk verifier; proofs do not verify across
 toolchains, so a mixed fleet attests honest peers' proofs as invalid. Use the contract/protocol
-rollout: pause/drain, publish all eight artifact pairs, replace PK/decryption wrappers and routers
-in the governance batch that raises the required protocol version, and upgrade every node before
-resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them first. The
-cutover also carries chunked C2: the C2a, C2b, and `c2ab_fold` keys and the C2 branch of the VK tree
-change, and final C2 proofs gain a trailing key-tree public field. Stored C2 proofs from in-flight
-E3s can be neither folded nor link-checked, so drain them first too. C6 now aggregates over Chonk:
-the `decryption_aggregator` key, the C6 tree anchor and every `BfvDecryptionVerifier` change, and no
-event encoding changes. Each pair gains 18 required C6 Chonk artifacts (the app, three kernels, tube
-and root) and drops the six `c6_fold` and `c6_fold_kernel` files; only `c6_fold.vk_tree_hash` keeps
-its retired path. Storage schema and gossip/sync wire majors are unchanged.
+rollout: pause/drain, publish every build-policy artifact pair, replace PK/decryption wrappers and
+routers in the governance batch that raises the required protocol version, and upgrade every node
+before resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them
+first. The cutover also carries chunked C2: the C2a, C2b, and `c2ab_fold` keys and the C2 branch of
+the VK tree change, and final C2 proofs gain a trailing key-tree public field. Stored C2 proofs from
+in-flight E3s can be neither folded nor link-checked, so drain them first too. C6 now aggregates
+over Chonk: the `decryption_aggregator` key, the C6 tree anchor and every `BfvDecryptionVerifier`
+change, and no event encoding changes. Each pair gains 18 required C6 Chonk artifacts (the app,
+three kernels, tube and root) and drops the six `c6_fold` and `c6_fold_kernel` files; only
+`c6_fold.vk_tree_hash` keeps its retired path. Storage schema and gossip/sync wire majors are
+unchanged.
 
 The cutover also carries three-node `nodes_fold` steps. `nodes_fold` and `nodes_fold_kernel` change
 their public layout, so their keys, the `dkg_aggregator` key, the nodes-tree anchor, and the DKG
@@ -305,6 +306,22 @@ Mainnet hold only threshold-only history, and replay between intermediate builds
 so that history is not preserved; a deployment that ran it must reset and resync.
 `crates/bfv/params/tests/fixtures/bfv_protocol.json` freezes these vectors.
 
+The l-BFV protocol path registers its two tuples at new, append-only indices after the current ones:
+index 5 for secure-16384 (profile `ss-secure-16384`) and index 6 for the degree-128 insecure l-BFV
+tuple (profile `ss-insecure-lbfv`). Both are empty on every live registry, so no earlier index is
+reinterpreted. They are routed on Sepolia and local chains only, for the Minimum, Micro and Small
+committees; Mainnet routes are unchanged. A fresh deployment registers them through
+`registerActiveBfvParamSet`; an upgrade registers each with `setParamSet` and checks that
+`keccak256(paramSetRegistry(5))` is `BfvProtocol.SECURE_16384_PARAM_SET_HASH` and
+`keccak256(paramSetRegistry(6))` is `BfvProtocol.INSECURE_LBFV_PARAM_SET_HASH`. The secure-16384 DKG
+window must be at least 21,600 seconds, which `InterfoldPricing` and the protocol configuration
+loader (`scripts/protocol/values.ts`) enforce.
+
+Each BFV verifier router record holds the verifier, its public-input length and nodes-fold key hash,
+and the `expectedParamSet` it serves. The router is built with the `CiphernodeRegistry`, so it reads
+the E3's parameter set from the registry's Interfold contract and routes only to a verifier whose
+`expectedParamSet` matches.
+
 The Large committee slice routes `insecure-64/large` and `secure-8192/large` on Sepolia and local
 chains only; Mainnet routes and configuration are unchanged. A secure-8192 public-key aggregation
 (C5) at Large peaks above one 13 GiB prover slot: 14.3 GiB at 16 threads on Linux (16 threads, 32
@@ -318,13 +335,13 @@ hold about 299 MiB of publications, so the publication outbox and its recovery l
 Sepolia, `upgrade:v19` deploys both routes and adds `setCommitteeThresholds(3, [34, 45])` from the
 configuration. The call follows the upgrade in the batch, because the earlier implementation reverts
 on size 3; `prepare` reads that revert as an unset threshold only for Large, the size this release
-adds. `upgrade:v19` does not change timeout windows. Live Sepolia holds `dkgWindow` 1800 s, and one
-Large node measured 1,213 s of DKG on 16 cores / 32 threads, so a Sepolia batch must add
-`setTimeoutConfig` with the configured windows, which raise `dkgWindow` to 7200 s for every Sepolia
-committee size; node checkpoints scale with it. A fresh deployment sets them from the configuration.
-`upgrade:v19:validate`, which `upgrade:v19:resume` runs first, compares `getTimeoutConfig()` with
-the configured windows and refuses while they differ. An owner that unpauses directly bypasses that
-check.
+adds. `upgrade:v19` does not change timeout windows. Live Sepolia holds `dkgWindow` 1800 s, below
+the 21,600 s floor that the configuration loader requires where secure-16384 is supported, so a
+Sepolia batch must add `setTimeoutConfig` with the configured windows, which raise `dkgWindow` to
+21600 s for every Sepolia committee size; node checkpoints scale with it. A fresh deployment sets
+them from the configuration. `upgrade:v19:validate`, which `upgrade:v19:resume` runs first, compares
+`getTimeoutConfig()` with the configured windows and refuses while they differ. An owner that
+unpauses directly bypasses that check.
 
 Sepolia is normally redeployed for a release rather than upgraded in place; the in-place steps above
 apply only if it is upgraded instead. Either way, Large needs a CRISP program built against this
@@ -353,8 +370,14 @@ has fewer than 45 active operators, so Large requests revert with `InsufficientC
 enough operators join. There, `upgrade:v19:resume`, `upgrade:node-release` resume and
 `upgrade:vrf-sortition:resume` take `--sepolia-committee-size` for a smaller gate.
 
-The 7200 s window rests on one node's DKG measurement; it does not qualify Large end to end. The
-nodes-fold step and the 23-leaf C6 Chonk stack are not measured at N = 45. The count budgets in
+The l-BFV release is the next release after v0.20.0, which shipped protocol 10. It declares protocol
+11 and gossip/sync wire majors 8 and 7, so its nodes form a libp2p network separate from protocol 10
+(v0.20.0) and older nodes, and the batches that deploy its verifiers raise the required release the
+same way.
+
+The 21600 s window is the secure-16384 floor, not a Large measurement: one Large node measured 1,213
+s of DKG on 16 cores / 32 threads, and the window does not qualify Large end to end. The nodes-fold
+step and the 23-leaf C6 Chonk stack are not measured at N = 45. The count budgets in
 `crates/net/src/ingress_limits.rs` and `crates/state/request/src/routing/event_buffer.rs` are now
 sized for four concurrent N = 45 E3s, but no capacity test exercises that load, and their byte
 ceilings are unchanged. Treat Large on Sepolia as a trial until those are measured.
@@ -547,14 +570,13 @@ work that it still owes. Retire a profile in this order:
 Step 3 changes the circuit source hash of every preset/committee pair, although no circuit and no
 configuration ID changes. The hash covers `crates/bfv/params/src`, where the flag lives, and the
 generated `packages/interfold-contracts/crypto-config.json`, which records it. The release workflow
-pulls only the circuit artifacts that carry the source hash of its commit, so rebuild all eight
-pairs of `scripts/circuits/build-pairs.json` for that release, push them with
-`pnpm store:circuits push` and qualify them again (see the
-[circuit builder usage](../../scripts/circuits/README.md#usage)). Regenerate the sources with
-`pnpm generate:crypto-config`. `BfvProtocol.sol` retains exact identity constants even for disabled
-profiles; identity is not admission. `ActiveCryptoConfig.sol` must stop referencing retired
-identities in step 1. `pnpm check:crypto-config` checks all identity constants separately from
-exactly admitted request identities.
+pulls only the circuit artifacts that carry the source hash of its commit, so rebuild every pair of
+`scripts/circuits/build-pairs.json` for that release, push them with `pnpm store:circuits push` and
+qualify them again (see the [circuit builder usage](../../scripts/circuits/README.md#usage)).
+Regenerate the sources with `pnpm generate:crypto-config`. `BfvProtocol.sol` retains exact identity
+constants even for disabled profiles; identity is not admission. `ActiveCryptoConfig.sol` must stop
+referencing retired identities in step 1. `pnpm check:crypto-config` checks all identity constants
+separately from exactly admitted request identities.
 
 If a node of that release still refuses to start, it still owes work under the profile, such as
 accusation or slashing work for a failed E3. Run the previous release until that work ends. Do not
@@ -592,6 +614,13 @@ E3s; do not upgrade it in place or reinterpret those E3s with degree-64 paramete
 does not replace the [parameter-set re-index](#bfv-profile-cutover) cutover procedure.
 
 ### Identity and active-state guards
+
+The l-BFV contribution-document cutoff (collection schema 3) uses typed fhe.rs `LBFVPublicKeyShare`
+and `LBFVRelinKeyShare` envelopes, not older bare contribution bytes. Version-3 PK documents carry
+signed PK row proofs without C1 and reject versions 1/2. Drain active work before a coordinated
+development-data cutoff and rebuild matching artifacts/consumers; do not reinterpret retained opaque
+payloads. This is separate from the insecure preset reset and is not authorization to erase operator
+identities or active keyshares.
 
 Operator/libp2p keys are in the same store under `//eth_private_key` and `//libp2p/keypair`;
 deleting a data directory destroys bonded identity. `nodes purge` also deletes cipher-key
