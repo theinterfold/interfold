@@ -20,8 +20,8 @@ pub const NOIR_PATH: &str = "circuits/lib/src/configs/protocol.nr";
 
 pub fn solidity(params: &OperationParams) -> Result<String> {
     let mut text = format!("{HEADER}pragma solidity >=0.8.27;\n\n{GENERATED}library BfvProtocol {{\n    bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256(\"{BFV_ENCRYPTION_SCHEME}\");\n    bytes32 internal constant CIRCUIT_VERSION = keccak256(\"{INTERFOLD_BFV_VERSION}\");\n");
-    for preset in BfvPreset::PAIR_PRESETS {
-        let label = crate::tier(preset).to_uppercase();
+    for (_, preset) in BfvPreset::ON_CHAIN_PARAMETER_SETS {
+        let label = solidity_label(preset)?;
         let material = params.get(preset);
         let param_set = preset
             .on_chain_param_set()
@@ -87,6 +87,17 @@ pub fn solidity(params: &OperationParams) -> Result<String> {
     }
     text.push_str("}\n");
     Ok(text)
+}
+
+/// Solidity name of an on-chain parameter set. `SECURE` keeps its deployed name for secure-8192.
+fn solidity_label(preset: BfvPreset) -> Result<&'static str> {
+    Ok(match preset {
+        BfvPreset::InsecureThreshold64 => "INSECURE",
+        BfvPreset::SecureThreshold8192 => "SECURE",
+        BfvPreset::SecureThreshold16384 => "SECURE_16384",
+        BfvPreset::InsecureThresholdLbfv => "INSECURE_LBFV",
+        other => bail!("{other:?} has no on-chain parameter set"),
+    })
 }
 
 pub fn noir_sources(root: &Path) -> Vec<(PathBuf, String)> {

@@ -45,19 +45,28 @@ export const ALL_VARIANTS: CircuitVariant[] = [CIRCUIT_VARIANTS.DEFAULT, CIRCUIT
  */
 export const CIRCUIT_PRESETS = {
   INSECURE_64: 'insecure-64',
+  INSECURE_LBFV: 'insecure-lbfv',
   SECURE_8192: 'secure-8192',
+  SECURE_16384: 'secure-16384',
 } as const
 
 export type CircuitPreset = (typeof CIRCUIT_PRESETS)[keyof typeof CIRCUIT_PRESETS]
 
-export const ALL_PRESETS: CircuitPreset[] = [CIRCUIT_PRESETS.INSECURE_64, CIRCUIT_PRESETS.SECURE_8192]
+export const ALL_PRESETS: CircuitPreset[] = [
+  CIRCUIT_PRESETS.INSECURE_64,
+  CIRCUIT_PRESETS.INSECURE_LBFV,
+  CIRCUIT_PRESETS.SECURE_8192,
+  CIRCUIT_PRESETS.SECURE_16384,
+]
 
 /**
  * Maps each preset to the Noir config module it re-exports from `circuits/lib/src/configs/default/mod.nr`.
  */
-export const PRESET_NOIR_CONFIG: Record<CircuitPreset, 'insecure' | 'secure'> = {
+export const PRESET_NOIR_CONFIG: Record<CircuitPreset, 'insecure' | 'insecure_lbfv' | 'secure' | 'secure_16384'> = {
   [CIRCUIT_PRESETS.INSECURE_64]: 'insecure',
+  [CIRCUIT_PRESETS.INSECURE_LBFV]: 'insecure_lbfv',
   [CIRCUIT_PRESETS.SECURE_8192]: 'secure',
+  [CIRCUIT_PRESETS.SECURE_16384]: 'secure_16384',
 }
 
 /**

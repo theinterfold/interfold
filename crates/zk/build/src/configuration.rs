@@ -38,25 +38,31 @@ impl PresetMaterial {
     }
 }
 
-/// The parameter material for both supported presets of one operation. Every renderer reuses it;
+/// The parameter material for supported presets of one operation. Every renderer reuses it;
 /// nothing rebuilds a preset pair inside an operation.
 pub struct OperationParams {
+    insecure64: PresetMaterial,
     insecure: PresetMaterial,
     secure: PresetMaterial,
+    secure16384: PresetMaterial,
 }
 
 impl OperationParams {
     pub fn both() -> Result<Self> {
         Ok(Self {
-            insecure: PresetMaterial::new(BfvPreset::InsecureThreshold64)?,
+            insecure64: PresetMaterial::new(BfvPreset::InsecureThreshold64)?,
+            insecure: PresetMaterial::new(BfvPreset::InsecureThreshold)?,
             secure: PresetMaterial::new(BfvPreset::SecureThreshold8192)?,
+            secure16384: PresetMaterial::new(BfvPreset::SecureThreshold16384)?,
         })
     }
     pub fn get(&self, preset: BfvPreset) -> &PresetMaterial {
         match preset {
-            BfvPreset::InsecureThreshold64 => &self.insecure,
+            BfvPreset::InsecureThreshold64 => &self.insecure64,
+            BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => &self.insecure,
             BfvPreset::SecureThreshold8192 => &self.secure,
-            _ => unreachable!("SS deployment material requires a threshold preset"),
+            BfvPreset::SecureThreshold16384 => &self.secure16384,
+            _ => unreachable!("build selects threshold presets"),
         }
     }
 }
@@ -140,6 +146,14 @@ pub const BOUND_SOURCES: &[(&str, &str)] = &[
     ("dkg.nr", "SHARE_COMPUTATION_"),
 ];
 
+// The chunk grid belongs to the module generator, not committee-dependent C2 bounds.
+pub const CHUNK_GLOBALS: &[&str] = &[
+    "SHARE_COMPUTATION_CHUNK_SIZE",
+    "SHARE_COMPUTATION_N_CHUNKS",
+    "SHARE_COMPUTATION_CHUNKS_PER_BATCH",
+    "SHARE_COMPUTATION_N_BATCHES",
+];
+
 /// Find the complete declaration, including arrays and formatted multi-line values.
 pub fn declarations(source: &str) -> BTreeMap<String, String> {
     let regex = Regex::new(r"(?m)^pub global ([A-Z0-9_]+):").unwrap();
@@ -181,6 +195,9 @@ pub fn replace_declarations(
     let mut updated = original.to_string();
     let mut count = 0;
     for (name, declaration) in &fresh {
+        if CHUNK_GLOBALS.contains(&name.as_str()) {
+            continue;
+        }
         if !name.starts_with(prefix) && !common.contains(&name.as_str()) {
             continue;
         }
@@ -202,7 +219,7 @@ pub fn replace_declarations(
             bail!("No {prefix} constants generated");
         }
         for name in old.keys().filter(|name| name.starts_with(prefix)) {
-            if !fresh.contains_key(name) {
+            if !CHUNK_GLOBALS.contains(&name.as_str()) && !fresh.contains_key(name) {
                 bail!("{name} is not generated; remove it or generate it");
             }
         }
@@ -344,9 +361,12 @@ pub fn preset_updates(
         ),
         (
             "threshold.nr",
+            // The chunked globals share this prefix, so one strict pass owns both families.
             "USER_DATA_ENCRYPTION_",
             vec![],
-            threshold::user_data_encryption::Configs::new(&material.threshold)?.render()?,
+            threshold::user_data_encryption::Configs::new(&material.threshold)?.render()?
+                + &threshold::user_data_encryption_chunked::Configs::new(&material.threshold)?
+                    .render()?,
         ),
         (
             "threshold.nr",
@@ -390,8 +410,9 @@ pub fn preset_updates(
         declarations(&threshold_source.3)["THRESHOLD_SHARE_DECRYPTION_BIT_SK"].clone();
     let mut pending = BTreeMap::new();
     for (file, prefix, common, mut generated) in sources {
-        // Only the secure preset exposes these legacy public search globals.
-        if prefix == "PARAMS_SEARCH_" && preset == BfvPreset::InsecureThreshold64 {
+        // Only secure-8192 derives these legacy public search globals from its search recipe; the
+        // insecure and secure-16384 values are reviewed declarations, not recipe outputs.
+        if prefix == "PARAMS_SEARCH_" && preset != BfvPreset::SecureThreshold8192 {
             continue;
         }
         let path = root
@@ -431,6 +452,38 @@ pub fn preset_updates(
             replace_declarations(&text, &generated, prefix, &common, true)?,
         );
     }
+    let threshold_path = root
+        .join("circuits/lib/src/configs")
+        .join(tier(preset))
+        .join("threshold.nr");
+    let additional = super::lbfv::threshold_constants(preset, &material.threshold, committee)?;
+    let mut text = pending
+        .remove(&threshold_path)
+        .context("threshold configuration")?;
+    for prefix in ["LBFV_PK_GENERATION_", "RLK_GENERATION_", "RLK_AGGREGATION_"] {
+        text = replace_declarations(&text, &additional, prefix, &[], false)?;
+    }
+    pending.insert(threshold_path, text);
+    let dkg_path = root
+        .join("circuits/lib/src/configs")
+        .join(tier(preset))
+        .join("dkg.nr");
+    let mut text = pending.remove(&dkg_path).context("DKG configuration")?;
+    let old = declarations(&text);
+    for (name, generated) in declarations(&super::lbfv::chunk_grid(material.threshold.degree())) {
+        let current = old
+            .get(&name)
+            .with_context(|| format!("Missing chunk-grid declaration {name}"))?;
+        if compact(current) != compact(&generated) {
+            text = text.replacen(current, &generated, 1);
+        }
+    }
+    pending.insert(dkg_path, text);
+    pending.extend(super::lbfv::public_randomness(
+        root,
+        preset,
+        &material.threshold,
+    )?);
     Ok(pending.into_iter().collect())
 }
 
@@ -593,8 +646,9 @@ fn all_sources(root: &Path) -> Result<Selection> {
     let mut sources: BTreeMap<_, _> = selection.noir.into_iter().collect();
     // An unselected preset retains its canonical development declarations. Pair-specific checks
     // stage the requested committee instead of comparing all pairs with this one live library.
-    for preset in BfvPreset::PAIR_PRESETS {
-        let committee = if preset == active_preset {
+    // One preset per configuration directory: both degree-128 insecure labels share `insecure_lbfv`.
+    for preset in super::ARTIFACT_PRESETS {
+        let committee = if tier(preset) == tier(active_preset) {
             active_committee
         } else {
             CiphernodesCommitteeSize::Minimum

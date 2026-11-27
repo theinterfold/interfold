@@ -37,9 +37,15 @@ contract BfvProtocolHarness {
             paramSet,
             committeeSize
         );
-        params = paramSet == BfvProtocol.INSECURE_PARAM_SET
-            ? BfvProtocol.INSECURE_PARAM_SET_HASH
-            : BfvProtocol.SECURE_PARAM_SET_HASH;
+        if (paramSet == BfvProtocol.INSECURE_PARAM_SET) {
+            params = BfvProtocol.INSECURE_PARAM_SET_HASH;
+        } else if (paramSet == BfvProtocol.SECURE_PARAM_SET) {
+            params = BfvProtocol.SECURE_PARAM_SET_HASH;
+        } else if (paramSet == BfvProtocol.SECURE_16384_PARAM_SET) {
+            params = BfvProtocol.SECURE_16384_PARAM_SET_HASH;
+        } else {
+            params = BfvProtocol.INSECURE_LBFV_PARAM_SET_HASH;
+        }
         return (
             BfvProtocol.ENCRYPTION_SCHEME_ID,
             BfvProtocol.CIRCUIT_VERSION,

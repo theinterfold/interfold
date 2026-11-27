@@ -249,7 +249,7 @@ pub fn rounded_decode<let BIT_T: u32, let BIT_Q_TOTAL: u32>(
     }
 }
 
-fn assert_decoded_coefficient(computed_message: Field, claimed_message: Field) {
+pub fn assert_decoded_coefficient(computed_message: Field, claimed_message: Field) {
     assert(computed_message == claimed_message, "decoded message mismatch");
 }
 
@@ -319,6 +319,28 @@ fn rounded_decode_covers_its_boundaries() {
     assert(rounded_decode::<5, 11>(151, t, q, half) == 2);
     assert(rounded_decode::<5, 11>(250, t, q, half) == 2);
     assert(rounded_decode::<5, 11>(251, t, q, half) == 3);
+}
+
+/// `rounded_decode` forms `t * u + half` and `Q * rounded` in the field, so the decode is unique only
+/// while they stay below the prime. Checked here rather than in the circuit so the bounded C7's
+/// bytecode does not change; secure-16384 fails this bound and builds the wide variant instead.
+#[test]
+fn test_bounded_decode_fits_the_field_in_every_preset_that_builds_it() {
+    assert(
+        crate::configs::insecure::threshold::DECRYPTED_SHARES_AGGREGATION_BIT_Q_TOTAL
+            + crate::configs::insecure::threshold::DECRYPTED_SHARES_AGGREGATION_BIT_T
+            < 253,
+    );
+    assert(
+        crate::configs::insecure_lbfv::threshold::DECRYPTED_SHARES_AGGREGATION_BIT_Q_TOTAL
+            + crate::configs::insecure_lbfv::threshold::DECRYPTED_SHARES_AGGREGATION_BIT_T
+            < 253,
+    );
+    assert(
+        crate::configs::secure::threshold::DECRYPTED_SHARES_AGGREGATION_BIT_Q_TOTAL
+            + crate::configs::secure::threshold::DECRYPTED_SHARES_AGGREGATION_BIT_T
+            < 253,
+    );
 }
 
 /// Lagrange coefficients at zero sum to one, so each row must reduce to 1 modulo its `q`.

@@ -14,8 +14,15 @@ use std::time::{Duration, SystemTime};
 #[test]
 fn source_hash_matches_the_formatted_build_projection_for_every_pair() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    for preset in BfvPreset::PAIR_PRESETS {
+    for preset in crate::ARTIFACT_PRESETS {
         for committee in CiphernodesCommitteeSize::ALL {
+            // `large` serves only the trBFV presets.
+            if !crate::committee_presets(committee)
+                .iter()
+                .any(|served| crate::tier(*served) == crate::tier(preset))
+            {
+                continue;
+            }
             let mut request = request();
             request.preset = PresetSelection::Single(super::profile(preset_name(preset)).unwrap());
             request.committee = CommitteeSelection::Single(committee);
@@ -125,6 +132,14 @@ pub(crate) fn request() -> Request {
         skip_if_built: false,
         hydrate_bin_only: false,
         dry_run: false,
+    }
+}
+
+/// The default request for one preset's minimum pair.
+pub(crate) fn request_for(preset: BfvPreset) -> Request {
+    Request {
+        preset: PresetSelection::Single(profile(preset_name(preset)).unwrap()),
+        ..request()
     }
 }
 
@@ -239,32 +254,32 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
         .unwrap_err()
         .to_string()
         .contains("Select at least one circuit group"));
-    for options in [
-        {
-            let mut r = request();
-            r.preset = PresetSelection::Single(BfvProfile::SsSecure8192);
-            r.committee = CommitteeSelection::All;
-            r
-        },
-        {
-            let mut r = request();
-            r.preset = PresetSelection::All;
-            r.committee = CommitteeSelection::Single(CiphernodesCommitteeSize::Micro);
-            r
-        },
+    for (options, expected) in [
+        (
+            {
+                let mut r = request();
+                r.preset = PresetSelection::Single(BfvProfile::SsSecure8192);
+                r.committee = CommitteeSelection::All;
+                r
+            },
+            // minimum, small, and large; micro was removed above.
+            3,
+        ),
+        (
+            {
+                let mut r = request();
+                r.preset = PresetSelection::All;
+                r.committee = CommitteeSelection::Single(CiphernodesCommitteeSize::Micro);
+                r
+            },
+            crate::ARTIFACT_PRESETS.len() - 1,
+        ),
     ] {
         let selected = options.selected_pairs(temp.path()).unwrap();
         for pair in &selected {
             assert!(pairs.contains(pair));
         }
-        assert_eq!(
-            selected.len(),
-            if matches!(options.preset, PresetSelection::All) {
-                1
-            } else {
-                3
-            }
-        );
+        assert_eq!(selected.len(), expected);
         options.validate(temp.path()).unwrap();
     }
 }
@@ -303,7 +318,10 @@ fn synchronized_definition_does_not_enable_any_live_build_pair_or_admission() {
     let pairs = build_pairs(&repo).unwrap();
     assert_eq!(
         pairs.len(),
-        BfvPreset::PAIR_PRESETS.len() * CiphernodesCommitteeSize::ALL.len()
+        CiphernodesCommitteeSize::ALL
+            .iter()
+            .map(|committee| crate::committee_presets(*committee).len())
+            .sum::<usize>()
     );
     assert!(pairs
         .iter()
@@ -572,6 +590,10 @@ fn current_selection_sync_preserves_bytes_and_mtimes_without_tools() {
         fs::read_to_string(repo.join("circuits/lib/src/configs/default/mod.nr")).unwrap();
     let preset = if selector.contains("super::secure::") {
         BfvPreset::SecureThreshold8192
+    } else if selector.contains("super::secure_16384::") {
+        BfvPreset::SecureThreshold16384
+    } else if selector.contains("super::insecure_lbfv::") {
+        BfvPreset::InsecureThreshold
     } else {
         BfvPreset::InsecureThreshold64
     };
@@ -590,11 +612,26 @@ fn current_selection_sync_preserves_bytes_and_mtimes_without_tools() {
     )
     .unwrap();
     for relative in [
+        "scripts/circuits/build-pairs.json",
         "packages/interfold-contracts/scripts/utils.ts",
         "packages/interfold-contracts/contracts/lib/BfvProtocol.sol",
     ] {
         write(root, relative, fs::read(repo.join(relative)).unwrap());
     }
+    // Seed the current generator's projected output without a live formatter. Historical committed
+    // provenance is intentionally retained by the merge, rather than rewritten as test setup.
+    let selection = configuration::prepare_selection(root, preset, committee, false).unwrap();
+    for (path, contents) in selection.noir {
+        fs::write(path, contents).unwrap();
+    }
+    configuration::sync_protocol(
+        root,
+        preset,
+        committee,
+        false,
+        &configuration::OperationParams::both().unwrap(),
+    )
+    .unwrap();
     let files = snapshot(root);
     let relatives: Vec<_> = files.keys().map(|path| path.to_str().unwrap()).collect();
     age_files(root, &relatives);
@@ -929,10 +966,120 @@ fn protocol_generation_preserves_deployed_parameter_hashes() {
 }
 
 #[test]
+fn trbfv_archives_serve_no_lbfv_circuits() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let lbfv_tree = root.join("circuits/bin/lbfv");
+    let circuits = artifacts::discover(&root, &request()).unwrap();
+    for preset in [
+        BfvPreset::InsecureThreshold64,
+        BfvPreset::SecureThreshold8192,
+    ] {
+        let selected: Vec<_> = circuits
+            .iter()
+            .filter(|circuit| crate::policy::enabled(circuit, preset))
+            .collect();
+        let leaked: Vec<_> = selected
+            .iter()
+            .filter(|circuit| circuit.path.starts_with(&lbfv_tree))
+            .map(|circuit| format!("{}/{}", circuit.group, circuit.name))
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "{preset:?} serves l-BFV circuits: {leaked:?}"
+        );
+        assert!(selected
+            .iter()
+            .any(|circuit| circuit.group == "threshold" && circuit.name == "share_decryption"));
+    }
+}
+
+#[test]
+fn artifact_policy_preserves_lbfv_selection_and_zk_finalizers() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let circuits = artifacts::discover(&root, &request()).unwrap();
+    let selected: Vec<_> = circuits
+        .iter()
+        .filter(|circuit| crate::policy::enabled(circuit, BfvPreset::SecureThreshold16384))
+        .collect();
+    assert!(selected
+        .iter()
+        .any(|circuit| circuit.name == "dkg_aggregator_v2"));
+    assert!(selected
+        .iter()
+        .any(|circuit| circuit.name == "node_fold_chunked"));
+    assert!(!selected
+        .iter()
+        .any(|circuit| circuit.name == "pk_aggregation" || circuit.name == "pk_generation"));
+    assert!(selected
+        .iter()
+        .any(|circuit| circuit.group == "threshold" && circuit.name == "share_decryption"));
+    assert!(!selected
+        .iter()
+        .any(|circuit| circuit.group == "dkg" && circuit.name == "share_decryption"));
+    for name in ["sk_c2_chunk_finalize", "esm_c2_chunk_finalize"] {
+        let circuit = circuits
+            .iter()
+            .find(|circuit| circuit.name == name)
+            .unwrap();
+        assert!(artifacts::variants(circuit)
+            .iter()
+            .any(|(variant, target, _)| *variant == "recursive" && *target == "noir-recursive"));
+    }
+    let mut micro = request();
+    micro.preset = PresetSelection::Single(BfvProfile::SsSecure16384);
+    micro.committee = CommitteeSelection::Single(CiphernodesCommitteeSize::Micro);
+    assert_eq!(
+        micro.selected_pairs(&root).unwrap(),
+        vec![["secure-16384".to_string(), "micro".to_string()]]
+    );
+    let mut alias = request();
+    alias.preset = "insecure-lbfv".parse().unwrap();
+    assert_eq!(
+        alias.selected_pairs(&root).unwrap(),
+        request_for(BfvPreset::InsecureThreshold)
+            .selected_pairs(&root)
+            .unwrap()
+    );
+}
+
+/// The CRS/URS rows are derived from the pinned seeds and never committed; the circuits open only
+/// the row commitments in each `lbfv/mod.nr`. Re-derive them and require the committed values.
+#[test]
+fn derived_public_randomness_matches_the_committed_lbfv_row_commitments() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    for preset in [
+        BfvPreset::InsecureThreshold,
+        BfvPreset::SecureThreshold16384,
+    ] {
+        let material = PresetMaterial::new(preset).unwrap();
+        let updates = crate::lbfv::public_randomness(&root, preset, &material.threshold).unwrap();
+        // Only the commitments are produced: no CRS/URS table file.
+        assert_eq!(updates.len(), 1, "{preset:?}");
+        let (path, generated) = updates.into_iter().next().unwrap();
+        assert!(path.ends_with("lbfv/mod.nr"), "{preset:?}");
+        let committed = configuration::declarations(&fs::read_to_string(path).unwrap());
+        let generated = configuration::declarations(&generated);
+        for name in ["LBFV_CRS_ROW_COMMITMENTS", "LBFV_URS_ROW_COMMITMENTS"] {
+            // Noir formatting can add trailing array commas.
+            assert_eq!(
+                compact(&generated[name]).replace(",]", "]"),
+                compact(&committed[name]).replace(",]", "]"),
+                "{preset:?} {name}"
+            );
+        }
+    }
+}
+
+#[test]
 fn shared_operation_material_serves_bounds_and_protocol_renderers() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    write(
+        root,
+        "scripts/circuits/build-pairs.json",
+        fs::read(repo.join("scripts/circuits/build-pairs.json")).unwrap(),
+    );
     artifacts::copy_tree(
         &repo.join("circuits/lib"),
         &root.join("circuits/lib"),
@@ -941,10 +1088,10 @@ fn shared_operation_material_serves_bounds_and_protocol_renderers() {
     .unwrap();
     let params = configuration::OperationParams::both().unwrap();
     // The same material renders bound updates and Solidity's deployed hashes.
-    let material = params.get(BfvPreset::InsecureThreshold64);
+    let material = params.get(BfvPreset::InsecureThreshold);
     let bounds = configuration::bound_updates(
         root,
-        BfvPreset::InsecureThreshold64,
+        BfvPreset::InsecureThreshold,
         CiphernodesCommitteeSize::Minimum,
         material,
     )
@@ -959,7 +1106,7 @@ fn shared_operation_material_serves_bounds_and_protocol_renderers() {
     )));
     let selection = configuration::prepare_selection(
         root,
-        BfvPreset::InsecureThreshold64,
+        BfvPreset::InsecureThreshold,
         CiphernodesCommitteeSize::Minimum,
         true,
     )
@@ -994,7 +1141,7 @@ fn deployment_selection_switches_only_names_and_is_idempotent_for_every_pair() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let before =
         fs::read_to_string(repo.join("packages/interfold-contracts/scripts/utils.ts")).unwrap();
-    for preset in BfvPreset::PAIR_PRESETS {
+    for preset in crate::ARTIFACT_PRESETS {
         for committee in CiphernodesCommitteeSize::ALL {
             let selected = configuration::protocol_utils(&before, preset, committee).unwrap();
             assert!(selected.contains(&format!(
@@ -1016,14 +1163,27 @@ fn deployment_selection_switches_only_names_and_is_idempotent_for_every_pair() {
 fn complete_preset_generation_preserves_each_existing_pair_statement() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let params = configuration::OperationParams::both().unwrap();
-    for preset in BfvPreset::PAIR_PRESETS {
+    for preset in crate::ARTIFACT_PRESETS {
         for committee in CiphernodesCommitteeSize::ALL {
+            // `large` serves only the trBFV presets.
+            if !crate::committee_presets(committee)
+                .iter()
+                .any(|served| crate::tier(*served) == crate::tier(preset))
+            {
+                continue;
+            }
             let original =
                 configuration::bound_updates(&root, preset, committee, params.get(preset)).unwrap();
             for (path, full) in
                 configuration::preset_updates(&root, preset, committee, params.get(preset)).unwrap()
             {
-                let previous = &original.iter().find(|(old, _)| *old == path).unwrap().1;
+                // l-BFV public-randomness modules have no narrow owner; compare them with the
+                // committed sources.
+                let previous = &original
+                    .iter()
+                    .find(|(old, _)| *old == path)
+                    .map(|(_, text)| text.clone())
+                    .unwrap_or_else(|| fs::read_to_string(&path).unwrap());
                 let normalized = |source: &str| {
                     configuration::declarations(source)
                         .into_iter()
@@ -1195,9 +1355,16 @@ fn successful_compiler_process_with_bug_diagnostic_is_not_accepted() {
 fn every_pair_replaces_whole_scalar_and_array_bound_declarations() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let params = configuration::OperationParams::both().unwrap();
-    for preset in BfvPreset::PAIR_PRESETS {
+    for preset in crate::ARTIFACT_PRESETS {
         for name in COMMITTEES {
             let committee = name.parse().unwrap();
+            // `large` serves only the trBFV presets.
+            if !crate::committee_presets(committee)
+                .iter()
+                .any(|served| crate::tier(*served) == crate::tier(preset))
+            {
+                continue;
+            }
             let material = params.get(preset);
             for (path, updated) in
                 configuration::bound_updates(&root, preset, committee, material).unwrap()
@@ -1223,10 +1390,13 @@ fn every_pair_replaces_whole_scalar_and_array_bound_declarations() {
                 };
                 let declarations = configuration::declarations(&updated);
                 for (name, declaration) in configuration::declarations(&fresh) {
-                    if name.starts_with("PK_GENERATION_") || name.starts_with("SHARE_COMPUTATION_")
+                    if (name.starts_with("PK_GENERATION_")
+                        || name.starts_with("SHARE_COMPUTATION_"))
+                        && !configuration::CHUNK_GLOBALS.contains(&name.as_str())
                     {
+                        // Replacement keeps the formatter's optional trailing commas.
                         assert_eq!(
-                            compact(declarations.get(&name).unwrap()),
+                            compact(declarations.get(&name).unwrap()).replace(",]", "]"),
                             compact(&declaration),
                             "{name}"
                         );
@@ -1361,7 +1531,7 @@ fn bin_current_requires_every_required_artifact() {
         },
     )
     .unwrap();
-    for marker in artifacts::bin_markers(root).unwrap() {
+    for marker in artifacts::bin_markers(root, "insecure-64").unwrap() {
         fs::create_dir_all(marker.parent().unwrap()).unwrap();
         fs::write(marker, b"marker").unwrap();
     }
@@ -1370,6 +1540,11 @@ fn bin_current_requires_every_required_artifact() {
     fs::remove_file(root.join("circuits/bin/chonk/target/c3_chonk_hiding_kernel.vk_recursive"))
         .unwrap();
     assert!(!artifacts::bin_current(root, "insecure-64", "minimum", Some("source")).unwrap());
+    // insecure-lbfv serves both paths: it requires every trBFV marker and the l-BFV circuits'.
+    let trbfv = artifacts::bin_markers(root, "insecure-64").unwrap();
+    let lbfv = artifacts::bin_markers(root, "insecure-lbfv").unwrap();
+    assert!(trbfv.iter().all(|marker| lbfv.contains(marker)));
+    assert!(lbfv.len() > trbfv.len());
 }
 
 /// Staging `circuits/bin` back into a pair reproduces the layout `hydrate` read it from: every
@@ -1498,6 +1673,8 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "dkg", "share_decryption_limb_0"),
     ("default", "dkg", "share_decryption_limb_1"),
     ("default", "dkg", "share_decryption_limb_2"),
+    ("recursive", "dkg", "share_encryption_chunked"),
+    ("default", "chonk", "c3_chonk_app_chunked"),
 ];
 pub(crate) fn seed_anchor_keys(pair: &Path) {
     for i in 0..VK_PATHS.len() {
@@ -1559,15 +1736,47 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
                 ]),
             ])),
         ),
+        // The l-BFV chain shares the trBFV chain's accumulator, tube and kernels.
+        (
+            "c3ab_fold_chunked",
+            field_bytes(compute_vk_hash(vec![
+                keys[2], keys[3], keys[21], keys[32], keys[33], keys[23], keys[24],
+            ])),
+        ),
     ];
-    assert_eq!(vk_tree::hashes(root).unwrap(), expected);
+    assert_eq!(vk_tree::hashes(root).unwrap(), expected[..2]);
+    assert_eq!(vk_tree::anchors(root, "insecure-lbfv").unwrap(), expected);
+    assert_eq!(
+        vk_tree::anchors(root, "insecure-64").unwrap(),
+        expected[..2]
+    );
+    assert_eq!(
+        vk_tree::anchors(root, "secure-16384").unwrap(),
+        expected[1..]
+    );
     for (i, key) in keys.iter().enumerate() {
-        // Keys 14..=16 and 25..=28 are the C6 chain; every other key is under the node fold.
-        let c6 = usize::from((14..=16).contains(&i) || (25..=28).contains(&i));
+        // Keys 14..=16 and 25..=28 are the C6 chain, 32 and 33 only the l-BFV C3 chain's;
+        // every other key is under the node fold.
+        let c6 = (14..=16).contains(&i) || (25..=28).contains(&i);
+        let lbfv_c3 = [2, 3, 21, 23, 24, 32, 33].contains(&i);
         write(root, &key_path(i), field_bytes(Fr::from(99_u64)));
-        let changed = vk_tree::hashes(root).unwrap();
-        assert_ne!(changed[c6].1, expected[c6].1, "{}", key_path(i));
-        assert_eq!(changed[1 - c6].1, expected[1 - c6].1);
+        // A trBFV-only pair has the first two anchors; insecure-lbfv adds the l-BFV C3 chain's.
+        for preset in ["insecure-64", "insecure-lbfv"] {
+            let changed = vk_tree::anchors(root, preset).unwrap();
+            for (anchor, binds) in [!c6 && i < 32, c6, lbfv_c3]
+                .into_iter()
+                .enumerate()
+                .take(changed.len())
+            {
+                assert_eq!(
+                    changed[anchor].1 != expected[anchor].1,
+                    binds,
+                    "{} under {} of {preset}",
+                    key_path(i),
+                    expected[anchor].0
+                );
+            }
+        }
         write(root, &key_path(i), field_bytes(*key));
     }
     write(root, &key_path(0), [0xff; 32]);
@@ -1586,32 +1795,46 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
 
 #[test]
 fn partial_build_removes_anchors_and_manifests_cover_complete_anchors() {
-    let temp = tempfile::tempdir().unwrap();
-    let root = temp.path();
-    let pair = root.join("dist/circuits/insecure-64/minimum");
-    seed_anchor_keys(&pair);
-    artifacts::refresh_anchors(root, &pair, true, BfvProfile::SsInsecure64).unwrap();
-    artifacts::checksums(&root.join("dist/circuits")).unwrap();
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(root.join("dist/circuits/checksums.json")).unwrap())
-            .unwrap();
-    for name in ["nodes_fold", "c6_fold"] {
-        let relative =
-            format!("insecure-64/minimum/default/recursive_aggregation/{name}/{name}.vk_tree_hash");
-        let digest = checksum(&root.join("dist/circuits").join(&relative)).unwrap();
-        assert_eq!(manifest["files"][&relative], digest);
-    }
-    artifacts::refresh_anchors(root, &pair, false, BfvProfile::SsInsecure64).unwrap();
-    for name in ["nodes_fold", "c6_fold"] {
-        assert!(!pair
-            .join(format!(
-                "default/recursive_aggregation/{name}/{name}.vk_tree_hash"
-            ))
-            .exists());
-        assert!(!root
-            .join(format!(
-                "circuits/bin/recursive_aggregation/{name}/target/{name}.vk_tree_hash"
-            ))
-            .exists());
+    for (preset, profile, anchors) in [
+        (
+            "insecure-64",
+            BfvProfile::SsInsecure64,
+            &["nodes_fold", "c6_fold"][..],
+        ),
+        (
+            "insecure-lbfv",
+            BfvProfile::SsInsecureLbfv,
+            &["nodes_fold", "c6_fold", "c3ab_fold_chunked"][..],
+        ),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let pair = root.join(format!("dist/circuits/{preset}/minimum"));
+        seed_anchor_keys(&pair);
+        artifacts::refresh_anchors(root, &pair, true, profile).unwrap();
+        artifacts::checksums(&root.join("dist/circuits")).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("dist/circuits/checksums.json")).unwrap())
+                .unwrap();
+        for name in anchors {
+            let relative = format!(
+                "{preset}/minimum/default/recursive_aggregation/{name}/{name}.vk_tree_hash"
+            );
+            let digest = checksum(&root.join("dist/circuits").join(&relative)).unwrap();
+            assert_eq!(manifest["files"][&relative], digest, "{preset}");
+        }
+        artifacts::refresh_anchors(root, &pair, false, profile).unwrap();
+        for name in anchors {
+            assert!(!pair
+                .join(format!(
+                    "default/recursive_aggregation/{name}/{name}.vk_tree_hash"
+                ))
+                .exists());
+            assert!(!root
+                .join(format!(
+                    "circuits/bin/recursive_aggregation/{name}/target/{name}.vk_tree_hash"
+                ))
+                .exists());
+        }
     }
 }
