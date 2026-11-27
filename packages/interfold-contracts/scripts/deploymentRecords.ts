@@ -472,7 +472,9 @@ function syncVerifierRouterRecords(
       address: deployment.pkVerifier!,
       blockNumber: blocks.pkVerifier,
       constructorArgs: {
+        ciphernodeRegistry: deployment.ciphernodeRegistry,
         verifiers: routes.map((route) => route.pkVerifier),
+        expectedParamSets: routes.map((route) => route.paramSet),
         defaultH: h,
       },
     },
@@ -484,7 +486,9 @@ function syncVerifierRouterRecords(
       address: deployment.decryptionVerifier!,
       blockNumber: blocks.decryptionVerifier,
       constructorArgs: {
+        ciphernodeRegistry: deployment.ciphernodeRegistry,
         verifiers: routes.map((route) => route.decryptionVerifier),
+        expectedParamSets: routes.map((route) => route.paramSet),
         defaultThreshold: t,
       },
     },

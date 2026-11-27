@@ -27,7 +27,9 @@ export const VOTE_TYPEHASH = ethers.keccak256(
  * Returns `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes,
  *                     bytes evidence, uint256 issuedAt, uint256 deadline,
  *                     bytes[] signatures)` with
- * voters sorted ascending by address.
+ * voters sorted ascending by address. The l-BFV row families (proof types 11-14) put
+ * `uint256 proofInstance` after `proofType`; the other proof types have one instance and
+ * encode no such field.
  *
  * Each voter signs the EIP-712 `AccusationVote` struct against the
  * `InterfoldSlashing/1` domain anchored at `verifyingContract`. This binds the
@@ -57,16 +59,22 @@ export async function signAndEncodeAttestation(
   deadline?: bigint,
   dataHashOverride?: string,
   issuedAt?: bigint,
+  proofInstance: number = 0,
 ): Promise<string> {
   const latestBlock = await ethers.provider.getBlock("latest");
   const effectiveIssuedAt =
     issuedAt ?? BigInt(latestBlock?.timestamp ?? Math.floor(Date.now() / 1000));
   const effectiveDeadline = deadline ?? effectiveIssuedAt + 30n * 60n;
   const accusationId = ethers.keccak256(
-    ethers.solidityPacked(
-      ["uint256", "uint256", "address", "uint256"],
-      [chainId, e3Id, operator, proofType],
-    ),
+    proofInstance === 0
+      ? ethers.solidityPacked(
+          ["uint256", "uint256", "address", "uint256"],
+          [chainId, e3Id, operator, proofType],
+        )
+      : ethers.solidityPacked(
+          ["uint256", "uint256", "address", "uint256", "uint256"],
+          [chainId, e3Id, operator, proofType, proofInstance],
+        ),
   );
 
   const domain: TypedDataDomain = {
@@ -135,9 +143,11 @@ export async function signAndEncodeAttestation(
   // may want for non-EIP-712 negative tests. (Kept for future negative cases.)
   void abiCoder;
 
+  const isMultirow = proofType >= 11 && proofType <= 14;
   return ethers.AbiCoder.defaultAbiCoder().encode(
     [
       "uint256",
+      ...(isMultirow ? ["uint256"] : []),
       "address[]",
       "bytes32[]",
       "bytes",
@@ -147,6 +157,7 @@ export async function signAndEncodeAttestation(
     ],
     [
       proofType,
+      ...(isMultirow ? [proofInstance] : []),
       voters,
       dataHashes,
       evidence,

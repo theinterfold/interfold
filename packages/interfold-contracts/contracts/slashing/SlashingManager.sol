@@ -137,7 +137,9 @@ contract SlashingManager is
     mapping(address node => bool banned) public banned;
 
     /// @notice Evidence replay protection: tracks consumed evidence keys
-    /// @dev Lane A key is keccak256(abi.encodePacked(chainId, e3Id, operator, proofType)) — the accusation identity.
+    /// @dev Lane A key is keccak256(abi.encodePacked(chainId, e3Id, operator, proofType)). For proof types
+    ///      11-14 the accusation ID also carries `proofInstance`, but this key does not: one slash per
+    ///      proof type per E3, whichever row it names.
     ///      This prevents the same fault from being slashed multiple times via different voter subsets.
     ///      Lane B key is keccak256(abi.encode(e3Id, operator, keccak256(evidence))) — exact evidence bytes.
     mapping(bytes32 evidenceKey => bool consumed) public evidenceConsumed;
@@ -589,7 +591,8 @@ contract SlashingManager is
     ///      Execution is atomic when `policy.appealWindow == 0`, otherwise deferred so
     ///      the accused can {fileAppeal}. Evidence format:
     ///      `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes,
-    ///      bytes evidence, uint256 issuedAt, uint256 deadline, bytes[] signatures)`.
+    ///      bytes evidence, uint256 issuedAt, uint256 deadline, bytes[] signatures)`; the l-BFV row
+    ///      families (proof types 11-14) add `uint256 proofInstance` after `proofType`.
     ///      Voters sign the EIP-712
     ///      `AccusationVote` against this contract's domain; all `dataHash` values
     ///      must be identical and equal `keccak256(evidence)`.

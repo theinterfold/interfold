@@ -118,6 +118,8 @@ interface IContinuousClearingAuction {
 }
 
 /// @dev Backwards-compatible names used by older Interfold sale code.
+// solhint-disable-next-line no-empty-blocks
 interface ICCAFactory is IContinuousClearingAuctionFactory {}
 
+// solhint-disable-next-line no-empty-blocks
 interface ICCAAuction is IContinuousClearingAuction {}

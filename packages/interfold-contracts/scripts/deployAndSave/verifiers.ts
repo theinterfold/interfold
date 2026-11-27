@@ -26,8 +26,9 @@ const normalizeArtifactFqn = (fqn: string): string =>
 export const selectCanonicalVerifierFqn = (
   fqns: Iterable<string>,
   contractName: string,
+  directory: string = BFV_HONK_VERIFIER_DIR,
 ): string => {
-  const canonicalSuffix = `${BFV_HONK_VERIFIER_DIR}/${contractName}.sol:${contractName}`;
+  const canonicalSuffix = `${directory}/${contractName}.sol:${contractName}`;
   const candidates = Array.from(fqns)
     .filter((fqn) => !fqn.includes("/.benchmark/"))
     .map(normalizeArtifactFqn)
@@ -37,7 +38,7 @@ export const selectCanonicalVerifierFqn = (
 
   if (candidates.length !== 1) {
     throw new Error(
-      `Expected one canonical artifact for ${contractName} in ${BFV_HONK_VERIFIER_DIR}, found ${candidates.length}.`,
+      `Expected one canonical artifact for ${contractName} in ${directory}, found ${candidates.length}.`,
     );
   }
 
@@ -47,18 +48,21 @@ export const selectCanonicalVerifierFqn = (
 const getContractFqn = async (
   hre: HardhatRuntimeEnvironment,
   contractName: string,
+  directory?: string,
 ): Promise<string> =>
   selectCanonicalVerifierFqn(
     await hre.artifacts.getAllFullyQualifiedNames(),
     contractName,
+    directory,
   );
 
 const getLibraryLinkFqn = async (
   hre: HardhatRuntimeEnvironment,
   contractName: string,
   libraryName: HonkLibrary,
+  directory?: string,
 ): Promise<string> => {
-  const contractFqn = await getContractFqn(hre, contractName);
+  const contractFqn = await getContractFqn(hre, contractName, directory);
   const artifact = await hre.artifacts.readArtifact(contractFqn);
   const source = Object.entries(artifact.linkReferences).find(([, libraries]) =>
     Object.prototype.hasOwnProperty.call(libraries, libraryName),
@@ -75,8 +79,11 @@ const getLibraryArtifactFqn = async (
   hre: HardhatRuntimeEnvironment,
   contractName: string,
   libraryName: HonkLibrary,
+  directory?: string,
 ): Promise<string> =>
-  normalizeArtifactFqn(await getLibraryLinkFqn(hre, contractName, libraryName));
+  normalizeArtifactFqn(
+    await getLibraryLinkFqn(hre, contractName, libraryName, directory),
+  );
 
 const getArtifactBytecodeHash = async (
   hre: HardhatRuntimeEnvironment,
@@ -99,12 +106,13 @@ const getArtifactBytecodeHash = async (
 const getVerifierBytecodeHash = async (
   hre: HardhatRuntimeEnvironment,
   contractName: string,
+  directory?: string,
 ): Promise<string> => {
   const { ethers } = await hre.network.connect();
-  const contractFqn = await getContractFqn(hre, contractName);
+  const contractFqn = await getContractFqn(hre, contractName, directory);
   const dependencyFqns = await Promise.all(
     (["ZKTranscriptLib", "RelationsLib"] as const).map((libraryName) =>
-      getLibraryArtifactFqn(hre, contractName, libraryName),
+      getLibraryArtifactFqn(hre, contractName, libraryName, directory),
     ),
   );
   const hashes = await Promise.all([
@@ -203,6 +211,8 @@ const deployHonkLibrary = async (
  * Note: The library FQN (fully-qualified name) uses the pattern:
  * "contracts/verifiers/bfv/honk/<ContractName>.sol:ZKTranscriptLib"
  * If you get linking errors, check the contract's compiled artifact for the exact FQN.
+ * `directory` selects another pair's verifier directory, for the l-BFV pairs that have no
+ * canonical (root) verifier.
  */
 export const deployAndSaveVerifier = async (
   contractName: string,
@@ -211,11 +221,16 @@ export const deployAndSaveVerifier = async (
     zkTranscriptLibAddress: string;
     relationsLibAddress: string;
   },
+  directory?: string,
 ): Promise<{ address: string }> => {
   const { ethers } = await hre.network.connect();
   const chain = getDeploymentChain(hre);
-  const contractFqn = await getContractFqn(hre, contractName);
-  const bytecodeHash = await getVerifierBytecodeHash(hre, contractName);
+  const contractFqn = await getContractFqn(hre, contractName, directory);
+  const bytecodeHash = await getVerifierBytecodeHash(
+    hre,
+    contractName,
+    directory,
+  );
 
   // Check if already deployed
   const existing = readDeploymentArgs(contractName, chain);
@@ -226,9 +241,9 @@ export const deployAndSaveVerifier = async (
 
   // Link generated libraries. Keys must match the artifact link references.
   const linkedLibraries = {
-    [await getLibraryLinkFqn(hre, contractName, "ZKTranscriptLib")]:
+    [await getLibraryLinkFqn(hre, contractName, "ZKTranscriptLib", directory)]:
       libraryAddresses.zkTranscriptLibAddress,
-    [await getLibraryLinkFqn(hre, contractName, "RelationsLib")]:
+    [await getLibraryLinkFqn(hre, contractName, "RelationsLib", directory)]:
       libraryAddresses.relationsLibAddress,
   };
 

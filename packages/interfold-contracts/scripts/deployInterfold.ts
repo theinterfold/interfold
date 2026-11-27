@@ -9,7 +9,10 @@ import { BFV_ENCRYPTION_SCHEME_ID, BFV_PRESETS } from "../bfv.js";
 import { autoCleanForLocalhost } from "./cleanIgnitionState";
 import { configureLocalSlashingPolicies } from "./configureLocalSlashingPolicies";
 import { deployAndSaveBfvDecryptionVerifier } from "./deployAndSave/bfvDecryptionVerifier";
-import { deployAndSaveBfvPkVerifier } from "./deployAndSave/bfvPkVerifier";
+import {
+  deployAndSaveBfvPkVerifier,
+  deployAndSaveBfvPkVerifierV2,
+} from "./deployAndSave/bfvPkVerifier";
 import { deployAndSaveBondedCheckpoints } from "./deployAndSave/bondedCheckpoints";
 import { deployAndSaveBondedVotes } from "./deployAndSave/bondedVotes";
 import { deployAndSaveBondingRegistry } from "./deployAndSave/bondingRegistry";
@@ -36,15 +39,17 @@ import {
   ACTIVE_BFV_PRESET,
   BFV_DKG_H,
   committeeThresholdsForChain,
+  isLbfvParamSet,
   isLocalDeploymentChain,
   send,
 } from "./utils";
 
 /**
- * Default timeout configuration (in seconds)
+ * Default timeout configuration (in seconds). The DKG window is 21,600 s, the floor InterfoldPricing
+ * sets for secure-16384; trBFV rounds get the same longer window, and their quotes are billed for it.
  */
 const DEFAULT_TIMEOUT_CONFIG = {
-  dkgWindow: 7200,
+  dkgWindow: 21_600,
   computeWindow: 86400,
   decryptionWindow: 3600,
 };
@@ -104,7 +109,7 @@ export const deployInterfold = async (
     process.env.ENABLE_ZK_VERIFICATION === "true" || withZKVerification;
 
   // H-23: refuse to deploy test mocks (MockUSDC / MockE3ProgramHarness) and the
-  // `insecure64` BFV preset on any chain that is not a recognised local /
+  // `insecure` BFV preset on any chain that is not a recognised local /
   // test network. Override via `ALLOW_MOCKS_ON_PRODUCTION=true` only for
   // explicit dry-runs.
   if (shouldDeployMocks) {
@@ -570,7 +575,7 @@ export const deployInterfold = async (
 
   // Register BFV param sets
   console.log("Registering BFV param sets...");
-  const activeParamSet = Number(ACTIVE_BFV_PARAM_SET);
+  const activeParamSet = ACTIVE_BFV_PARAM_SET;
   const activeParams = encodeBfvParams(
     BFV_PRESETS[ACTIVE_BFV_PRESET].threshold,
   );
@@ -720,6 +725,9 @@ export const deployInterfold = async (
   let deployedBfvPkVerifier:
     | Awaited<ReturnType<typeof deployAndSaveBfvPkVerifier>>["bfvPkVerifier"]
     | undefined;
+  let deployedBfvPkVerifierV2:
+    | Awaited<ReturnType<typeof deployAndSaveBfvPkVerifierV2>>
+    | undefined;
 
   if (shouldHaveZKVerification) {
     console.log("Deploying BfvDecryptionVerifier and registering for prod...");
@@ -749,10 +757,19 @@ export const deployInterfold = async (
 
   if (shouldHaveZKVerification) {
     console.log("Deploying BfvPkVerifier and registering for prod...");
-    const { bfvPkVerifier } = await deployAndSaveBfvPkVerifier(hre);
-    const bfvPkVerifierAddress = await bfvPkVerifier.getAddress();
+    let bfvPkVerifierAddress: string;
+    // The l-BFV parameter sets (5 and 6) use the V2 DKG aggregation wrapper.
+    if (isLbfvParamSet(ACTIVE_BFV_PARAM_SET)) {
+      const { bfvPkVerifierV2, dkgAggregatorV2Verifier } =
+        await deployAndSaveBfvPkVerifierV2(hre, ciphernodeRegistryAddress);
+      bfvPkVerifierAddress = await bfvPkVerifierV2.getAddress();
+      deployedBfvPkVerifierV2 = { bfvPkVerifierV2, dkgAggregatorV2Verifier };
+    } else {
+      const { bfvPkVerifier } = await deployAndSaveBfvPkVerifier(hre);
+      bfvPkVerifierAddress = await bfvPkVerifier.getAddress();
+      deployedBfvPkVerifier = bfvPkVerifier;
+    }
     expectedPkVerifier = bfvPkVerifierAddress;
-    deployedBfvPkVerifier = bfvPkVerifier;
     const deployedPkVerifier = await interfold.pkVerifiers(encryptionSchemeId);
     if (deployedPkVerifier !== bfvPkVerifierAddress) {
       await send(
@@ -1028,6 +1045,20 @@ export const deployInterfold = async (
       deployedBfvPkVerifier.circuitVerifier(),
       verifierDeployments[DKG_AGGREGATOR_VERIFIER],
     ]);
+  }
+  if (deployedBfvPkVerifierV2) {
+    wiring.push(
+      [
+        "bfvPkVerifierV2.circuitVerifier",
+        deployedBfvPkVerifierV2.bfvPkVerifierV2.circuitVerifier(),
+        deployedBfvPkVerifierV2.dkgAggregatorV2Verifier,
+      ],
+      [
+        "bfvPkVerifierV2.ciphernodeRegistry",
+        deployedBfvPkVerifierV2.bfvPkVerifierV2.ciphernodeRegistry(),
+        ciphernodeRegistryAddress,
+      ],
+    );
   }
 
   const wiringErrors: string[] = [];

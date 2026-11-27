@@ -4,9 +4,16 @@ import { ethers as ethersLib } from "ethers";
 import type { BfvVerifierRouteDeployment } from "../protocol/types";
 import {
   activeBfvConfigForChain,
+  assertBfvPkVerifierV2VkHashes,
   bfvConfigsForChain,
   bfvDecExpectedPublicInputsLen,
+  bfvPkExpectedPublicInputsLen,
+  bfvPkV2PublicInputLayout,
+  getBfvV2SubCircuitVkHashPaths,
   getBfvVkCommitments,
+  isLbfvParamSet,
+  lbfvRowCount,
+  readVkRecursiveHash,
 } from "../utils";
 
 export function equalAddress(
@@ -73,6 +80,16 @@ export async function validateBfvRoutes(
     "BfvDecryptionVerifierRouter",
     installed.decryptionVerifier,
   );
+  equalAddress(
+    await pkRouter.ciphernodeRegistry(),
+    installed.registry,
+    "PK router registry",
+  );
+  equalAddress(
+    await decryptionRouter.ciphernodeRegistry(),
+    installed.registry,
+    "decryption router registry",
+  );
   equalValue(await pkRouter.h(), verifierDefault.h, "PK router default h");
   equalValue(
     await decryptionRouter.threshold(),
@@ -103,10 +120,21 @@ export async function validateBfvRoutes(
 
     const pkRoute = await pkRouter.routeAt(index);
     const decryptionRoute = await decryptionRouter.routeAt(index);
-    equalAddress(pkRoute[0], recorded.pkVerifier, `PK route ${index}`);
+    // Parameter sets 5 and 6 run the l-BFV path, which the V2 PK verifier and aggregator serve.
+    const isV2 = isLbfvParamSet(expected.paramSet);
+    const expectedPkVerifier = recorded.pkVerifier;
+    equalAddress(pkRoute[0], expectedPkVerifier, `PK route ${index}`);
+    equalValue(
+      pkRoute[3],
+      expected.paramSet,
+      `PK route ${index} parameter set`,
+    );
     equalValue(
       pkRoute[1],
-      3 * expected.h + 6,
+      isV2
+        ? bfvPkV2PublicInputLayout(expected.h, lbfvRowCount(expected.preset))
+            .length
+        : bfvPkExpectedPublicInputsLen(expected.h),
       `PK route ${index} public input count`,
     );
     equalAddress(
@@ -119,10 +147,15 @@ export async function validateBfvRoutes(
       bfvDecExpectedPublicInputsLen(expected.t),
       `decryption route ${index} public input count`,
     );
+    equalValue(
+      decryptionRoute[4],
+      expected.paramSet,
+      `decryption route ${index} parameter set`,
+    );
 
     const pkVerifier = await ethers.getContractAt(
-      "BfvPkVerifier",
-      recorded.pkVerifier,
+      isV2 ? "BfvPkVerifierV2" : "BfvPkVerifier",
+      expectedPkVerifier,
     );
     const decryptionVerifier = await ethers.getContractAt(
       "BfvDecryptionVerifier",
@@ -139,6 +172,33 @@ export async function validateBfvRoutes(
       recorded.dkgAggregatorVerifier,
       `PK route ${index} aggregator`,
     );
+    if (isV2) {
+      equalAddress(
+        await pkVerifier.ciphernodeRegistry(),
+        installed.registry,
+        `PK route ${index} registry`,
+      );
+      equalValue(
+        await pkVerifier.expectedParamSet(),
+        expected.paramSet,
+        `PK route ${index} verifier parameter set`,
+      );
+      equalValue(
+        await pkVerifier.committeeN(),
+        expected.n,
+        `PK route ${index} committee size`,
+      );
+      equalValue(
+        await pkVerifier.lbfvRows(),
+        lbfvRowCount(expected.preset),
+        `PK route ${index} l-BFV rows`,
+      );
+      await assertBfvPkVerifierV2VkHashes(
+        pkVerifier,
+        expectedPkVerifier,
+        expected,
+      );
+    }
     equalAddress(
       await decryptionVerifier.circuitVerifier(),
       recorded.decryptionAggregatorVerifier,
@@ -152,10 +212,21 @@ export async function validateBfvRoutes(
     const commitments = getBfvVkCommitments(expected);
     equalValue(
       pkRoute[2],
-      commitments.nodesFold,
+      isV2
+        ? readVkRecursiveHash(
+            getBfvV2SubCircuitVkHashPaths(expected).nodesFold,
+            expected,
+          )
+        : commitments.nodesFold,
       `PK route ${index} nodes-fold VK`,
     );
-    equalValue(pkRoute[3], commitments.c5, `PK route ${index} C5 VK`);
+    if (!isV2) {
+      equalValue(
+        await pkVerifier.expectedC5KeyHash(),
+        commitments.c5,
+        `PK route ${index} C5 VK`,
+      );
+    }
     equalValue(
       decryptionRoute[2],
       commitments.c6Fold,

@@ -227,6 +227,29 @@ describe("Protocol deployment", function () {
     }
   });
 
+  it("rejects a short DKG window when the chain supports secure-16384", function () {
+    const source = new URL(
+      "../../deploy/protocol/example.protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-dkg-window-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.protocolOwner = "0x0000000000000000000000000000000000000001";
+      config.interfold.timeoutConfig.dkgWindow = "7200";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "dkgWindow must be at least 21600 seconds",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a stale VRF upgrade plan", function () {
     const config = JSON.parse(
       fs.readFileSync(
@@ -1201,11 +1224,21 @@ describe("Protocol deployment", function () {
     // it was built with, and at the block that mined its deployment.
     const bfv = activeBfvConfigForChain(config.chainId);
     // The routes are built from fixed commitments: the contract tests run without a circuit build.
+    const fixedHash = (value: number) =>
+      `0x${"00".repeat(31)}${value.toString(16).padStart(2, "0")}`;
     const vkCommitments = {
-      nodesFold: `0x${"00".repeat(31)}01`,
-      c5: `0x${"00".repeat(31)}02`,
-      c6Fold: `0x${"00".repeat(31)}03`,
-      c7: `0x${"00".repeat(31)}04`,
+      nodesFold: fixedHash(1),
+      c5: fixedHash(2),
+      c6Fold: fixedHash(3),
+      c7: fixedHash(4),
+      // `BfvPkVerifierV2` pins 3 sub-circuit hashes, a 15-entry legacy binding and an 11-entry V2 binding.
+      pkV2: {
+        nodesFold: fixedHash(5),
+        skC2Chunk: fixedHash(6),
+        esmC2Chunk: fixedHash(7),
+        legacyBinding: Array.from({ length: 15 }, (_, i) => fixedHash(16 + i)),
+        v2Binding: Array.from({ length: 11 }, (_, i) => fixedHash(32 + i)),
+      },
     };
     const routes = await deployBfvVerifierRoutes(
       ethers,
@@ -1298,19 +1331,27 @@ describe("Protocol deployment", function () {
       const decryptionRoutes = routes.bfvVerifierRoutes.map(
         (route) => route.decryptionVerifier,
       );
+      const paramSets = routes.bfvVerifierRoutes.map((route) => route.paramSet);
       expect(pkRoutes).to.have.lengthOf(
         bfvConfigsForChain(config.chainId).length,
       );
       expect(records.BfvPkVerifierRouter).to.deep.equal({
         address: routes.pkVerifier,
         blockNumber: await mined(routes.pkVerifier),
-        constructorArgs: { verifiers: pkRoutes, defaultH: bfv.h },
+        constructorArgs: {
+          ciphernodeRegistry: deployment.ciphernodeRegistry,
+          verifiers: pkRoutes,
+          expectedParamSets: paramSets,
+          defaultH: bfv.h,
+        },
       });
       expect(records.BfvDecryptionVerifierRouter).to.deep.equal({
         address: routes.decryptionVerifier,
         blockNumber: await mined(routes.decryptionVerifier),
         constructorArgs: {
+          ciphernodeRegistry: deployment.ciphernodeRegistry,
           verifiers: decryptionRoutes,
+          expectedParamSets: paramSets,
           defaultThreshold: bfv.t,
         },
       });

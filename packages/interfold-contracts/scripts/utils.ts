@@ -374,6 +374,11 @@ export function bfvDkgCommitteeHashIndices(h: number): {
   return { hi: 2 + h, lo: 3 + h };
 }
 
+/** l-BFV rows compiled into a pair: secure-16384 has six CRT moduli, insecure l-BFV has three. */
+export function lbfvRowCount(preset: BfvArtifactPreset): number {
+  return preset === "secure-16384" ? 6 : 3;
+}
+
 /**
  * `dkg_aggregator_v2` EVM public-input layout for honest-set size `h` and `rows` l-BFV rows
  * (matches `BfvPkVerifierV2`): nodes-fold key hash (1), party_ids (h), committee hash limbs (2),

@@ -5,7 +5,14 @@ import {
   BfvVkCommitments,
   activeBfvConfigForChain,
   bfvConfigsForChain,
+  bfvHonkSource,
+  getBfvPkSubCircuitVkHashPaths,
+  getBfvPkVkBindingHashPaths,
+  getBfvV2SubCircuitVkHashPaths,
+  getBfvV2VkBindingHashPaths,
   getBfvVkCommitments,
+  isLbfvParamSet,
+  readVkRecursiveHash,
 } from "../utils";
 import { ADDRESS_ONE } from "./constants";
 import { deployNodeReleaseRegistry } from "./nodeRelease";
@@ -312,16 +319,6 @@ async function deployMockCiphertextVerifier(ethers: any) {
   return deployedAddress(verifier);
 }
 
-function bfvHonkSource(
-  config: ActiveBfvConfig,
-  contractName: "DkgAggregatorVerifier" | "DecryptionAggregatorVerifier",
-): string {
-  if (config.preset === "insecure-64" && config.committee === "minimum") {
-    return `contracts/verifiers/bfv/honk/${contractName}.sol`;
-  }
-  return `contracts/verifiers/bfv/honk/${config.preset}/${config.committee}/${contractName}.sol`;
-}
-
 async function deployBfvVerifiers(
   ethers: any,
   registry: string,
@@ -348,6 +345,38 @@ async function deployBfvVerifiers(
   };
 }
 
+/** Recursive VK hashes `BfvPkVerifierV2` pins, in its constructor order. */
+export interface BfvPkV2VkHashes {
+  nodesFold: string;
+  skC2Chunk: string;
+  esmC2Chunk: string;
+  legacyBinding: string[];
+  v2Binding: string[];
+}
+
+/** Sub-circuit VK commitments of one verifier route; `pkV2` is read from the circuit build when omitted. */
+export type BfvRouteVkCommitments = BfvVkCommitments & {
+  pkV2?: BfvPkV2VkHashes;
+};
+
+function readPkV2VkHashes(config: ActiveBfvConfig): BfvPkV2VkHashes {
+  const pkPaths = getBfvPkSubCircuitVkHashPaths(config);
+  return {
+    nodesFold: readVkRecursiveHash(
+      getBfvV2SubCircuitVkHashPaths(config).nodesFold,
+      config,
+    ),
+    skC2Chunk: readVkRecursiveHash(pkPaths.skC2Chunk, config),
+    esmC2Chunk: readVkRecursiveHash(pkPaths.esmC2Chunk, config),
+    legacyBinding: getBfvPkVkBindingHashPaths(config).map((filePath) =>
+      readVkRecursiveHash(filePath, config),
+    ),
+    v2Binding: getBfvV2VkBindingHashPaths(config).map((filePath) =>
+      readVkRecursiveHash(filePath, config),
+    ),
+  };
+}
+
 /**
  * Deploys one verifier route per BFV configuration, behind routers when there is more than one.
  * `vkCommitments` reads each route's sub-circuit VK commitments, from the circuit build by default.
@@ -359,7 +388,7 @@ export async function deployBfvVerifierRoutes(
   configs: readonly ActiveBfvConfig[],
   vkCommitments: (
     config: ActiveBfvConfig,
-  ) => BfvVkCommitments = getBfvVkCommitments,
+  ) => BfvRouteVkCommitments = getBfvVkCommitments,
 ) {
   if (configs.length === 0) {
     throw new Error("At least one BFV verifier route is required");
@@ -384,7 +413,9 @@ export async function deployBfvVerifierRoutes(
       "BfvPkVerifierRouter",
     );
     const pkRouter = await pkRouterFactory.deploy(
+      registry,
       routes.map((route) => route.pkVerifier),
+      routes.map((route) => route.paramSet),
       defaultConfig.h,
     );
     await pkRouter.waitForDeployment();
@@ -394,7 +425,9 @@ export async function deployBfvVerifierRoutes(
       "BfvDecryptionVerifierRouter",
     );
     const decryptionRouter = await decryptionRouterFactory.deploy(
+      registry,
       routes.map((route) => route.decryptionVerifier),
+      routes.map((route) => route.paramSet),
       defaultConfig.t,
     );
     await decryptionRouter.waitForDeployment();
@@ -422,9 +455,15 @@ async function deployBfvVerifierRoute(
   ethers: any,
   registry: string,
   config: ActiveBfvConfig,
-  commitments: BfvVkCommitments,
+  commitments: BfvRouteVkCommitments,
 ) {
-  const dkgSource = bfvHonkSource(config, "DkgAggregatorVerifier");
+  // The trBFV path (parameter sets 3 and 4) verifies `dkg_aggregator`; the l-BFV path
+  // (5 and 6) verifies `dkg_aggregator_v2`. A route deploys only the aggregator it verifies.
+  const lbfv = isLbfvParamSet(config.paramSet);
+  const dkgContract = lbfv
+    ? "DkgAggregatorV2Verifier"
+    : "DkgAggregatorVerifier";
+  const dkgSource = bfvHonkSource(config, dkgContract);
   const decryptionSource = bfvHonkSource(
     config,
     "DecryptionAggregatorVerifier",
@@ -453,7 +492,7 @@ async function deployBfvVerifierRoute(
     await deployedAddress(decryptionRelations);
 
   const dkgAggregatorFactory = await ethers.getContractFactory(
-    `${dkgSource}:DkgAggregatorVerifier`,
+    `${dkgSource}:${dkgContract}`,
     {
       libraries: {
         [`project/${dkgSource}:ZKTranscriptLib`]: verifierZkTranscriptLib,
@@ -481,15 +520,35 @@ async function deployBfvVerifierRoute(
   const decryptionAggregatorVerifier =
     await deployedAddress(decryptionAggregator);
 
-  const pkFactory = await ethers.getContractFactory("BfvPkVerifier");
-  const pk = await pkFactory.deploy(
-    dkgAggregatorVerifier,
-    commitments.nodesFold,
-    commitments.c5,
-    config.h,
-  );
-  await pk.waitForDeployment();
-  const pkVerifier = await deployedAddress(pk);
+  let pkVerifier: string;
+  if (lbfv) {
+    const pkV2Hashes = commitments.pkV2 ?? readPkV2VkHashes(config);
+    const pkV2Factory = await ethers.getContractFactory("BfvPkVerifierV2");
+    const pkV2 = await pkV2Factory.deploy(
+      dkgAggregatorVerifier,
+      registry,
+      config.paramSet,
+      config.h,
+      config.n,
+      pkV2Hashes.nodesFold,
+      pkV2Hashes.skC2Chunk,
+      pkV2Hashes.esmC2Chunk,
+      pkV2Hashes.legacyBinding,
+      pkV2Hashes.v2Binding,
+    );
+    await pkV2.waitForDeployment();
+    pkVerifier = await deployedAddress(pkV2);
+  } else {
+    const pkFactory = await ethers.getContractFactory("BfvPkVerifier");
+    const pk = await pkFactory.deploy(
+      dkgAggregatorVerifier,
+      commitments.nodesFold,
+      commitments.c5,
+      config.h,
+    );
+    await pk.waitForDeployment();
+    pkVerifier = await deployedAddress(pk);
+  }
 
   const decryptionFactory = await ethers.getContractFactory(
     "BfvDecryptionVerifier",
@@ -510,6 +569,7 @@ async function deployBfvVerifierRoute(
     paramSet: config.paramSet,
     committeeSize: config.committeeSize,
     decryptionVerifier,
+    // The route's DKG verifier: main's BfvPkVerifier on trBFV, BfvPkVerifierV2 on l-BFV.
     pkVerifier,
     dkgAggregatorVerifier,
     decryptionAggregatorVerifier,

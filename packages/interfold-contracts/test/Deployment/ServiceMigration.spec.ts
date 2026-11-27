@@ -136,7 +136,7 @@ describe("Slashing-manager migration", function () {
       },
     } as ProtocolConfigFile);
 
-    expect(reasons).to.have.lengthOf(12);
+    expect(reasons).to.have.lengthOf(16);
     expect(reasons.at(-1)).to.equal(customReason);
     expect(() =>
       slashPolicyReasons({

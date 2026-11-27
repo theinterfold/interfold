@@ -649,11 +649,14 @@ interface ISlashingManager {
      *        abi.encode(uint256 proofType,
      *          address[] voters, bytes32[] dataHashes, bytes evidence,
      *          uint256 issuedAt, uint256 deadline, bytes[] signatures)
+     *      The l-BFV row families (proof types 11-14) name their row, so their evidence has a
+     *      `uint256 proofInstance` after `proofType`.
      *      Each voter must have signed the EIP-712 digest
      *      `keccak256("\x19\x01" || domainSeparator || structHash)`, where
      *      `structHash = keccak256(abi.encode(VOTE_TYPEHASH, e3Id,
      *      accusationId, voter, dataHash, issuedAt, deadline))`.
-     *      where accusationId = keccak256(abi.encodePacked(block.chainid, e3Id, operator, proofType))
+     *      where accusationId preserves the legacy four-field hash for instance zero and appends
+     *      proofInstance for other instances.
      *      Verifications performed:
      *        1. Number of votes >= committee threshold H
      *        2. Voters are sorted ascending (prevents duplicates)
@@ -667,7 +670,8 @@ interface ISlashingManager {
      * @param operator Address of the ciphernode operator to slash (must be non-zero)
      * @param proof Attestation evidence:
      *              abi.encode(proofType, voters, dataHashes, evidence,
-     *              issuedAt, deadline, signatures)
+     *              issuedAt, deadline, signatures), with `proofInstance` after `proofType` for
+     *              proof types 11-14
      * @return proposalId Sequential ID of the created proposal
      */
     function proposeSlash(
@@ -684,7 +688,8 @@ interface ISlashingManager {
      * @param e3Id ID of the E3 computation this slash relates to
      * @param partyId Canonical committee slot / DKG party identifier
      * @param proof Attestation evidence: abi.encode(proofType, voters, dataHashes,
-     *              evidence, issuedAt, deadline, signatures)
+     *              evidence, issuedAt, deadline, signatures), with `proofInstance` after
+     *              `proofType` for proof types 11-14
      * @return proposalId Sequential ID of the created proposal
      */
     function proposeSlashByDkgParty(

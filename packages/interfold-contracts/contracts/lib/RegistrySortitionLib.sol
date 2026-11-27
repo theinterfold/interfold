@@ -6,6 +6,7 @@
 
 pragma solidity 0.8.28;
 
+import { BfvPkV2Layout } from "./BfvPkV2Layout.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { IBondOwnerHistory } from "../interfaces/IBondOwnerHistory.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
@@ -27,7 +28,12 @@ library RegistrySortitionLib {
 
     uint256 private constant MIN_RANDOMNESS_REQUEST_TIMEOUT = 60;
     uint256 private constant MAX_RANDOMNESS_REQUEST_TIMEOUT = 1 days;
-    uint256 private constant MAX_COMMITTEE_PUBLIC_KEY_BYTES = 512 * 1024;
+    /// @dev Largest key envelope of a trBFV E3 (parameter sets 3 and 4).
+    uint256 internal constant MAX_COMMITTEE_PUBLIC_KEY_BYTES = 512 * 1024;
+    /// @dev Largest key envelope of an l-BFV E3 (parameter sets 5 and 6); secure-16384 needs
+    ///      7,833,906 bytes.
+    uint256 internal constant MAX_LBFV_COMMITTEE_PUBLIC_KEY_BYTES =
+        16 * 1024 * 1024;
     uint256 private constant MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES = 90 * 1024;
     uint256 private constant DEPENDENCY_PROBE_GAS = 100_000;
 
@@ -134,7 +140,7 @@ library RegistrySortitionLib {
         if (
             candidateHash == bytes32(0) ||
             totalLength == 0 ||
-            totalLength > MAX_COMMITTEE_PUBLIC_KEY_BYTES ||
+            totalLength > _maxPublicKeyBytes(e3Id) ||
             chunkCount == 0 ||
             chunkIndex >= chunkCount
         ) revert ICiphernodeRegistry.InvalidPublicKeyChunk();
@@ -170,6 +176,14 @@ library RegistrySortitionLib {
             totalLength,
             chunk
         );
+    }
+
+    function _maxPublicKeyBytes(uint256 e3Id) private view returns (uint256) {
+        IInterfold interfold = IInterfold(address(uint160(e3Id >> 96)));
+        return
+            BfvPkV2Layout.isLbfvParamSet(interfold.getE3(e3Id).paramSet)
+                ? MAX_LBFV_COMMITTEE_PUBLIC_KEY_BYTES
+                : MAX_COMMITTEE_PUBLIC_KEY_BYTES;
     }
 
     function _requirePublicKeyPublicationOpen(uint256 e3Id) private view {

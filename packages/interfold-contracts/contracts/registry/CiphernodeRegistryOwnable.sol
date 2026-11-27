@@ -56,8 +56,10 @@ contract CiphernodeRegistryOwnable is
     /// @dev Bounds the time reserved for ticket submission in one E3 lifecycle.
     uint256 public constant MAX_SORTITION_SUBMISSION_WINDOW = 1 days;
 
-    /// @notice Largest serialized committee public key accepted by the transport.
-    uint256 public constant MAX_COMMITTEE_PUBLIC_KEY_BYTES = 512 * 1024;
+    /// @notice Largest serialized committee public key accepted by the transport for a trBFV E3.
+    /// @dev l-BFV E3s have their own, larger bound; see `RegistrySortitionLib`.
+    uint256 public constant MAX_COMMITTEE_PUBLIC_KEY_BYTES =
+        RegistrySortitionLib.MAX_COMMITTEE_PUBLIC_KEY_BYTES;
 
     /// @notice Timeout used by new registries before governance changes it.
     uint256 private constant DEFAULT_RANDOMNESS_REQUEST_TIMEOUT = 1 hours;

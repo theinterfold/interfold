@@ -6,10 +6,13 @@
 
 pragma solidity 0.8.28;
 
+import { E3 } from "../interfaces/IE3.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import {
     IDkgFoldAttestationVerifier
 } from "../interfaces/IDkgFoldAttestationVerifier.sol";
+import { ActiveCryptoConfig } from "../lib/ActiveCryptoConfig.sol";
+import { BfvPkV2Layout } from "../lib/BfvPkV2Layout.sol";
 import { DkgFoldAttestationLib } from "../lib/DkgFoldAttestationLib.sol";
 
 /**
@@ -22,6 +25,14 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         DkgFoldAttestationLib.Attestation[] attestations;
         DkgFoldAttestationLib.PartySlotBinding[] bindings;
         uint256 h;
+        /// @dev Index of the first party ID: 2 for the trBFV `dkg_aggregator` (after the
+        ///      nodes-fold and C5 key hashes), 1 for `dkg_aggregator_v2` (after the nodes-fold
+        ///      key hash only).
+        uint256 partyIdOffset;
+        /// @dev Offset of the SK aggregate commitments after the `h` party IDs: 5 for the trBFV
+        ///      `dkg_aggregator`, 21 for `dkg_aggregator_v2`, whose prefix also carries the
+        ///      legacy VK binding and the C2 chunk hashes.
+        uint256 commitmentOffset;
     }
 
     /// @inheritdoc IDkgFoldAttestationVerifier
@@ -40,11 +51,18 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
             bytes32[] memory esmAggCommits
         )
     {
-        BundleData memory data = _loadBundle(proof, dkgAttestationBundle);
+        BundleData memory data = _loadBundle(
+            registry,
+            e3Id,
+            proof,
+            dkgAttestationBundle
+        );
         return _fillAnchors(registry, chainId, e3Id, data);
     }
 
     function _loadBundle(
+        address registry,
+        uint256 e3Id,
         bytes calldata proof,
         bytes calldata dkgAttestationBundle
     ) private view returns (BundleData memory data) {
@@ -55,16 +73,21 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         } catch {
             revert ICiphernodeRegistry.InvalidFoldAttestation();
         }
-        data.h = _honestPartyCount(data.publicInputs);
+        (data.h, data.partyIdOffset, data.commitmentOffset) = _honestPartyCount(
+            registry,
+            e3Id,
+            data.publicInputs
+        );
         // Defense in depth: require the public-inputs `partyId` slots
-        // (`publicInputs[2..2+h]`) to be strictly ascending. The zk circuit
-        // already enforces this, but rejecting duplicates here prevents two
-        // bindings from resolving to the same slot in `_partySlot` (which
-        // would silently overwrite each other in `partyIdsOut` etc.).
+        // (`publicInputs[partyIdOffset..partyIdOffset+h]`) to be strictly
+        // ascending. The zk circuit already enforces this, but rejecting
+        // duplicates here prevents two bindings from resolving to the same slot
+        // in `_partySlot` (which would silently overwrite each other in
+        // `partyIdsOut` etc.).
         for (uint256 k = 1; k < data.h; k++) {
             require(
-                uint256(data.publicInputs[2 + k]) >
-                    uint256(data.publicInputs[2 + k - 1]),
+                uint256(data.publicInputs[data.partyIdOffset + k]) >
+                    uint256(data.publicInputs[data.partyIdOffset + k - 1]),
                 ICiphernodeRegistry.InvalidFoldAttestation()
             );
         }
@@ -179,14 +202,45 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         esmAggOut[slot] = esm;
     }
 
+    /// @dev The E3's parameter set selects the statement: `dkg_aggregator_v2` on the l-BFV sets,
+    ///      `dkg_aggregator` otherwise. The PK verifier has already checked the statement against
+    ///      the committee.
     function _honestPartyCount(
+        address registry,
+        uint256 e3Id,
         bytes32[] memory publicInputs
-    ) private pure returns (uint256 h) {
+    )
+        private
+        view
+        returns (uint256 h, uint256 partyIdOffset, uint256 commitmentOffset)
+    {
+        E3 memory e3 = ICiphernodeRegistry(registry).interfold().getE3(e3Id);
+        if (BfvPkV2Layout.isLbfvParamSet(e3.paramSet)) {
+            (, uint32 honest, ) = ActiveCryptoConfig.committeeParams(
+                uint8(e3.committeeSize)
+            );
+            require(
+                publicInputs.length ==
+                    BfvPkV2Layout.publicInputsLength(
+                        honest,
+                        BfvPkV2Layout.rowCount(e3.paramSet)
+                    ),
+                ICiphernodeRegistry.InvalidFoldAttestation()
+            );
+            return (
+                honest,
+                BfvPkV2Layout.PARTY_ID_START,
+                BfvPkV2Layout.COMMITMENT_OFFSET
+            );
+        }
+        // trBFV `dkg_aggregator`: 3*h + 6 public inputs.
         require(
             publicInputs.length >= 6 && (publicInputs.length - 6) % 3 == 0,
             ICiphernodeRegistry.InvalidFoldAttestation()
         );
         h = (publicInputs.length - 6) / 3;
+        partyIdOffset = 2;
+        commitmentOffset = 5;
         // Defense in depth: the BFV pk-verifier already rejects `h == 0`, but
         // a zero-honest-party proof would otherwise pass this verifier with no
         // attestations to check and write empty anchors to the registry.
@@ -242,13 +296,12 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
             ICiphernodeRegistry.InvalidFoldAttestation()
         );
 
-        uint256 partyIdOffset = 2;
-        uint256 skOffset = 5 + data.h;
-        uint256 esmOffset = 5 + (2 * data.h);
+        uint256 skOffset = data.commitmentOffset + data.h;
+        uint256 esmOffset = data.commitmentOffset + (2 * data.h);
 
         slot = _partySlot(
             data.publicInputs,
-            partyIdOffset,
+            data.partyIdOffset,
             data.h,
             binding.partyId
         );
