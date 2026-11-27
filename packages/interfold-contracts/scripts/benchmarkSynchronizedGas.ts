@@ -7,6 +7,7 @@ import {
   compileSynchronized,
   deployCompiled,
 } from "../test/fixtures/synchronizedSolidity";
+import { decodeBenchmarkProof } from "./benchmarkProof";
 
 const { ethers } = await network.connect();
 const read = (key: string) => readFileSync(process.env[key]!, "utf8");
@@ -21,6 +22,8 @@ if (profile.protocol !== "synchronized" || cfg.committee !== "minimum")
 const config = profile.configurations.find(
   (entry) => entry.committee === "minimum",
 )!;
+const { proof_hex, public_inputs_hex } = folded_artifacts.decryption_aggregator;
+const { proof, fields } = decodeBenchmarkProof(proof_hex, public_inputs_hex);
 const [signer] = await ethers.getSigners();
 const source = "SynchronizedHonk.sol";
 const honk = await deployCompiled(
@@ -50,11 +53,6 @@ const verifier = await ethers.deployContract("SynchronizedDecryptionVerifier", [
   await registry.getAddress(),
   config.cryptoConfigId,
 ]);
-const { proof_hex, public_inputs_hex } = folded_artifacts.decryption_aggregator;
-const fields = public_inputs_hex
-  .slice(2)
-  .match(/.{64}/g)
-  .map((s: string) => `0x${s}`);
 const call = [
   id,
   authority.domain,
@@ -63,7 +61,7 @@ const call = [
   authority.ciphertext,
   ethers.AbiCoder.defaultAbiCoder().encode(
     ["bytes", "bytes32[]"],
-    [proof_hex, fields],
+    [proof, fields],
   ),
 ] as const;
 if (!(await verifier.verify.staticCall(...call)))

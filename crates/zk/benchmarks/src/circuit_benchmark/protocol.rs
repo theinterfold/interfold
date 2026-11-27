@@ -300,26 +300,49 @@ pub(crate) fn integration_command(
     Ok(command)
 }
 
+/// A child can mine the expected result and then fail during shutdown or gas estimation.
+pub(super) fn run_request(
+    command: &mut Command,
+    output: &Path,
+    validate: impl FnOnce(&serde_json::Value) -> Result<()>,
+) -> Result<()> {
+    let path = output.join("request_receipt.json");
+    let child = run_logged(
+        command.env("E3_BENCHMARK_REQUEST_OUTPUT", &path),
+        &output.join("request.log"),
+    );
+    let receipt = read_json(&path).and_then(|saved| validate(&saved));
+    write_json(
+        &output.join("request_outcome.json"),
+        &serde_json::json!({
+            "complete": child.is_ok() && receipt.is_ok(),
+            "command_succeeded": child.is_ok(),
+            "command_error": child.as_ref().err().map(|e| format!("{e:#}")),
+            "receipt_valid": receipt.is_ok(),
+            "receipt_error": receipt.as_ref().err().map(|e| format!("{e:#}")),
+        }),
+    )?;
+    child.and(receipt)
+}
+
 pub(super) fn request(root: &Path, output: &Path, cfg: &Configuration) -> Result<()> {
     validate_active(root, cfg)?;
-    let path = output.join("request_receipt.json");
-    run_logged(
-        system_command(root, cfg, "benchmark_ss_cli_request")?
-            .env("E3_BENCHMARK_REQUEST_OUTPUT", &path)
-            .env(
-                "RUST_MIN_STACK",
-                std::env::var_os("RUST_MIN_STACK").unwrap_or_else(|| "16777216".into()),
-            ),
-        &output.join("request.log"),
-    )?;
-    let result = read_json(&path)?;
-    anyhow::ensure!(
-        result["profile"] == format!("ss-{}", cfg.preset)
-            && result["plaintext"] == 37
-            && result["committee"] == "minimum",
-        "missing SS Minimum request outcome"
-    );
-    Ok(())
+    run_request(
+        system_command(root, cfg, "benchmark_ss_cli_request")?.env(
+            "RUST_MIN_STACK",
+            std::env::var_os("RUST_MIN_STACK").unwrap_or_else(|| "16777216".into()),
+        ),
+        output,
+        |saved| {
+            anyhow::ensure!(
+                saved["profile"] == format!("ss-{}", cfg.preset)
+                    && saved["plaintext"] == 37
+                    && saved["committee"] == "minimum",
+                "missing SS Minimum request outcome"
+            );
+            Ok(())
+        },
+    )
 }
 
 pub(crate) fn evm_command(

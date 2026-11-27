@@ -4221,6 +4221,7 @@ dependencies = [
  "e3-request",
  "e3-sync",
  "e3-task-pool",
+ "e3-test-support",
  "e3-trbfv",
  "e3-utils",
  "e3-zk-build",
@@ -4548,6 +4549,7 @@ dependencies = [
 name = "e3-test-support"
 version = "0.20.0"
 dependencies = [
+ "libc",
  "rand 0.9.5",
  "rand_chacha 0.9.0",
  "tokio",

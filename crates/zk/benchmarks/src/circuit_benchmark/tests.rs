@@ -112,6 +112,90 @@ fn synchronized_replay_preserves_wrong_profile_failure_without_running_tools() {
 }
 
 #[test]
+fn synchronized_replay_rejects_variant_before_staging_the_candidate() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("summary.json");
+    write_json(
+        &input,
+        &serde_json::json!({"benchmark_config": {"mode": "sync-insecure-64"}}),
+    )
+    .unwrap();
+    for variant in ["invalid", "default", "evm"] {
+        let options = Options::parse_from([
+            "bench",
+            "replay",
+            "--input",
+            "summary.json",
+            "--output",
+            variant,
+            "--candidate",
+            "absent",
+            "--variant",
+            variant,
+        ]);
+        let error = execute(temp.path(), &options).unwrap_err();
+        assert!(error.to_string().contains("variant"), "{error:#}");
+        let gas =
+            protocol::read_json(&temp.path().join(variant).join("crisp_verify_gas.json")).unwrap();
+        assert_eq!(gas["complete"], false);
+        assert_eq!(gas["error"], error.to_string());
+    }
+}
+
+#[test]
+fn report_reloads_child_status_separately_from_mined_evidence() -> Result<()> {
+    let good = r#"{"plaintext":37,"plaintext_tx":"mined","submission_to_receipt_seconds":null}"#;
+    for (bytes, exit, valid) in [
+        (good, 0, true),
+        (good, 1, true),
+        (r#"{"plaintext":38,"plaintext_tx":"mined"}"#, 0, false),
+        ("truncated", 0, false),
+        ("", 1, false),
+    ] {
+        let temp = tempfile::tempdir()?;
+        let output = temp.path();
+        let mut child = Command::new("sh");
+        child
+            .args([
+                "-c",
+                r#"
+                if [ -n "$1" ]; then printf %s "$1" > "$E3_BENCHMARK_REQUEST_OUTPUT"; fi
+                exit "$2"
+            "#,
+                "child",
+                bytes,
+            ])
+            .arg(exit.to_string());
+        let run = protocol::run_request(&mut child, output, |saved| {
+            anyhow::ensure!(saved["plaintext"] == 37, "unexpected plaintext");
+            Ok(())
+        });
+        assert_eq!(run.is_ok(), exit == 0 && valid);
+        render_saved(output)?;
+        let report = output.join("later.md");
+        report::command(output, Some(&report), None, None)?;
+        let text = fs::read_to_string(report)?;
+        assert_eq!(text, fs::read_to_string(output.join("report.md"))?);
+        assert!(text.contains(&format!("| complete | {} |", run.is_ok())));
+        assert!(text.contains(&format!("| command_succeeded | {} |", exit == 0)));
+        assert!(text.contains(&format!("| receipt_valid | {valid} |")));
+        if bytes.contains("mined") {
+            assert!(text.contains("| plaintext_tx | mined |"));
+        }
+        if bytes == good {
+            assert!(text.contains("| submission_to_receipt_seconds | N/A |"));
+        }
+        if !bytes.is_empty() {
+            assert_eq!(
+                fs::read_to_string(output.join("request_receipt.json"))?,
+                bytes
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn chunk_and_limb_cases_always_run_in_the_default_variant() {
     use e3_zk_config::{CircuitName, CircuitVariant};
     for chunk in [
@@ -257,6 +341,7 @@ fn report_reads_both_schemas_without_relabeling_metrics_or_confusing_ude_legs() 
         integration: serde_json::Value::Null,
         gas: serde_json::json!({"verify_gas":{"user":123}}),
         request: serde_json::Value::Null,
+        request_outcome: serde_json::Value::Null,
         files: vec![],
     };
     let rendered = report::render(&data).unwrap();
@@ -309,6 +394,7 @@ fn report_excludes_failed_schema_two_phase_durations() {
         integration: serde_json::Value::Null,
         gas: serde_json::Value::Null,
         request: serde_json::Value::Null,
+        request_outcome: serde_json::Value::Null,
         files: vec![],
     };
     let rendered = report::render(&data).unwrap();

@@ -248,6 +248,7 @@ pub(crate) struct Data {
     pub integration: Value,
     pub gas: Value,
     pub request: Value,
+    pub request_outcome: Value,
     pub files: Vec<String>,
 }
 pub(crate) fn load(input: &Path, summary: Option<&Path>, gas: Option<&Path>) -> Result<Data> {
@@ -260,10 +261,18 @@ pub(crate) fn load(input: &Path, summary: Option<&Path>, gas: Option<&Path>) -> 
         || input.join("benchmark_run_meta.json").exists()
         || input.join("integration_summary.json").exists()
         || input.join("request_receipt.json").exists()
+        || input.join("request_outcome.json").exists()
     {
         input
     } else {
         input.parent().context("Raw directory has no parent")?
+    };
+    let receipt_path = base.join("request_receipt.json");
+    let request_outcome = optional_json(&base.join("request_outcome.json"))?;
+    let request = match optional_json(&receipt_path) {
+        // The saved validation error explains a truncated or unreadable receipt. Leave it on disk.
+        Err(_) if request_outcome["receipt_valid"] == false => Value::Null,
+        result => result?,
     };
     let mut leaves = Vec::new();
     let mut files = Vec::new();
@@ -275,6 +284,7 @@ pub(crate) fn load(input: &Path, summary: Option<&Path>, gas: Option<&Path>) -> 
                 .path()
                 .extension()
                 .is_some_and(|extension| extension == "json")
+                && path.path() != receipt_path
                 && (raw != input || !path.file_name().to_string_lossy().ends_with("summary.json"))
             {
                 let document = protocol::read_json(&path.path())?;
@@ -290,7 +300,6 @@ pub(crate) fn load(input: &Path, summary: Option<&Path>, gas: Option<&Path>) -> 
         }
     }
     let metadata = optional_json(&base.join("benchmark_run_meta.json"))?;
-    let request = optional_json(&base.join("request_receipt.json"))?;
     let gas = if let Some(path) = gas {
         protocol::read_json(path)?
     } else {
@@ -310,6 +319,7 @@ pub(crate) fn load(input: &Path, summary: Option<&Path>, gas: Option<&Path>) -> 
         && integration.is_null()
         && gas.is_null()
         && request.is_null()
+        && request_outcome.is_null()
     {
         bail!("No saved benchmark records in {}", input.display());
     }
@@ -319,6 +329,7 @@ pub(crate) fn load(input: &Path, summary: Option<&Path>, gas: Option<&Path>) -> 
         integration,
         gas,
         request,
+        request_outcome,
         files,
     })
 }
@@ -337,6 +348,7 @@ fn settings(out: &mut String, title: &str, values: &Value) {
 pub(crate) fn render(data: &Data) -> Result<String> {
     let mut out = String::from("# Circuit and protocol benchmarks\n\n## Run configuration\n");
     settings(&mut out, "Saved benchmark settings", &data.metadata);
+    settings(&mut out, "CLI request outcome", &data.request_outcome);
     settings(
         &mut out,
         "Local CLI request and mined receipts",
@@ -360,6 +372,8 @@ pub(crate) fn render(data: &Data) -> Result<String> {
         } else {
             settings(&mut out, "SS archive source stamp", stamp);
         }
+    }
+    if !data.request.is_null() || !data.request_outcome.is_null() {
         return Ok(out);
     }
     settings(

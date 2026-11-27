@@ -4,7 +4,7 @@
 use super::receiver_shares;
 use anyhow::{ensure, Context, Result};
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
-use e3_trbfv::synchronized::PrfKey;
+use e3_trbfv::synchronized::{contribution_noise_v1, weighted_share, PrfKey};
 use e3_zk_config::{synchronized::Configs, MAX_MSG_NON_ZERO_COEFFS};
 use e3_zk_witness::{
     compute_aggregated_shares_commitment, compute_ciphertext_commitment,
@@ -16,14 +16,12 @@ use e3_zk_witness::{
 use fhe::{
     bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey},
     mbfv::{Aggregate as _, PublicKeyShare},
-    trbfv::{
-        DecryptionShare, PartyPrfKeyTransport, PartyPrfKeys, ShareManager,
-        SmudgingBoundCalculatorConfig, SmudgingNoiseGenerator, SynchronizedDecryptor,
-    },
+    trbfv::{ShareManager, SynchronizedDecryptor},
 };
 use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::{FheDecoder, FheEncoder, FheEncrypter};
 use num_bigint::BigInt;
+use rand::RngCore;
 use zeroize::Zeroizing;
 
 pub const OWNERS: [u32; 2] = [0, 2];
@@ -52,13 +50,13 @@ impl Sample {
         let committee = cfg.committee.values();
         ensure!(committee.n == 3 && committee.h == OWNERS.len() && committee.threshold == 1);
         let params = &cfg.threshold;
-        let preset = cfg.profile.threshold_preset();
         let mut rng = rand::rng();
         let mut manager = ShareManager::new(committee.n, committee.threshold, params.clone())?;
         let crp = create_deterministic_crp_from_default_seed(params);
         let mut public_shares = Vec::new();
         let mut dealer_shares = Vec::new();
-        let keys = (0..committee.n)
+        let keys = OWNERS
+            .iter()
             .map(|_| {
                 (0..committee.n)
                     .map(|_| PrfKey::random(cfg.profile, &mut rng))
@@ -83,21 +81,11 @@ impl Sample {
             &centered(&ciphertext[1])?,
             cfg.aggregate_bit,
         );
-        let generator = SmudgingNoiseGenerator::new(SmudgingBoundCalculatorConfig::new(
-            params.clone(),
-            committee.n,
-            preset
-                .search_defaults()
-                .context("missing search parameters")?
-                .z as usize,
-            preset.lambda()?,
-        )?)?;
         let decryptor =
             SynchronizedDecryptor::new(committee.n, committee.threshold, params.clone())?;
-        let coordinates = OWNERS.map(|owner| owner as usize + 1);
         let mut partials = Vec::new();
         let mut native = Vec::new();
-        for owner in OWNERS {
+        for (dealer_index, owner) in OWNERS.into_iter().enumerate() {
             let i = owner as usize;
             let sk = Zeroizing::new(
                 manager.aggregate_collected_shares(
@@ -107,12 +95,15 @@ impl Sample {
                         .collect::<Vec<_>>(),
                 )?,
             );
-            let outgoing =
-                Zeroizing::new(keys[i].iter().map(|k| *k.as_bytes()).collect::<Vec<_>>());
-            let incoming = Zeroizing::new(
-                OWNERS
+            let outgoing = Zeroizing::new(
+                keys[dealer_index]
                     .iter()
-                    .map(|&peer| *keys[peer as usize][i].as_bytes())
+                    .map(|k| *k.as_bytes())
+                    .collect::<Vec<_>>(),
+            );
+            let incoming = Zeroizing::new(
+                keys.iter()
+                    .map(|row| *row[i].as_bytes())
                     .collect::<Vec<_>>(),
             );
             let sk_commitment = compute_aggregated_shares_commitment(
@@ -128,32 +119,23 @@ impl Sample {
                 &outgoing,
                 &incoming,
             )?;
-            let ring = PartyPrfKeys::from_transport(PartyPrfKeyTransport::new(
-                i + 1,
-                committee.n,
-                outgoing.to_vec(),
-                keys.iter().map(|row| *row[i].as_bytes()).collect(),
-            )?)?;
-            let noise = fhe_math::rq::sample_uniform_coefficients_bigint(
-                &generator.smudging_bound().clone().into(),
-                params.degree(),
-                &mut rng,
-            );
-            let share = decryptor.decryption_share(
+            let mut seed = Zeroizing::new([0u8; 32]);
+            rng.fill_bytes(&mut *seed);
+            let noise = contribution_noise_v1(cfg.profile, cfg.committee, &seed)?;
+            let share = weighted_share(
+                cfg.profile,
+                cfg.committee,
+                owner,
+                &OWNERS,
+                &OWNERS,
+                &outgoing,
+                &incoming,
+                &sk,
                 &ciphertext,
-                &(*sk).clone().into_ntt(),
-                i + 1,
-                &coordinates,
-                generator.wrap_signed_coefficients(&noise)?,
-                &ring,
+                &noise,
             )?;
-            let (share, id, set) = share.into_parts();
-            native.push(DecryptionShare::from_parts(
-                share.clone(),
-                id,
-                set,
-                &ciphertext,
-            )?);
+            native.push(share.clone());
+            let (share, _, _) = share.into_parts();
             partials.push(Partial {
                 sk,
                 outgoing,
@@ -243,5 +225,30 @@ impl Sample {
             "ciphertext": format!("0x{:064x}",self.commitment),
             "plaintext": self.plaintext.iter().flat_map(|c| c.to_le_bytes()).collect::<Vec<_>>(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use e3_committee::CiphernodesCommitteeSize::Minimum;
+    use e3_fhe_params::BfvProfile;
+
+    #[test]
+    fn minimum_sample_prepares_both_noncontiguous_owner_openings() -> Result<()> {
+        let cfg = Configs::for_profile(BfvProfile::SyncDecInsecure64, Minimum)?;
+        let sample = Sample::generate(&cfg)?;
+        let openings = [sample.c6_inputs(&cfg, 0)?, sample.c6_inputs(&cfg, 1)?];
+        for (index, owner) in OWNERS.into_iter().enumerate() {
+            let opening = &openings[index];
+            assert_eq!(opening["owner"], owner);
+            assert_eq!(opening["roster"], serde_json::json!([0, 2]));
+            assert_eq!(opening["incoming"].as_array().unwrap().len(), 2);
+            for (dealer, row) in openings.iter().enumerate() {
+                assert!(opening["incoming"][dealer] == row["outgoing"][owner as usize]);
+            }
+        }
+        assert_eq!(sample.plaintext[0], 37);
+        Ok(())
     }
 }

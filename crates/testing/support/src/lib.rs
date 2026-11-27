@@ -4,6 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod benchmark_clock;
+pub use benchmark_clock::BenchmarkInstant;
 mod tracing;
 pub use tracing::with_tracing;
 

@@ -404,8 +404,10 @@ export const requestCommittee = task(
       await approveTx.wait();
       console.log("USDC approved");
 
-      if (benchmark) console.log(`REQUEST_SUBMITTED_MS=${Date.now()}`);
+      const submitted = benchmark ? process.hrtime.bigint() : undefined;
       const tx = await interfoldContract.request(requestParams);
+      if (submitted !== undefined)
+        console.log(`REQUEST_SUBMITTED_NS=${submitted}`);
 
       console.log("Requesting committee... ", tx.hash);
       const receipt = await tx.wait();

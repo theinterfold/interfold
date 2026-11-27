@@ -26,8 +26,8 @@ use e3_evm_config::{
 };
 use e3_fhe_params::{decode_bfv_params_arc, BfvProfile};
 use e3_multithread::Multithread;
-use e3_sdk::evm::contracts::Interfold;
-use e3_test_support::{derive_shared_rng, with_tracing};
+use e3_sdk::evm::contracts::{E3Stage, Interfold};
+use e3_test_support::{derive_shared_rng, with_tracing, BenchmarkInstant};
 use e3_zk_config::output_layout::DecryptionAggregatorLayout;
 use fhe::bfv::Ciphertext;
 use fhe_traits::{DeserializeParametrized, Serialize};
@@ -38,7 +38,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -240,6 +240,46 @@ async fn verifier_gas(
     anyhow::bail!("no {signature} call to frozen verifier {verifier} in {tx}")
 }
 
+fn check_finalization(stage: u8) -> Result<()> {
+    // A live node can publish the key before this read. Only this driver submits ciphertext.
+    let stage = E3Stage::try_from(stage)?;
+    ensure!(
+        matches!(stage, E3Stage::CommitteeFinalized | E3Stage::KeyPublished),
+        "unexpected stage after committee finalization: {stage:?}"
+    );
+    Ok(())
+}
+
+fn write_receipt(path: &Path, record: &Value) -> Result<()> {
+    let temp = tempfile::NamedTempFile::new_in(path.parent().context("missing receipt parent")?)?;
+    serde_json::to_writer_pretty(temp.as_file(), record)?;
+    temp.as_file().sync_all()?;
+    temp.persist(path)?;
+    Ok(())
+}
+
+async fn save_receipt_with_estimates(
+    path: &Path,
+    mut record: Value,
+    estimates: [(&str, impl std::future::Future<Output = Result<u64>>); 2],
+) -> Result<()> {
+    write_receipt(path, &record)?;
+    let mut result = Ok(());
+    for (field, estimate) in estimates {
+        match estimate.await {
+            Ok(gas) => record[field] = gas.into(),
+            Err(error) => {
+                record[field] = Value::Null;
+                record[format!("{field}_error")] = format!("{error:#}").into();
+                result = Err(error.context(field.to_owned()));
+            }
+        }
+        write_receipt(path, &record)?;
+    }
+    println!("{record}");
+    result
+}
+
 pub async fn run() -> Result<()> {
     let _tracing = with_tracing("info");
     let preset = Preset::from_mode(&std::env::var("BENCHMARK_MODE")?)?;
@@ -349,7 +389,7 @@ pub async fn run() -> Result<()> {
         .context("missing chain head")?
         .header
         .timestamp;
-    let invoked = Instant::now();
+    let invoked = BenchmarkInstant::now();
     let stdout = hardhat(
         &root,
         work.path(),
@@ -375,7 +415,7 @@ pub async fn run() -> Result<()> {
             .find_map(|line| line.strip_prefix(prefix))
             .with_context(|| format!("committee:new omitted {prefix}"))
     };
-    let submitted: u64 = value("REQUEST_SUBMITTED_MS=")?.parse()?;
+    let submitted = invoked.child_hrtime(value("REQUEST_SUBMITTED_NS=").ok());
     let id: U256 = value("E3_ID=")?.parse()?;
     let request = receipt(&provider, value("REQUEST_TX=")?.parse()?).await?;
     let e3 = request
@@ -429,17 +469,13 @@ pub async fn run() -> Result<()> {
         .anvil_set_next_block_timestamp(deadline + 1)
         .await?;
     provider.evm_mine(None).await?;
-    // A node can finalize concurrently after the jump. Only the mined finalized stage suffices.
-    if lifecycle.getE3Stage(id).call().await? == 1 {
+    if lifecycle.getE3Stage(id).call().await? == u8::from(E3Stage::Requested) {
         let finalized = r.finalizeCommittee(id).send().await;
         if let Ok(tx) = finalized {
             tx.get_receipt().await?;
         }
     }
-    ensure!(
-        lifecycle.getE3Stage(id).call().await? == 2,
-        "committee did not finalize"
-    );
+    check_finalization(lifecycle.getE3Stage(id).call().await?)?;
     let mut committee = Vec::new();
     for slot in 0..Minimum.values().n {
         let member = r
@@ -466,7 +502,7 @@ pub async fn run() -> Result<()> {
         log.transaction_hash.context("missing chunk transaction")?,
     )
     .await?;
-    let key_at = Instant::now();
+    let key_at = BenchmarkInstant::now();
     let InterfoldEventData::CommitteePublished(key) =
         timeout(Duration::from_secs(45), confirmed_key)
             .await??
@@ -524,7 +560,7 @@ pub async fn run() -> Result<()> {
         .await?
         .get_receipt()
         .await?;
-    let ciphertext_at = Instant::now();
+    let ciphertext_at = BenchmarkInstant::now();
     ensure!(ciphertext.status());
     let (output, log) = timeout(
         Duration::from_secs(900),
@@ -544,22 +580,14 @@ pub async fn run() -> Result<()> {
             .context("missing plaintext transaction")?,
     )
     .await?;
-    let end = Instant::now();
-    let end_ms: u64 = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_millis()
-        .try_into()?;
-    let seconds = end_ms
-        .checked_sub(submitted)
-        .context("host clock moved backwards")? as f64
-        / 1000.;
+    let end = BenchmarkInstant::now();
     let state = lifecycle.getE3(id).call().await?;
     ensure!(
         state.pkVerifier == pk
             && state.decryptionVerifier == dec
             && state.ciphertextCommitment == commitment
             && state.plaintextOutput == output.plaintextOutput
-            && lifecycle.getE3Stage(id).call().await? == 5
+            && lifecycle.getE3Stage(id).call().await? == u8::from(E3Stage::Complete)
     );
     ensure!(
         routes
@@ -590,7 +618,7 @@ pub async fn run() -> Result<()> {
     let path = PathBuf::from(
         std::env::var_os("E3_BENCHMARK_REQUEST_OUTPUT").context("missing receipt output")?,
     );
-    let mut record = json!({
+    let record = json!({
         "profile": profile.name(),
         "committee": "minimum",
         "chain_id": CHAIN_ID,
@@ -606,11 +634,11 @@ pub async fn run() -> Result<()> {
         "rotated_decryption_default": future,
         "plaintext": coefficients[0],
         "ciphertext_commitment": commitment,
-        "cli_invocation_to_receipt_seconds": end.duration_since(invoked).as_secs_f64(),
-        "submission_to_receipt_seconds": seconds,
-        "submission_to_published_key_seconds": seconds - end.duration_since(key_at).as_secs_f64(),
-        "published_key_to_ciphertext_seconds": ciphertext_at.duration_since(key_at).as_secs_f64(),
-        "ciphertext_to_plaintext_seconds": end.duration_since(ciphertext_at).as_secs_f64(),
+        "cli_invocation_to_receipt_seconds": end.seconds_since(invoked),
+        "submission_to_receipt_seconds": submitted.and_then(|at| end.seconds_since(at)),
+        "submission_to_published_key_seconds": submitted.and_then(|at| key_at.seconds_since(at)),
+        "published_key_to_ciphertext_seconds": ciphertext_at.seconds_since(key_at),
+        "ciphertext_to_plaintext_seconds": end.seconds_since(ciphertext_at),
         "request_tx": request.transaction_hash,
         "request_gas": request.gas_used,
         "dkg_tx": dkg.transaction_hash,
@@ -621,25 +649,97 @@ pub async fn run() -> Result<()> {
         "plaintext_tx": plaintext.transaction_hash,
         "plaintext_gas": plaintext.gas_used,
     });
-    // A failed post-run gas estimate must not erase the successful mined receipt or its timing.
-    fs::write(&path, serde_json::to_vec_pretty(&record)?)?;
-    record["standalone_dkg_verifier_gas"] = verifier_gas(
-        &provider,
-        dkg.transaction_hash,
-        pk,
-        "verify(uint256,uint256,address[],bytes32,bytes32,bytes)",
+    save_receipt_with_estimates(
+        &path,
+        record,
+        [
+            (
+                "standalone_dkg_verifier_gas",
+                verifier_gas(
+                    &provider,
+                    dkg.transaction_hash,
+                    pk,
+                    "verify(uint256,uint256,address[],bytes32,bytes32,bytes)",
+                ),
+            ),
+            (
+                "standalone_decryption_verifier_gas",
+                verifier_gas(
+                    &provider,
+                    plaintext.transaction_hash,
+                    dec,
+                    "verify(uint256,bytes32,bytes32,bytes32,bytes32,bytes)",
+                ),
+            ),
+        ],
     )
-    .await?
-    .into();
-    record["standalone_decryption_verifier_gas"] = verifier_gas(
-        &provider,
-        plaintext.transaction_hash,
-        dec,
-        "verify(uint256,bytes32,bytes32,bytes32,bytes32,bytes)",
-    )
-    .await?
-    .into();
-    fs::write(path, serde_json::to_vec_pretty(&record)?)?;
-    println!("{record}");
+    .await
+}
+
+#[test]
+fn finalization_allows_an_already_published_key_but_not_ciphertext_or_failure() {
+    for stage in [E3Stage::CommitteeFinalized, E3Stage::KeyPublished] {
+        assert!(check_finalization(stage.into()).is_ok());
+    }
+    for stage in [
+        E3Stage::None,
+        E3Stage::Requested,
+        E3Stage::CiphertextReady,
+        E3Stage::Complete,
+        E3Stage::Failed,
+    ] {
+        assert!(check_finalization(stage.into()).is_err());
+    }
+    assert!(check_finalization(u8::MAX).is_err());
+}
+
+#[tokio::test]
+async fn failed_estimate_preserves_the_mined_receipt_and_the_other_estimate() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("request_receipt.json");
+    let mined = json!({"plaintext_tx": "mined", "submission_to_receipt_seconds": null});
+    for failed in ["dkg", "dec"] {
+        let initial_receipt = std::cell::OnceCell::new();
+        let estimate = |field: &'static str| {
+            let (path, mined, initial_receipt) = (&path, &mined, &initial_receipt);
+            async move {
+                let saved: Value = serde_json::from_slice(&fs::read(path)?)?;
+                assert_eq!(saved["plaintext_tx"], mined["plaintext_tx"]);
+                if field == "dkg" {
+                    assert_eq!(&saved, mined);
+                    initial_receipt.set(fs::File::open(path)?).unwrap();
+                } else {
+                    assert!(
+                        saved.get("dkg").is_some(),
+                        "DKG estimate was not saved first"
+                    );
+                }
+                ensure!(field != failed, "RPC unavailable");
+                Ok(123)
+            }
+        };
+        let error = save_receipt_with_estimates(
+            &path,
+            mined.clone(),
+            [("dkg", estimate("dkg")), ("dec", estimate("dec"))],
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("RPC unavailable"));
+        // A reader that opened the initial receipt still sees a complete, unchanged document.
+        assert_eq!(
+            serde_json::from_reader::<_, Value>(initial_receipt.into_inner().unwrap())?,
+            mined
+        );
+        let saved: Value = serde_json::from_slice(&fs::read(&path)?)?;
+        assert_eq!(saved[if failed == "dkg" { "dec" } else { "dkg" }], 123);
+        assert_eq!(saved.get(failed), Some(&Value::Null));
+        assert_eq!(saved[format!("{failed}_error")], "RPC unavailable");
+        assert_eq!(saved["plaintext_tx"], "mined");
+        assert_eq!(
+            saved.get("submission_to_receipt_seconds"),
+            Some(&Value::Null)
+        );
+    }
     Ok(())
 }

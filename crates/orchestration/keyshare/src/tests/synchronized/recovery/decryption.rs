@@ -244,7 +244,7 @@ pub(super) async fn qualify(
             .get_receipt()
             .await?
     };
-    let ciphertext_observed = std::time::Instant::now();
+    let ciphertext_observed = e3_test_support::BenchmarkInstant::now();
     ensure!(receipt.status());
     let node = DiskJournal::open(dir, "plaintext").await?;
     let bus = &node.bus;
@@ -531,8 +531,7 @@ pub(super) async fn qualify(
             e3_evm::publish_synchronized_plaintext_definition(writer, &keys, controller, &intent)
                 .await?
                 .context("missing mined plaintext")?;
-        let end_ms = super::cli::wall_ms()?;
-        let plaintext_observed = std::time::Instant::now();
+        let plaintext_observed = e3_test_support::BenchmarkInstant::now();
         let state = lifecycle.getE3(numeric).call().await?;
         ensure!(
             mined.status()
@@ -568,7 +567,6 @@ pub(super) async fn qualify(
                     observed: plaintext_observed,
                 },
             ],
-            end_ms,
         )?;
         node.close().await?;
         return Ok(());

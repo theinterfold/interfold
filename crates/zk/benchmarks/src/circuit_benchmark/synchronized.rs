@@ -113,13 +113,24 @@ fn stage(root: &Path, export: &Path, dest: &Path, profile: BfvProfile, dkg: bool
     Ok(manifest)
 }
 
+fn validate_variant(options: &Options) -> Result<()> {
+    ensure!(
+        options.variant == "recursive",
+        "synchronized candidates have a fixed variant for each role: recursive leaves and an EVM outer"
+    );
+    Ok(())
+}
+
 fn selected(options: &Options) -> Result<usize> {
+    validate_variant(options)?;
     ensure!(
         options.committee.as_deref().unwrap_or("minimum") == "minimum",
         "synchronized benchmarks support Minimum only"
     );
-    ensure!(options.variant == "recursive" && options.artifacts.is_none() && !options.bench_compile,
-        "synchronized candidates have fixed recursive leaves and an EVM outer; use --candidate, not archive or compile options");
+    ensure!(
+        options.artifacts.is_none() && !options.bench_compile,
+        "use --candidate, not archive or compile options"
+    );
     ensure!(
         options.multithread_jobs == 1,
         "--multithread-jobs configures only the SS actor benchmark"
@@ -344,6 +355,7 @@ fn gas(
 
 pub(super) fn replay(root: &Path, output: &Path, input: &Path, options: &Options) -> Result<()> {
     let saved = || -> Result<()> {
+        validate_variant(options)?;
         let summary = protocol::read_json(&if input.is_dir() {
             input.join("integration_summary.json")
         } else {
@@ -458,8 +470,7 @@ pub(super) fn execute(root: &Path, options: &Options, profile: BfvProfile) -> Re
         write_json(&output.join("benchmark_run_meta.json"), &meta)?;
         write_json(&dest.join("manifest.json"), &manifest)?;
         write_json(&dest.join("dkg-publication.json"), &dkg)?;
-        let receipt = output.join("request_receipt.json");
-        let result = run_logged(
+        let result = protocol::run_request(
             Command::new("cargo")
                 .args([
                     "test",
@@ -480,21 +491,20 @@ pub(super) fn execute(root: &Path, options: &Options, profile: BfvProfile) -> Re
                 .env("RUST_MIN_STACK", std::env::var_os("RUST_MIN_STACK").unwrap_or_else(|| "16777216".into()))
                 .env("E3_BENCHMARK_PROFILE", profile.name())
                 .env("E3_BENCHMARK_ARTIFACTS", artifacts)
-                .env("E3_BENCHMARK_REQUEST_OUTPUT", &receipt)
                 .env_remove("E3_SYNC_DECRYPTION_EXPORT")
                 .env_remove("E3_SYNC_OTHER_PROFILE_EXPORT"),
-            &output.join("request.log"),
-        )
-        .and_then(|_| {
-            let saved = protocol::read_json(&receipt)?;
-            ensure!(
-                saved["profile"] == profile.name()
-                    && saved["plaintext"] == 37
-                    && saved["owners"] == json!([0, 2]),
-                "wrong CLI request outcome"
-            );
-            Ok(())
-        });
+            &output,
+            |saved| {
+                ensure!(
+                    saved["profile"] == profile.name()
+                        && saved["committee"] == "minimum"
+                        && saved["plaintext"] == 37
+                        && saved["owners"] == json!(OWNERS),
+                    "wrong CLI request outcome"
+                );
+                Ok(())
+            },
+        );
         render_saved(&output)?;
         println!("CLI request output: {}", output.display());
         return result;

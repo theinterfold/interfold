@@ -6,10 +6,8 @@ use super::*;
 use alloy::{providers::ext::AnvilApi, sol_types::SolEvent};
 use e3_evm_contracts::IInterfold;
 use e3_request::canonical_key::SynchronizedDecryptionPlan;
-use std::{
-    process::Command,
-    time::{Instant, SystemTime, UNIX_EPOCH},
-};
+use e3_test_support::BenchmarkInstant;
+use std::process::Command;
 
 sol! {
     #[sol(rpc)]
@@ -28,21 +26,14 @@ pub(in super::super) struct CliRequest {
     future_decryption: Address,
     pub history: Vec<InterfoldEvent<Unsequenced>>,
     pub receipt: TransactionReceipt,
-    pub submitted_ms: u64,
-    pub invoked: Instant,
-}
-
-pub(super) fn wall_ms() -> Result<u64> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_millis()
-        .try_into()?)
+    pub submitted: Option<BenchmarkInstant>,
+    pub invoked: BenchmarkInstant,
 }
 
 /// Observe each boundary on the host; Anvil advances its block clock across the local test windows.
 pub(super) struct Publication<'a> {
     pub receipt: &'a TransactionReceipt,
-    pub observed: Instant,
+    pub observed: BenchmarkInstant,
 }
 
 impl CliRequest {
@@ -52,7 +43,6 @@ impl CliRequest {
         plan: &SynchronizedDecryptionPlan,
         value: u64,
         [key, ciphertext, plaintext]: [Publication<'_>; 3],
-        receipt_ms: u64,
     ) -> Result<()> {
         let context = plan.authority().context;
         ensure!(
@@ -61,14 +51,6 @@ impl CliRequest {
                 && context.verifying_contract == self.dkg,
             "recovered decryption plan differs from the mined request"
         );
-        let submission_seconds = receipt_ms
-            .checked_sub(self.submitted_ms)
-            .context("local clock moved backwards")? as f64
-            / 1000.0;
-        let after_key = plaintext
-            .observed
-            .duration_since(key.observed)
-            .as_secs_f64();
         let result = serde_json::json!({
             "profile": plan.profile().name(),
             "committee": plan.committee().as_str(),
@@ -82,11 +64,11 @@ impl CliRequest {
             "pk_verifier": self.dkg,
             "decryption_verifier": self.decryption,
             "rotated_decryption_default": self.future_decryption,
-            "cli_invocation_to_receipt_seconds": plaintext.observed.duration_since(self.invoked).as_secs_f64(),
-            "submission_to_receipt_seconds": submission_seconds,
-            "submission_to_published_key_seconds": submission_seconds - after_key,
-            "published_key_to_ciphertext_seconds": ciphertext.observed.duration_since(key.observed).as_secs_f64(),
-            "ciphertext_to_plaintext_seconds": plaintext.observed.duration_since(ciphertext.observed).as_secs_f64(),
+            "cli_invocation_to_receipt_seconds": plaintext.observed.seconds_since(self.invoked),
+            "submission_to_receipt_seconds": self.submitted.and_then(|at| plaintext.observed.seconds_since(at)),
+            "submission_to_published_key_seconds": self.submitted.and_then(|at| key.observed.seconds_since(at)),
+            "published_key_to_ciphertext_seconds": ciphertext.observed.seconds_since(key.observed),
+            "ciphertext_to_plaintext_seconds": plaintext.observed.seconds_since(ciphertext.observed),
             "request_tx": self.receipt.transaction_hash, "request_gas": self.receipt.gas_used,
             "dkg_tx": key.receipt.transaction_hash, "dkg_gas": key.receipt.gas_used,
             "ciphertext_tx": ciphertext.receipt.transaction_hash, "ciphertext_gas": ciphertext.receipt.gas_used,
@@ -157,7 +139,7 @@ impl Chain {
             .context("missing head")?
             .header
             .timestamp;
-        let invoked = Instant::now();
+        let invoked = BenchmarkInstant::now();
         let output = run(hardhat().args([
             "committee:new",
             "--committee-size",
@@ -177,7 +159,7 @@ impl Chain {
                 .find_map(|line| line.strip_prefix(prefix))
                 .with_context(|| format!("committee:new omitted {prefix}"))
         };
-        let submitted_ms = value("REQUEST_SUBMITTED_MS=")?.parse()?;
+        let submitted = invoked.child_hrtime(value("REQUEST_SUBMITTED_NS=").ok());
         let receipt = provider
             .get_transaction_receipt(value("REQUEST_TX=")?.parse()?)
             .await?
@@ -319,7 +301,7 @@ impl Chain {
             decryption,
             future_decryption,
             history,
-            submitted_ms,
+            submitted,
             receipt,
             invoked,
         });

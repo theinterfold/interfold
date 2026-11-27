@@ -615,7 +615,7 @@ impl Chain {
             &pending[0],
         )
         .await?;
-        let published_key = std::time::Instant::now();
+        let published_key = e3_test_support::BenchmarkInstant::now();
         ensure!(
             receipts.len() == 2,
             "expected the proof receipt and final key-chunk receipt"

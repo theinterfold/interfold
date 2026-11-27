@@ -1047,15 +1047,18 @@ async fn synchronized_disk_reopen_uses_real_proofs_and_restored_private_inputs()
         PROFILE
     };
     let (directory, prover) = real_prover(profile, &circuits)?;
-    let chain = chain::Chain::start().await?;
-    if let Err(error) = exercise(profile, Some(&prover), Some(chain)).await {
+    async {
+        let chain = chain::Chain::start().await?;
+        exercise(profile, Some(&prover), Some(chain)).await
+    }
+    .await
+    .map_err(|error| {
         let evidence = directory.keep();
-        return Err(error.context(format!(
+        error.context(format!(
             "Proof artifacts retained at {}",
             evidence.display()
-        )));
-    }
-    Ok(())
+        ))
+    })
 }
 
 #[actix::test]

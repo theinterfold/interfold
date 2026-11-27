@@ -140,15 +140,18 @@ python3 scripts/circuits/guard-proof-rss.py pnpm bench:circuits request \
   through key chunks, ciphertext publication, aggregator failover and the mined plaintext.
   Production admission stays disabled. The application compute verifier and HTTP DA object service
   are test fixtures.
-- **Timing:** `request_receipt.json` records the host time from the CLI's `request(...)` dispatch to
-  receiving the plaintext transaction receipt. It also records the longer time from CLI invocation,
-  which includes capacity and fee preflights. Local deployment and circuit builds precede both
-  clocks. Anvil advances past the ticket and input windows. Disk reopen, late setup and failover are
-  part of the timed workload; this is not a measurement of a fault-free production network.
+- **Timing:** `request_receipt.json` records the host monotonic time from the CLI's `request(...)`
+  dispatch to the observed plaintext receipt. Incomparable or missing dispatch readings leave those
+  durations `null`; the mined transactions and gas remain available. The longer interval from CLI
+  invocation includes capacity and fee preflights. Local deployment and circuit builds precede both
+  intervals. Anvil advances past the ticket and input windows. Disk reopen, late setup and failover
+  are part of the timed workload; this is not a measurement of a fault-free production network.
 - **Gas and memory:** the standalone verifier estimate includes transaction intrinsic gas. The
   request records full receipt gas for request, signed DKG publication (excluding key chunks),
   ciphertext and plaintext separately. The guard prints sampled process-tree peak RSS and command
-  wall time; run the profiles serially. `report --input <run>` uses saved data only.
+  wall time; run the profiles serially. `report --input <run>` uses saved data only. New request
+  runs save the child exit and receipt-validation outcomes separately in `request_outcome.json`; a
+  failed run can still have a valid mined receipt.
 
 For the
 [SS comparison](../../../circuits/benchmarks/synchronized-decryption.md#optimized-minimum-comparison--2026-11-26),
