@@ -561,9 +561,11 @@ applies. Activation, mixed-version policy and rollback need human review under #
    requests.
 4. **Rollback.** Before activation, revert the disabled code and use matching qualification state.
    After activation, pause new requests and finish or settle each admitted E3 under its frozen
-   routes and deadlines. Preserve allocated shares and the designated set through failover. After
-   drain, use the [rollback procedure](#rollback-and-evidence) with reviewed routes and compatible
-   state; never lower required counters or run an old node against live synchronized allocations.
+   routes and deadlines. Preserve allocated shares and the designated set through failover. Keep the
+   current nodes running until `activeE3Count` and `unreleasedCommitteeCount` are both zero and
+   every node has finished any accusation or slashing work it retains for failed E3s. Then use the
+   [rollback procedure](#rollback-and-evidence) with reviewed routes and compatible state; never
+   lower required counters or run an old node against live synchronized allocations.
 
 ### Retiring a BFV profile
 
