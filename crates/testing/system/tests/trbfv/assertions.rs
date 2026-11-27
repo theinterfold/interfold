@@ -33,8 +33,7 @@ pub fn check(scenario: &Scenario, observed: &Observations) {
 fn check_public_key(observed: &Observations) {
     let h = observed.config.committee_h;
     assert_eq!(
-        observed.key.nodes.len(),
-        h,
+        observed.key.node_count, h,
         "PublicKeyAggregated must list H={h} honest nodes"
     );
     assert!(
@@ -147,6 +146,18 @@ fn check_key_submissions(observed: &Observations) {
                     final_roster = Some(&data.party_ids);
                 }
                 (EventSource::Local, InterfoldEventData::PublicKeyAggregated(data))
+                    if data.e3_id == observed.e3_id =>
+                {
+                    submitted = true;
+                    assert!(
+                        data.pubkey == key.pubkey
+                            && data.committee_addresses == key.committee_addresses
+                            && data.honest_committee_addresses == key.honest_committee_addresses
+                            && data.pk_commitment == key.pk_commitment,
+                        "role holder {node_index} submitted a key that differs from the one the committee used"
+                    );
+                }
+                (EventSource::Local, InterfoldEventData::LbfvPublicKeyAggregated(data))
                     if data.e3_id == observed.e3_id =>
                 {
                     submitted = true;

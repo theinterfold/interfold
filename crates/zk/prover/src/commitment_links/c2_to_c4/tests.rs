@@ -12,18 +12,15 @@ fn make_field(val: u8) -> [u8; 32] {
     f
 }
 
-/// The chunk key-tree hash a final C2 proof exposes last.
-const KEY_TREE: u8 = 0xEE;
-
-/// Final C2 signals: [expected_secret_commitment] + share commitments (row-major: party, mod)
-/// + [key_tree].
+/// C2 terminal signals: [child VK hash, secret root] + share commitments + batch VK hash.
 fn c2_signals(share_commits: &[[u8; 32]]) -> Vec<u8> {
     let mut v = Vec::new();
-    v.extend_from_slice(&make_field(0xFF)); // expected_secret_commitment (skipped)
+    v.extend_from_slice(&make_field(0xFE)); // child VK hash (skipped)
+    v.extend_from_slice(&make_field(0xFF)); // secret root (skipped)
     for c in share_commits {
         v.extend_from_slice(c);
     }
-    v.extend_from_slice(&make_field(KEY_TREE));
+    v.extend_from_slice(&make_field(0xFD)); // batch VK hash (skipped)
     v
 }
 
@@ -43,7 +40,10 @@ fn c4_signals(rows: &[Vec<[u8; 32]>], aggregated: [u8; 32]) -> Vec<u8> {
 
 #[test]
 fn extract_share_commitments_from_c2() {
-    let link = C2aToC4aShareCommitmentLink { l: 2 };
+    let link = C2aToC4aShareCommitmentLink {
+        l: 2,
+        chunked: true,
+    };
     // C2 with 3 parties × 2 moduli = 6 share commits
     let commits: Vec<[u8; 32]> = (1u8..=6).map(make_field).collect();
     let c2 = c2_signals(&commits);
@@ -54,17 +54,11 @@ fn extract_share_commitments_from_c2() {
 }
 
 #[test]
-fn extract_skips_the_trailing_key_tree() {
-    let link = C2aToC4aShareCommitmentLink { l: 2 };
-    let commits: Vec<[u8; 32]> = (1u8..=6).map(make_field).collect();
-    let values = link.extract_source_values(&c2_signals(&commits));
-    assert_eq!(values, commits);
-    assert!(!values.contains(&make_field(KEY_TREE)));
-}
-
-#[test]
 fn extract_skips_secret_commitment() {
-    let link = C2aToC4aShareCommitmentLink { l: 2 };
+    let link = C2aToC4aShareCommitmentLink {
+        l: 2,
+        chunked: true,
+    };
     let c2 = c2_signals(&[make_field(1), make_field(2)]);
     let values = link.extract_source_values(&c2);
     assert_eq!(values.len(), 2);
@@ -79,7 +73,7 @@ fn extract_skips_secret_commitment() {
 #[test]
 fn consistency_passes_precise_l_way_check() {
     let l = 2;
-    let link = C2aToC4aShareCommitmentLink { l };
+    let link = C2aToC4aShareCommitmentLink { l, chunked: true };
 
     // C2 from sender X=1: 3 parties × 2 moduli
     let c2 = c2_signals(&[
@@ -108,7 +102,7 @@ fn consistency_passes_precise_l_way_check() {
 #[test]
 fn consistency_fails_when_wrong_modulus_commitment() {
     let l = 2;
-    let link = C2aToC4aShareCommitmentLink { l };
+    let link = C2aToC4aShareCommitmentLink { l, chunked: true };
 
     let c2 = c2_signals(&[
         make_field(10),
@@ -135,7 +129,7 @@ fn consistency_fails_when_wrong_modulus_commitment() {
 #[test]
 fn consistency_fails_when_wrong_party_slot() {
     let l = 2;
-    let link = C2aToC4aShareCommitmentLink { l };
+    let link = C2aToC4aShareCommitmentLink { l, chunked: true };
 
     let c2 = c2_signals(&[
         make_field(10),
@@ -155,10 +149,13 @@ fn consistency_fails_when_wrong_party_slot() {
 #[test]
 fn consistency_does_not_match_aggregated_output() {
     let l = 1;
-    let link = C2aToC4aShareCommitmentLink { l };
+    // The trBFV final C2 proof: [expected_secret_commitment] + commitments + [key_tree].
+    let link = C2aToC4aShareCommitmentLink { l, chunked: false };
 
     // C2: 1 party × 1 modulus = commit 99
-    let c2 = c2_signals(&[make_field(99)]);
+    let mut c2 = make_field(0xFF).to_vec();
+    c2.extend_from_slice(&make_field(99));
+    c2.extend_from_slice(&make_field(KEY_TREE));
     let source_values = link.extract_source_values(&c2);
 
     // C4: row 0 = [5], aggregated output = 99
@@ -172,7 +169,10 @@ fn consistency_does_not_match_aggregated_output() {
 
 #[test]
 fn short_or_empty_signals() {
-    let link = C2aToC4aShareCommitmentLink { l: 2 };
+    let link = C2aToC4aShareCommitmentLink {
+        l: 2,
+        chunked: true,
+    };
     assert!(link.extract_source_values(&[0u8; 32]).is_empty());
     assert!(!link.check_consistency(&[], &[0u8; 256], 0, 0));
     assert!(!link.check_consistency(&[make_field(1)], &[0u8; 16], 0, 0));
@@ -181,7 +181,7 @@ fn short_or_empty_signals() {
 #[test]
 fn c2b_to_c4b_variant() {
     let l = 2;
-    let link = C2bToC4bShareCommitmentLink { l };
+    let link = C2bToC4bShareCommitmentLink { l, chunked: true };
     let c2 = c2_signals(&[make_field(7), make_field(8)]);
     let source_values = link.extract_source_values(&c2);
 
@@ -190,4 +190,25 @@ fn c2b_to_c4b_variant() {
 
     let c4_wrong = c4_signals(&[vec![make_field(7), make_field(9)]], make_field(0));
     assert!(!link.check_consistency(&source_values, &c4_wrong, 0, 0));
+}
+
+/// The chunk key-tree hash a trBFV final C2 proof exposes last.
+const KEY_TREE: u8 = 0xEE;
+
+/// The trBFV final C2 proof has one prefix field (`expected_secret_commitment`) and ends with the
+/// hash of its chunk keys, so every share commitment, the last included, is extracted and that hash
+/// is not.
+#[test]
+fn trbfv_extraction_keeps_every_share_commitment_and_skips_the_key_tree() {
+    let link = C2aToC4aShareCommitmentLink {
+        l: 2,
+        chunked: false,
+    };
+    let mut c2 = make_field(0xFF).to_vec(); // expected_secret_commitment
+    for value in 1u8..=6 {
+        c2.extend_from_slice(&make_field(value));
+    }
+    c2.extend_from_slice(&make_field(KEY_TREE));
+    let values = link.extract_source_values(&c2);
+    assert_eq!(values, (1u8..=6).map(make_field).collect::<Vec<_>>());
 }

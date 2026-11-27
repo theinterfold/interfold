@@ -7,10 +7,11 @@
 use crate::shares::ShamirShare;
 use anyhow::Result;
 use e3_crypto::{Cipher, SensitiveBytes};
+use e3_fhe_params::BfvPreset;
 use fhe::mbfv::PublicKeyShare;
 use fhe::{
     bfv::{self, BfvParameters, SecretKey},
-    trbfv::{Lambda, SmudgingBoundCalculator, SmudgingBoundCalculatorConfig},
+    trbfv::Lambda,
 };
 use fhe_math::rq::{Ntt, Poly, PowerBasis, RepresentationTag};
 use fhe_traits::DeserializeWithContext;
@@ -74,14 +75,21 @@ pub fn try_polys_from_sensitive_bytes_vec(
 }
 
 pub fn calculate_error_size(
+    preset: BfvPreset,
     params: Arc<bfv::BfvParameters>,
     n: usize,
     num_ciphertexts: usize,
+    mult_depth: u32,
     lambda: Lambda,
 ) -> Result<BigUint> {
-    let config = SmudgingBoundCalculatorConfig::new(params, n, num_ciphertexts, lambda)?;
-    let calculator = SmudgingBoundCalculator::new(config);
-    Ok(calculator.calculate_sm_bound()?)
+    Ok(e3_fhe_params::calculate_smudging_bound(
+        preset,
+        params,
+        n,
+        num_ciphertexts,
+        mult_depth,
+        lambda,
+    )?)
 }
 
 pub fn stringify_poly<R: RepresentationTag>(name: &str, poly: &Poly<R>) -> String {

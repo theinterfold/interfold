@@ -23,6 +23,7 @@ num-bigint.workspace = true
 petname.workspace = true
 rand_chacha.workspace = true
 serde.workspace = true
+sha2.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
 
@@ -31,12 +32,13 @@ rand.workspace = true
 [dev-dependencies]
 alloy.workspace = true
 e3-committee-hash.workspace = true
-e3-polynomial.workspace = true
+e3-polynomial = { workspace = true, features = ["serde"] }
 e3-polynomial-fhe.workspace = true
 e3-zk-build.workspace = true
 e3-zk-config.workspace = true
 e3-zk-witness.workspace = true
 e3-zk-prover.workspace = true
+e3-zk-samples.workspace = true
 e3-test-support.workspace = true
 e3-bfv-test-support.workspace = true
 e3-fhe.workspace = true

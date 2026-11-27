@@ -87,6 +87,8 @@ pub fn zk_operation_name(request: &ZkRequest) -> &'static str {
         ZkRequest::DkgAggregation(_) => "zk_dkg_aggregation",
         ZkRequest::DecryptionAggregation(_) => "zk_decryption_aggregation",
         ZkRequest::SynchronizedDkg(_) => "zk_synchronized_dkg",
+        // TEMPORARY SHIM: the l-BFV proof requests are executed by the prover slice.
+        _ => "zk_lbfv_unsupported",
     }
 }
 
@@ -157,6 +159,11 @@ pub fn execute_zk_request(
                 request.e3_id,
             ))
         }
+        // TEMPORARY SHIM: the l-BFV proof requests are executed by the prover slice.
+        _ => Err(make_zk_error(
+            &request,
+            "l-BFV proof requests are not supported by this build".into(),
+        )),
     }
 }
 

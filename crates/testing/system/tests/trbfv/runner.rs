@@ -15,6 +15,7 @@
 
 use super::history::{
     aggregator_role_histories, key_roster, wait_for_event, wait_for_event_on_any, wait_until,
+    PublishedKey,
 };
 use super::nodes::{
     committee_node_indices, determine_committee, setup_score_sortition_environment, NodeFactory,
@@ -32,7 +33,7 @@ use e3_event_system::EventSystem;
 use e3_events::{
     prelude::*, AggregateConfig, AggregateId, BusHandle, CiphertextOutputPublished,
     CommitteeRequested, DkgFoldAttestationContextEstablished, E3Requested, E3id, EventSource,
-    InterfoldEvent, InterfoldEventData, PlaintextAggregated, Proof, PublicKeyAggregated, Seed,
+    InterfoldEvent, InterfoldEventData, PlaintextAggregated, Proof, Seed,
     DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::{encode_bfv_params, BfvParamSet};
@@ -114,7 +115,7 @@ pub struct Observations {
     pub timings: Timings,
     pub e3_id: E3id,
     pub params: Arc<BfvParameters>,
-    pub key: PublicKeyAggregated,
+    pub key: PublishedKey,
     /// The party ids of the honest committee the published key lists, in the key's order.
     pub roster: Vec<u64>,
     pub dkg_aggregator_proof: Proof,
@@ -308,9 +309,14 @@ impl Env {
         let participants = committee.n + calculate_buffer_size(committee.threshold, committee.n);
         let params = BfvParamSet::from(bfv_preset).build_arc();
         let error_size = calculate_error_size(
+            bfv_preset,
             params.clone(),
             committee.n,
             committee.threshold,
+            bfv_preset
+                .search_defaults()
+                .context("no search defaults for the run's preset")?
+                .mult_depth,
             bfv_preset.lambda()?,
         )?;
         let config = RunConfig {
@@ -379,7 +385,8 @@ impl Env {
             params,
             error_size: ArcBytes::from_bytes(&BigUint::to_bytes_be(&error_size)),
             seed: Seed(create_seed_from_u64(123)),
-            e3_id: E3id::new("0", CHAIN_ID),
+            // Nonzero: l-BFV binds the E3 ID into every proof domain and rejects 0.
+            e3_id: E3id::new("1", CHAIN_ID),
             nodes,
             factory,
             restarted: None,
@@ -508,10 +515,7 @@ async fn publish_e3_request(env: &Env) -> Result<u64> {
         ticket_price: U256::from(TICKET_PRICE),
         chain_id: CHAIN_ID,
     })?;
-    let params_profile = match env.config.preset {
-        Preset::Insecure => e3_fhe_params::BfvProfile::SsInsecure64,
-        Preset::Secure => e3_fhe_params::BfvProfile::SsSecure8192,
-    };
+    let params_profile = env.config.preset.profile();
     let committee_size =
         e3_committee::CiphernodesCommitteeSize::from_threshold(threshold_m, threshold_n)?;
     env.bus.publish_from_remote(
@@ -597,7 +601,7 @@ async fn inject_fault(env: &mut Env, request: &Request) -> Result<()> {
 async fn inject_decryption_fault(
     env: &mut Env,
     request: &Request,
-    key: &PublicKeyAggregated,
+    key: &PublishedKey,
 ) -> Result<()> {
     match env.scenario.fault {
         Fault::RestartDuringC6 { party_id } => {
@@ -794,22 +798,42 @@ async fn restart_party(
 
 // ---- Public key ----------------------------------------------------------------------------
 
-async fn await_public_key(env: &mut Env, request: &Request) -> Result<PublicKeyAggregated> {
+async fn await_public_key(env: &mut Env, request: &Request) -> Result<PublishedKey> {
     let waiting = Instant::now();
-    let key = wait_for_event(
-        &env.nodes,
-        0,
-        "PublicKeyAggregated",
-        env.pubkey_timeout,
-        |data| match data {
-            InterfoldEventData::PublicKeyAggregated(key) if key.e3_id == env.e3_id => {
-                Some(key.clone())
-            }
-            _ => None,
-        },
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("FAILURE in the public-key flow: {e}"))?;
+    let key = if env.config.preset.is_lbfv() {
+        let preset = env.config.preset.bfv_preset();
+        let published = wait_for_event(
+            &env.nodes,
+            0,
+            "LbfvPublicKeyAggregated",
+            env.pubkey_timeout,
+            |data| match data {
+                InterfoldEventData::LbfvPublicKeyAggregated(key) if key.e3_id == env.e3_id => {
+                    Some(key.clone())
+                }
+                _ => None,
+            },
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("FAILURE in the public-key flow: {e}"))?;
+        PublishedKey::from_lbfv(&published, preset)?
+    } else {
+        let published = wait_for_event(
+            &env.nodes,
+            0,
+            "PublicKeyAggregated",
+            env.pubkey_timeout,
+            |data| match data {
+                InterfoldEventData::PublicKeyAggregated(key) if key.e3_id == env.e3_id => {
+                    Some(key.clone())
+                }
+                _ => None,
+            },
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("FAILURE in the public-key flow: {e}"))?;
+        PublishedKey::from(&published)
+    };
     env.timings.shares_to_pubkey = waiting.elapsed();
     env.timings.request_to_pubkey = request.requested_at.elapsed();
     Ok(key)
@@ -817,21 +841,21 @@ async fn await_public_key(env: &mut Env, request: &Request) -> Result<PublicKeyA
 
 /// The final DKG proof the event carries. The registry observation the run records needs it, so a
 /// key without one stops the run; the assertions check the rest of the key.
-fn dkg_aggregator_proof(key: &PublicKeyAggregated) -> Result<Proof> {
+fn dkg_aggregator_proof(key: &PublishedKey) -> Result<Proof> {
     key.dkg_aggregator_proof
         .clone()
-        .context("PublicKeyAggregated must always carry a final DKG proof payload")
+        .context("the published key must always carry a final DKG proof payload")
 }
 
 /// The synthetic registry records the same confirmed observation as chain ingestion.
 async fn record_chain_observation(
     env: &Env,
     request: &Request,
-    key: &PublicKeyAggregated,
+    key: &PublishedKey,
     dkg_proof: &Proof,
 ) -> Result<()> {
     let observation = e3_evm::ICiphernodeRegistry::CommitteeProofPublished {
-        e3Id: U256::ZERO,
+        e3Id: U256::try_from(env.e3_id.clone())?,
         nodes: key.committee_addresses.clone(),
         pkCommitment: key.pk_commitment.into(),
         proof: e3_evm::encode_zk_proof(dkg_proof)?,
@@ -883,9 +907,9 @@ struct Decrypted {
 async fn encrypt_and_decrypt(
     env: &mut Env,
     request: &Request,
-    key: &PublicKeyAggregated,
+    key: &PublishedKey,
 ) -> Result<Decrypted> {
-    let pubkey = PublicKey::from_bytes(&key.pubkey, &env.params)?;
+    let pubkey = PublicKey::from_bytes(&key.encryption_key, &env.params)?;
     let (outputs, votes) = encrypt_votes(env, &pubkey);
     let (history, plaintext) = decrypt(env, request, key, outputs).await?;
     Ok(Decrypted {
@@ -915,7 +939,7 @@ fn encrypt_votes(env: &mut Env, pubkey: &PublicKey) -> (Vec<Arc<Ciphertext>>, Ve
 async fn decrypt(
     env: &mut Env,
     request: &Request,
-    key: &PublicKeyAggregated,
+    key: &PublishedKey,
     outputs: Vec<Arc<Ciphertext>>,
 ) -> Result<(CiphernodeHistory, PlaintextAggregated)> {
     let publishing = Instant::now();

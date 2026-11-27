@@ -9,44 +9,64 @@
 //! the expectation. A new outcome is a field of [`Expect`] and a check over it.
 
 use anyhow::{bail, Result};
-use e3_fhe_params::{BfvPreset, DEFAULT_BFV_PRESET};
+use e3_fhe_params::{BfvPreset, BfvProfile};
 use std::time::Duration;
 
 /// Votes each synthetic voter casts, so the number of tallies the decryption must return. SS has
 /// one committed noise set, so the run exercises one output rather than reuse it across tallies.
 pub const VOTES_PER_VOTER: usize = 1;
 
-/// Proof system and parameter family a run uses.
+/// Proof system and parameter family a run uses. The l-BFV presets run the l-BFV public-key path
+/// on the insecure or secure-16384 parameters; the others run trBFV.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Preset {
     Insecure,
     Secure,
+    InsecureLbfv,
+    Secure16384,
 }
 
 impl Preset {
-    /// The preset for a benchmark mode, which is `insecure` or `secure`.
+    /// The preset for a benchmark mode: `insecure`, `secure`, `insecure-lbfv` or `secure-16384`.
     pub fn from_mode(mode: &str) -> Result<Self> {
         match mode {
             "insecure" => Ok(Preset::Insecure),
             "secure" => Ok(Preset::Secure),
-            other => bail!("unsupported BENCHMARK_MODE {other:?}: expected `insecure` or `secure`"),
+            "insecure-lbfv" => Ok(Preset::InsecureLbfv),
+            "secure-16384" => Ok(Preset::Secure16384),
+            other => bail!(
+                "unsupported BENCHMARK_MODE {other:?}: expected `insecure`, `secure`, \
+                 `insecure-lbfv` or `secure-16384`"
+            ),
+        }
+    }
+
+    /// The request profile of the run.
+    pub fn profile(self) -> BfvProfile {
+        match self {
+            Preset::Insecure => BfvProfile::SsInsecure64,
+            Preset::Secure => BfvProfile::SsSecure8192,
+            Preset::InsecureLbfv => BfvProfile::SsInsecureLbfv,
+            Preset::Secure16384 => BfvProfile::SsSecure16384,
         }
     }
 
     pub fn bfv_preset(self) -> BfvPreset {
-        match self {
-            Preset::Insecure => DEFAULT_BFV_PRESET,
-            Preset::Secure => BfvPreset::SecureThreshold8192,
-        }
+        self.profile().threshold_preset()
+    }
+
+    /// Whether the run publishes its key through the l-BFV path.
+    pub fn is_lbfv(self) -> bool {
+        e3_fhe_params::supports_lbfv(self.bfv_preset())
     }
 
     /// Collection timeouts (encryption keys, threshold shares, decryption key shares) that the
     /// secure proofs need; insecure runs take the nodes' defaults or the caller's environment.
     pub(super) fn collection_timeouts_secs(self, small_committee: bool) -> Option<(u64, u64, u64)> {
         match (self, small_committee) {
-            (Preset::Insecure, _) => None,
-            (Preset::Secure, true) => Some((7_200, 46_000, 46_000)),
-            (Preset::Secure, false) => Some((1_800, 7_200, 7_200)),
+            (Preset::Insecure | Preset::InsecureLbfv, _) => None,
+            (Preset::Secure | Preset::Secure16384, true) => Some((7_200, 46_000, 46_000)),
+            (Preset::Secure | Preset::Secure16384, false) => Some((1_800, 7_200, 7_200)),
         }
     }
 
@@ -55,9 +75,9 @@ impl Preset {
     /// may override either.
     pub(super) fn flow_timeouts(self, small_committee: bool) -> (Duration, Duration) {
         let (pubkey, plaintext) = match (self, small_committee) {
-            (Preset::Insecure, _) => (5_000, 1_000),
-            (Preset::Secure, true) => (45_000, 6_000),
-            (Preset::Secure, false) => (15_000, 3_000),
+            (Preset::Insecure | Preset::InsecureLbfv, _) => (5_000, 1_000),
+            (Preset::Secure | Preset::Secure16384, true) => (45_000, 6_000),
+            (Preset::Secure | Preset::Secure16384, false) => (15_000, 3_000),
         };
         (Duration::from_secs(pubkey), Duration::from_secs(plaintext))
     }
@@ -170,6 +190,15 @@ impl Scenario {
             dkg_window: Some(Duration::from_secs(1200)),
             concurrent_jobs: 1,
             flow_timeouts: FlowTimeouts::default(),
+        }
+    }
+
+    /// Every party online on the l-BFV path of `preset`: the key is published as
+    /// `LbfvPublicKeyAggregated` and the plaintext decrypts as on trBFV.
+    pub fn lbfv(preset: Preset) -> Self {
+        Self {
+            preset,
+            ..Self::standby_node()
         }
     }
 

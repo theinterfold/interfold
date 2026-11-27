@@ -7,8 +7,13 @@
 //! Reading node histories and the published key: waiting for an outcome and scanning for faults.
 
 use crate::ciphernode_system::{CiphernodeHistory, CiphernodeSystem};
+use alloy::primitives::Address;
 use anyhow::{bail, Result};
-use e3_events::{prelude::*, E3id, InterfoldEvent, InterfoldEventData, PublicKeyAggregated};
+use e3_events::{
+    prelude::*, E3id, InterfoldEvent, InterfoldEventData, LbfvPublicKeyAggregated, Proof,
+    PublicKeyAggregated,
+};
+use e3_utils::utility_types::ArcBytes;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
@@ -42,6 +47,20 @@ pub fn collect_honest_run_faults(
                 faults.push(format!(
                     "{context}: ProofFailureAccusation accuser={} accused_party_id={} proof_type={:?}",
                     data.accuser, data.accused_party_id, data.proof_type
+                ));
+            }
+            InterfoldEventData::LbfvCommitmentConsistencyViolation(data)
+                if data.e3_id == *e3_id =>
+            {
+                faults.push(format!(
+                    "{context}: LbfvCommitmentConsistencyViolation accused_party_id={} proof_type={:?} proof_instance={}",
+                    data.accused_party_id, data.proof_type, data.proof_instance
+                ));
+            }
+            InterfoldEventData::LbfvProofFailureAccusation(data) if data.e3_id == *e3_id => {
+                faults.push(format!(
+                    "{context}: LbfvProofFailureAccusation accuser={} accused_party_id={} proof_type={:?} proof_instance={}",
+                    data.accuser, data.accused_party_id, data.proof_type, data.proof_instance
                 ));
             }
             InterfoldEventData::ProofVerificationFailed(data) if data.e3_id == *e3_id => {
@@ -194,8 +213,60 @@ pub async fn aggregator_role_histories(
     Ok(held)
 }
 
+/// The key a run published, from either protocol path: `PublicKeyAggregated` on trBFV and
+/// `LbfvPublicKeyAggregated` on l-BFV.
+#[derive(Clone)]
+pub struct PublishedKey {
+    /// The payload as published. On l-BFV it is the key envelope.
+    pub pubkey: ArcBytes,
+    /// The BFV public key that voters encrypt to.
+    pub encryption_key: ArcBytes,
+    pub node_count: usize,
+    pub committee_addresses: Vec<Address>,
+    pub honest_committee_addresses: Vec<Address>,
+    pub pk_commitment: [u8; 32],
+    pub dkg_aggregator_proof: Option<Proof>,
+    pub dkg_attestation_bundle: Option<ArcBytes>,
+}
+
+impl From<&PublicKeyAggregated> for PublishedKey {
+    fn from(key: &PublicKeyAggregated) -> Self {
+        Self {
+            pubkey: key.pubkey.clone(),
+            encryption_key: key.pubkey.clone(),
+            node_count: key.nodes.len(),
+            committee_addresses: key.committee_addresses.clone(),
+            honest_committee_addresses: key.honest_committee_addresses.clone(),
+            pk_commitment: key.pk_commitment,
+            dkg_aggregator_proof: key.dkg_aggregator_proof.clone(),
+            dkg_attestation_bundle: key.dkg_attestation_bundle.clone(),
+        }
+    }
+}
+
+impl PublishedKey {
+    /// The key an l-BFV run published, with the encryption key that its envelope carries.
+    pub fn from_lbfv(
+        key: &LbfvPublicKeyAggregated,
+        preset: e3_fhe_params::BfvPreset,
+    ) -> Result<Self> {
+        let (_, encryption_key) =
+            e3_bfv_client::validate_lbfv_key_envelope(&key.pubkey, key.pk_commitment, preset)?;
+        Ok(Self {
+            pubkey: key.pubkey.clone(),
+            encryption_key: ArcBytes::from_bytes(&encryption_key),
+            node_count: key.nodes.len(),
+            committee_addresses: key.committee_addresses.clone(),
+            honest_committee_addresses: key.honest_committee_addresses.clone(),
+            pk_commitment: key.pk_commitment,
+            dkg_aggregator_proof: Some(key.dkg_aggregator_v2_proof.clone()),
+            dkg_attestation_bundle: key.dkg_attestation_bundle.clone(),
+        })
+    }
+}
+
 /// The party ids of the honest committee the published key lists, in the key's order.
-pub fn key_roster(key: &PublicKeyAggregated) -> Vec<u64> {
+pub fn key_roster(key: &PublishedKey) -> Vec<u64> {
     key.honest_committee_addresses
         .iter()
         .map(|address| {

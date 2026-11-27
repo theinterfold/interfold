@@ -20,7 +20,11 @@ impl Handler<InterfoldEvent> for ShareVerificationActor {
                 data.sort_by_address();
                 self.store_committee(data.e3_id, &data.committee);
             }
-            InterfoldEventData::ShareVerificationDispatched(data) => {
+            InterfoldEventData::ShareVerificationDispatched(data) => self.notify_sync(
+                ctx,
+                TypedEvent::new(LbfvShareVerificationDispatched::from(data), ec),
+            ),
+            InterfoldEventData::LbfvShareVerificationDispatched(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::ComputeResponse(data) => {
@@ -44,12 +48,12 @@ impl Handler<InterfoldEvent> for ShareVerificationActor {
     }
 }
 
-impl Handler<TypedEvent<ShareVerificationDispatched>> for ShareVerificationActor {
+impl Handler<TypedEvent<LbfvShareVerificationDispatched>> for ShareVerificationActor {
     type Result = ();
 
     fn handle(
         &mut self,
-        msg: TypedEvent<ShareVerificationDispatched>,
+        msg: TypedEvent<LbfvShareVerificationDispatched>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         self.handle_share_verification_dispatched(msg)

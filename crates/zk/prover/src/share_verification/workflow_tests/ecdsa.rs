@@ -17,6 +17,7 @@ fn ecdsa_passes_for_well_formed_proof() {
         &e3.to_string(),
         "C1",
         Some(s.address()),
+        e3_fhe_params::BfvPreset::InsecureThreshold64,
     );
     assert!(res.passed);
     assert!(res.failed_payload.is_none());
@@ -26,8 +27,14 @@ fn ecdsa_passes_for_well_formed_proof() {
 fn ecdsa_fails_on_wrong_e3_id() {
     let s = signer();
     let p = signed_pk(&s, &e3(), false);
-    let res =
-        ShareVerifier::ecdsa_validate_signed_proofs(7, &[p], "999/0", "C1", Some(s.address()));
+    let res = ShareVerifier::ecdsa_validate_signed_proofs(
+        7,
+        &[p],
+        "999/0",
+        "C1",
+        Some(s.address()),
+        e3_fhe_params::BfvPreset::InsecureThreshold64,
+    );
     assert!(!res.passed);
     assert!(res.failed_payload.is_none());
 }
@@ -43,6 +50,7 @@ fn ecdsa_fails_on_circuit_mismatch() {
         &e3.to_string(),
         "C1",
         Some(s.address()),
+        e3_fhe_params::BfvPreset::InsecureThreshold64,
     );
     assert!(!res.passed);
 }
@@ -60,6 +68,7 @@ fn ecdsa_fails_on_inconsistent_signer() {
         &e3.to_string(),
         "C1",
         Some(s1.address()),
+        e3_fhe_params::BfvPreset::InsecureThreshold64,
     );
     assert!(!res.passed);
 }
@@ -77,6 +86,7 @@ fn ecdsa_fails_when_signer_does_not_own_party_slot() {
         &e3.to_string(),
         "C1",
         Some(slot_owner.address()),
+        e3_fhe_params::BfvPreset::InsecureThreshold64,
     );
 
     assert!(!result.passed);
@@ -93,13 +103,20 @@ fn ecdsa_fails_for_empty_bundle_or_missing_party_slot() {
         &e3.to_string(),
         "C1",
         Some(owner.address()),
+        e3_fhe_params::BfvPreset::InsecureThreshold64,
     );
     assert!(!empty.passed);
     assert!(empty.failed_payload.is_none());
 
     let proof = signed_pk(&owner, &e3, false);
-    let missing =
-        ShareVerifier::ecdsa_validate_signed_proofs(3, &[proof], &e3.to_string(), "C1", None);
+    let missing = ShareVerifier::ecdsa_validate_signed_proofs(
+        3,
+        &[proof],
+        &e3.to_string(),
+        "C1",
+        None,
+        e3_fhe_params::BfvPreset::InsecureThreshold64,
+    );
     assert!(!missing.passed);
 }
 
@@ -129,12 +146,13 @@ fn prepare_rejects_one_signer_relabelled_across_other_party_slots() {
 
     let outcome = ShareVerifier::validate_and_prepare(
         &parties,
-        &e3.to_string(),
+        &e3,
         &VerificationKind::PkGenerationProofs,
         "C1",
         Some(&committee),
         BfvProfile::SsInsecure64,
         CiphernodesCommitteeSize::Minimum,
+        None,
     );
 
     assert_eq!(outcome.ecdsa_passed_parties.len(), 1);

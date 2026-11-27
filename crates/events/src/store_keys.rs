@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{AggregateId, E3id};
+use alloy::primitives::B256;
 
 pub struct StoreKeys;
 
@@ -15,6 +16,10 @@ impl StoreKeys {
 
     pub fn threshold_keyshare_recovery(e3_id: &E3id) -> String {
         format!("{}{e3_id}", Self::THRESHOLD_KEYSHARE_RECOVERY_PREFIX)
+    }
+
+    pub fn threshold_keyshare_lbfv_generation(e3_id: &E3id) -> String {
+        format!("//threshold_keyshare_lbfv_generation/v1/{e3_id}")
     }
 
     pub fn threshold_keyshare_recovery_payloads(e3_id: &E3id) -> String {
@@ -61,6 +66,25 @@ impl StoreKeys {
         format!("//publickey_recovery/v1/{e3_id}")
     }
 
+    pub fn publickey_lbfv_collection(e3_id: &E3id) -> String {
+        format!("//publickey_lbfv_collection/v1/{e3_id}")
+    }
+
+    pub fn publickey_lbfv_document(e3_id: &E3id, sha256: &B256) -> String {
+        format!(
+            "//publickey_lbfv_document/v1/{e3_id}/{}",
+            hex::encode(sha256)
+        )
+    }
+
+    pub fn publickey_lbfv_aggregation(e3_id: &E3id) -> String {
+        format!("//publickey_lbfv_aggregation/v1/{e3_id}")
+    }
+
+    pub fn publickey_lbfv_publication(e3_id: &E3id) -> String {
+        format!("//publickey_lbfv_publication/v1/{e3_id}")
+    }
+
     pub fn fhe(e3_id: &E3id) -> String {
         format!("//fhe/{e3_id}")
     }
@@ -102,9 +126,19 @@ impl StoreKeys {
         format!("//commitment_consistency/v1/{e3_id}")
     }
 
+    /// The commitment-consistency state of an l-BFV E3, which names each proof by its row.
+    pub fn commitment_consistency_lbfv(e3_id: &E3id) -> String {
+        format!("//commitment_consistency_lbfv/v1/{e3_id}")
+    }
+
     /// Durable vote state of the per-E3 accusation manager.
     pub fn accusation_votes(e3_id: &E3id) -> String {
         format!("//accusation_votes/v1/{e3_id}")
+    }
+
+    /// The accusation vote state of an l-BFV E3, which names each proof by its row.
+    pub fn accusation_votes_lbfv(e3_id: &E3id) -> String {
+        format!("//accusation_votes_lbfv/v1/{e3_id}")
     }
 
     pub fn router() -> String {
@@ -149,6 +183,15 @@ impl StoreKeys {
 
     pub fn slashing_writer_recovery(chain_id: u64) -> String {
         format!("{}{chain_id}/recovery/v1", Self::SLASHING_WRITER_PREFIX)
+    }
+
+    /// Pending slash reports of the l-BFV path on one chain, which name each proof by its row.
+    /// It is under `SLASHING_WRITER_PREFIX` so that the reset and purge guards see it.
+    pub fn slashing_writer_lbfv_recovery(chain_id: u64) -> String {
+        format!(
+            "{}{chain_id}/lbfv_recovery/v1",
+            Self::SLASHING_WRITER_PREFIX
+        )
     }
 
     /// When the slash writer of a chain first recorded each slash intent. It is outside
@@ -209,5 +252,36 @@ impl StoreKeys {
 
     pub fn aggregate_ts(aggregate_id: AggregateId) -> String {
         format!("//aggregate_ts/{}", aggregate_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lbfv_generation_key_keeps_its_v1_namespace() {
+        assert_eq!(
+            StoreKeys::threshold_keyshare_lbfv_generation(&E3id::new("7", 31_337)),
+            "//threshold_keyshare_lbfv_generation/v1/31337:7"
+        );
+    }
+
+    #[test]
+    fn lbfv_collection_keys_keep_their_v1_namespaces() {
+        let e3_id = E3id::new("7", 31_337);
+        let sha256 = B256::repeat_byte(0xab);
+        assert_eq!(
+            StoreKeys::publickey_lbfv_collection(&e3_id),
+            "//publickey_lbfv_collection/v1/31337:7"
+        );
+        assert_eq!(
+            StoreKeys::publickey_lbfv_document(&e3_id, &sha256),
+            concat!(
+                "//publickey_lbfv_document/v1/31337:7/",
+                "abababababababababababababababab",
+                "abababababababababababababababab"
+            )
+        );
     }
 }

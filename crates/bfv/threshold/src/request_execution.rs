@@ -5,13 +5,18 @@
 use crate::{
     calculate_decryption_key::calculate_decryption_key,
     calculate_decryption_share::calculate_decryption_share,
-    calculate_threshold_decryption::calculate_threshold_decryption, gen_esi_sss::gen_esi_sss,
-    gen_pk_share_and_sk_sss::gen_pk_share_and_sk_sss, TrBFVError, TrBFVFailure, TrBFVRequest,
-    TrBFVResponse,
+    calculate_threshold_decryption::calculate_threshold_decryption,
+    gen_esi_sss::gen_esi_sss,
+    gen_lbfv_key_shares::gen_lbfv_key_shares,
+    gen_pk_share_and_sk_sss::{gen_lbfv_pk_share_and_sk_sss, gen_pk_share_and_sk_sss},
+    TrBFVError, TrBFVFailure, TrBFVRequest, TrBFVResponse,
 };
-use e3_crypto::Cipher;
+use e3_crypto::{Cipher, SensitiveBytes};
 use e3_utils::SharedRng;
+use rand::SeedableRng;
+use rand_chacha::ChaCha20Rng;
 use tracing::{error, warn};
+use zeroize::Zeroize;
 
 impl TrBFVRequest {
     /// Stable diagnostic operation label, independent of transport or worker implementation.
@@ -22,6 +27,8 @@ impl TrBFVRequest {
             Self::CalculateDecryptionKey(_) => "calculate_decryption_key",
             Self::CalculateDecryptionShare(_) => "calculate_decryption_share",
             Self::CalculateThresholdDecryption(_) => "calculate_threshold_decryption",
+            Self::GenLbfvKeyShares(_) => "gen_lbfv_key_shares",
+            Self::GenLbfvPkShareAndSkSss(_) => "gen_pk_share_and_sk_sss",
         }
     }
 
@@ -36,12 +43,16 @@ impl TrBFVRequest {
             Self::CalculateThresholdDecryption(_) => {
                 TrBFVError::CalculateThresholdDecryption(failure)
             }
+            Self::GenLbfvKeyShares(_) => TrBFVError::GenLbfvKeyShares(failure),
+            Self::GenLbfvPkShareAndSkSss(_) => TrBFVError::GenPkShareAndSkSss(failure),
         }
     }
 
     /// Execute synchronously using caller-owned randomness and local secret encryption.
     /// Only randomized operations lock the RNG. The caller must provide bounded execution,
     /// admission and recovery, and reuse successful randomized outputs rather than rerun them.
+    /// l-BFV key-share generation instead draws from its request's encrypted seed, so a replayed
+    /// request regenerates the same shares.
     pub fn execute(&self, rng: &SharedRng, cipher: &Cipher) -> Result<TrBFVResponse, TrBFVError> {
         let lock_rng = || {
             rng.lock().unwrap_or_else(|poisoned| {
@@ -60,6 +71,16 @@ impl TrBFVRequest {
                 gen_pk_share_and_sk_sss(&mut *rng, cipher, req.clone())
                     .map(TrBFVResponse::GenPkShareAndSkSss)
             }
+            Self::GenLbfvPkShareAndSkSss(req) => {
+                if let Some(sync) = &req.request.synchronized {
+                    sync.profile
+                        .ensure_admission_enabled()
+                        .map_err(|error| self.failure(TrBFVFailure::from(error.to_string())))?;
+                }
+                let mut rng = lock_rng();
+                gen_lbfv_pk_share_and_sk_sss(&mut *rng, cipher, req.clone())
+                    .map(TrBFVResponse::GenPkShareAndSkSss)
+            }
             Self::GenEsiSss(req) => {
                 let mut rng = lock_rng();
                 gen_esi_sss(&mut *rng, cipher, req.clone()).map(TrBFVResponse::GenEsiSss)
@@ -71,16 +92,37 @@ impl TrBFVRequest {
                 .map(TrBFVResponse::CalculateDecryptionShare),
             Self::CalculateThresholdDecryption(req) => calculate_threshold_decryption(req.clone())
                 .map(TrBFVResponse::CalculateThresholdDecryption),
+            Self::GenLbfvKeyShares(req) => lbfv_generation_rng(cipher, &req.generation_seed)
+                .and_then(|mut rng| gen_lbfv_key_shares(&mut rng, cipher, req.clone()))
+                .map(TrBFVResponse::GenLbfvKeyShares),
         };
         result.map_err(|error| self.failure(TrBFVFailure::from_error(&error)))
     }
+}
+
+/// The per-request generator for l-BFV key shares, seeded from the request's encrypted seed.
+fn lbfv_generation_rng(
+    cipher: &Cipher,
+    encrypted_seed: &SensitiveBytes,
+) -> anyhow::Result<ChaCha20Rng> {
+    let seed_bytes = encrypted_seed.access(cipher)?;
+    anyhow::ensure!(
+        seed_bytes.len() == 32,
+        "l-BFV generation seed must contain exactly 32 bytes"
+    );
+    let mut seed = [0_u8; 32];
+    seed.copy_from_slice(&seed_bytes);
+    let rng = ChaCha20Rng::from_seed(seed);
+    seed.zeroize();
+    Ok(rng)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        gen_esi_sss::GenEsiSssRequest, gen_pk_share_and_sk_sss::GenPkShareAndSkSssRequest,
+        gen_esi_sss::GenEsiSssRequest,
+        gen_pk_share_and_sk_sss::{GenLbfvPkShareAndSkSssRequest, GenPkShareAndSkSssRequest},
         TrBFVConfig,
     };
     use e3_crypto::SensitiveBytes;
@@ -138,6 +180,111 @@ mod tests {
             .decrypt(&cipher)
             .unwrap();
         assert_eq!(shares.moduli_data().len(), params.moduli().len());
+    }
+
+    /// Generates one DKG share on a fixed generator and returns its decrypted smudging noise.
+    async fn smudging_noise(
+        preset: BfvPreset,
+        request: impl FnOnce(GenPkShareAndSkSssRequest) -> TrBFVRequest,
+    ) -> Vec<u8> {
+        let cipher = Cipher::from_password("smudging-noise-model-test")
+            .await
+            .unwrap();
+        let params = BfvParamSet::from(preset).build_arc();
+        let crp = create_deterministic_crp_from_default_seed(&params);
+        let rng: SharedRng = Arc::new(Mutex::new(rand_chacha::ChaCha20Rng::seed_from_u64(11)));
+        let request = request(GenPkShareAndSkSssRequest {
+            trbfv_config: TrBFVConfig::new(ArcBytes::from_bytes(&encode_bfv_params(&params)), 3, 1),
+            crp: ArcBytes::from_bytes(&crp.to_bytes()),
+            lambda: preset.lambda_config(),
+            num_ciphertexts: 1,
+            synchronized: None,
+        });
+        let TrBFVResponse::GenPkShareAndSkSss(material) = request.execute(&rng, &cipher).unwrap()
+        else {
+            panic!("wrong response variant")
+        };
+        material.e_sm_raw.unwrap().access(&cipher).unwrap().to_vec()
+    }
+
+    /// The trBFV request has no depth and no preset: it is the summation-only bound with the BFV
+    /// model, which is what an l-BFV request naming depth 0 and a BFV preset also computes. The
+    /// l-BFV request's own depth and noise model change the noise.
+    #[tokio::test]
+    async fn the_trbfv_request_keeps_its_summation_only_bound() {
+        let trbfv = BfvPreset::InsecureThreshold64;
+        let main = smudging_noise(trbfv, TrBFVRequest::GenPkShareAndSkSss).await;
+        let explicit = smudging_noise(trbfv, |request| {
+            TrBFVRequest::GenLbfvPkShareAndSkSss(GenLbfvPkShareAndSkSssRequest {
+                request,
+                mult_depth: 0,
+                preset: trbfv,
+            })
+        })
+        .await;
+        assert_eq!(main, explicit);
+
+        let lbfv = BfvPreset::InsecureThresholdLbfv;
+        let defaults = lbfv.search_defaults().unwrap();
+        let summation = smudging_noise(lbfv, TrBFVRequest::GenPkShareAndSkSss).await;
+        let lbfv_bound = smudging_noise(lbfv, |request| {
+            TrBFVRequest::GenLbfvPkShareAndSkSss(GenLbfvPkShareAndSkSssRequest {
+                request,
+                mult_depth: defaults.mult_depth,
+                preset: lbfv,
+            })
+        })
+        .await;
+        assert_ne!(summation, lbfv_bound);
+    }
+
+    /// The trBFV request's persisted layout is the five fields of main; the l-BFV request is an
+    /// appended variant, and both report main's operation name and error.
+    #[test]
+    fn the_trbfv_request_layout_is_mains() {
+        let request = GenPkShareAndSkSssRequest {
+            trbfv_config: TrBFVConfig::new(ArcBytes::default(), 3, 1),
+            crp: ArcBytes::default(),
+            lambda: BfvPreset::InsecureThreshold64.lambda_config(),
+            num_ciphertexts: 1,
+            synchronized: None,
+        };
+        let main = bincode::serialize(&request).unwrap();
+        let wrapped =
+            bincode::serialize(&TrBFVRequest::GenPkShareAndSkSss(request.clone())).unwrap();
+        assert_eq!(wrapped[..4], 1_u32.to_le_bytes());
+        assert_eq!(wrapped[4..], main[..]);
+
+        let lbfv = TrBFVRequest::GenLbfvPkShareAndSkSss(GenLbfvPkShareAndSkSssRequest {
+            request,
+            mult_depth: 3,
+            preset: BfvPreset::InsecureThresholdLbfv,
+        });
+        assert_eq!(bincode::serialize(&lbfv).unwrap()[..4], 6_u32.to_le_bytes());
+        assert_eq!(lbfv.operation_name(), "gen_pk_share_and_sk_sss");
+        assert!(matches!(
+            lbfv.failure(TrBFVFailure::from("x".to_string())),
+            TrBFVError::GenPkShareAndSkSss(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn lbfv_generation_rng_uses_the_encrypted_request_seed() {
+        use rand::Rng;
+
+        let cipher = Cipher::from_password("lbfv-generation-seed-test")
+            .await
+            .unwrap();
+        let seed = SensitiveBytes::new([42; 32], &cipher).unwrap();
+        let mut first = lbfv_generation_rng(&cipher, &seed).unwrap();
+        let mut second = lbfv_generation_rng(&cipher, &seed).unwrap();
+        let first_bytes: [u8; 64] = first.random();
+        let second_bytes: [u8; 64] = second.random();
+
+        assert_eq!(first_bytes, second_bytes);
+        assert!(
+            lbfv_generation_rng(&cipher, &SensitiveBytes::new([1; 31], &cipher).unwrap()).is_err()
+        );
     }
 
     #[test]

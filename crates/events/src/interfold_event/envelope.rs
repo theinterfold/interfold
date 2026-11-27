@@ -235,11 +235,12 @@ impl<S: SeqState> Event for InterfoldEvent<S> {
                 self.ctx.block(),
                 self.ctx.ts(),
             )),
-            // Equal C1, C2/C3 or C6 verdicts can belong to different batches: a share batch grows,
-            // and C1 rosters and C6 batches are replaced. An error's ID is its payload, so the same
-            // failure of two different events has one ID. The cause tells such occurrences apart
-            // without changing persisted or network event payloads; a repeat of one occurrence
-            // stays one delivery.
+            // Equal C1, C2/C3, C6 or l-BFV generation verdicts can belong to different batches or
+            // re-dispatches: a share batch grows, C1 rosters and C6 batches are replaced, and an
+            // identical l-BFV generation request may be dispatched again deliberately. An error's
+            // ID is its payload, so the same failure of two different events has one ID. The cause
+            // tells such occurrences apart without changing persisted or network event payloads; a
+            // repeat of one occurrence stays one delivery.
             EventSource::Local
                 if matches!(
                     self.payload,
@@ -248,7 +249,12 @@ impl<S: SeqState> Event for InterfoldEvent<S> {
                             | VerificationKind::ShareProofs
                             | VerificationKind::ThresholdDecryptionProofs,
                         ..
-                    }) | InterfoldEventData::InterfoldError(_)
+                    }) | InterfoldEventData::LbfvShareVerificationComplete(
+                        LbfvShareVerificationComplete {
+                            kind: VerificationKind::LbfvGenerationProofs,
+                            ..
+                        }
+                    ) | InterfoldEventData::InterfoldError(_)
                 ) =>
             {
                 EventId::hash((self.ctx.id(), self.ctx.causation_id()))

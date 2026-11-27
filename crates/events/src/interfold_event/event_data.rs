@@ -164,6 +164,19 @@ interfold_event_data!(
     SynchronizedRecipientProofReady,
     SynchronizedDkgConsentPublished,
     SynchronizedDkgPublicationReady,
+    // l-BFV variants are appended after main's last variant so main's discriminants are unchanged.
+    LbfvKeyShareDocumentCreated,
+    LbfvKeyShareDocumentReceived,
+    LbfvKeyShareManifestPublished,
+    LbfvKeyShareDocumentFetchRequested,
+    LbfvKeyShareDocumentFetchFailed,
+    LbfvPublicKeyAggregated,
+    LbfvProofFailureAccusation,
+    LbfvAccusationQuorumReached,
+    LbfvCommitmentConsistencyCheckRequested,
+    LbfvCommitmentConsistencyViolation,
+    LbfvShareVerificationDispatched,
+    LbfvShareVerificationComplete,
 );
 
 impl fmt::Display for EventType {
@@ -207,8 +220,11 @@ impl InterfoldEventData {
                 | InterfoldEventData::DKGRecursiveAggregationComplete(_)
                 | InterfoldEventData::KeyshareCreated(_)
                 | InterfoldEventData::PublicKeyAggregated(_)
+                | InterfoldEventData::LbfvPublicKeyAggregated(_)
                 | InterfoldEventData::ProofFailureAccusation(_)
+                | InterfoldEventData::LbfvProofFailureAccusation(_)
                 | InterfoldEventData::AccusationVote(_)
+                | InterfoldEventData::LbfvKeyShareManifestPublished(_)
         )
     }
 
@@ -228,6 +244,7 @@ impl InterfoldEventData {
             InterfoldEventData::PublishDocumentRequested(ref data) => Some(data.meta.e3_id.clone()),
             InterfoldEventData::DocumentReceived(ref data) => Some(data.meta.e3_id.clone()),
             InterfoldEventData::PublicKeyAggregated(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::LbfvPublicKeyAggregated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CiphertextOutputPublished(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionKeyShared(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionshareCreated(ref data) => Some(data.e3_id.clone()),
@@ -316,6 +333,31 @@ impl InterfoldEventData {
             InterfoldEventData::CiphertextOutputReferencePublished(ref data) => {
                 Some(data.e3_id.clone())
             }
+            InterfoldEventData::LbfvKeyShareDocumentCreated(ref data) => Some(data.e3_id().clone()),
+            InterfoldEventData::LbfvKeyShareDocumentReceived(ref data) => {
+                Some(data.e3_id().clone())
+            }
+            InterfoldEventData::LbfvKeyShareManifestPublished(ref data) => {
+                Some(data.e3_id().clone())
+            }
+            InterfoldEventData::LbfvKeyShareDocumentFetchRequested(ref data) => {
+                Some(data.e3_id().clone())
+            }
+            InterfoldEventData::LbfvKeyShareDocumentFetchFailed(ref data) => {
+                Some(data.e3_id().clone())
+            }
+            InterfoldEventData::LbfvProofFailureAccusation(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::LbfvAccusationQuorumReached(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::LbfvCommitmentConsistencyCheckRequested(ref data) => {
+                Some(data.e3_id.clone())
+            }
+            InterfoldEventData::LbfvCommitmentConsistencyViolation(ref data) => {
+                Some(data.e3_id.clone())
+            }
+            InterfoldEventData::LbfvShareVerificationDispatched(ref data) => {
+                Some(data.e3_id.clone())
+            }
+            InterfoldEventData::LbfvShareVerificationComplete(ref data) => Some(data.e3_id.clone()),
             // The failed request keeps the E3 that the work belonged to. Without this arm the
             // error logs for a failed computation have an empty `e3_id` field.
             InterfoldEventData::ComputeRequestError(ref data) => Some(data.request().e3_id.clone()),

@@ -189,6 +189,7 @@ impl NodeProofAggregator {
         self.fold_correlation
             .retain(|_, pending_id| pending_id != e3_id);
         self.pending_fold_proofs.remove(e3_id);
+        self.lbfv_fold.remove(e3_id);
         let Some(entry) = self.recovery_index.entries.remove(e3_id) else {
             return;
         };
