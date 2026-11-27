@@ -12,6 +12,7 @@ alloy = { workspace = true }
 actix = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+e3-ciphernode-config = { workspace = true }
 e3-data = { workspace = true }
 e3-events = { workspace = true }
 e3-fhe = { workspace = true }
@@ -31,6 +32,7 @@ e3-utils = { workspace = true }
 e3-task-pool.workspace = true
 e3-zk-prover = { workspace = true }
 serde = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

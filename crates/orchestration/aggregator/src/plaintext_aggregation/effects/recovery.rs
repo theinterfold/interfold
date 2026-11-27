@@ -98,6 +98,7 @@ impl ThresholdPlaintextAggregator {
                     &recovery.honest_c6_proofs,
                     &state.plaintext,
                     state.threshold_m as usize + 1,
+                    self.params_profile.threshold_preset(),
                 )
             }) {
                 return Ok(());

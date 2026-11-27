@@ -146,6 +146,7 @@ impl CiphernodeBuilder {
                 storage.seq_eventstore.clone(),
                 canonical_keys.clone(),
                 interfold_addresses,
+                addr.parse()?,
             ),
         );
 

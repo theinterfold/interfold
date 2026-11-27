@@ -171,6 +171,11 @@ async fn published_key_keeps_decryption(active: bool, restart: bool) -> Result<(
                         .publickey_recovery(&e3_id)
                         .load()
                         .await?,
+                    lbfv_collection: None,
+                    repositories: e3_data::Repositories::in_mem(),
+                    local_party_id: 0,
+                    lbfv_aggregation: None,
+                    lbfv_publication: None,
                     initial_is_aggregator: active,
                     initial_stage: E3Stage::CommitteeFinalized,
                     effects_enabled: true,
@@ -218,6 +223,7 @@ async fn published_key_keeps_decryption(active: bool, restart: bool) -> Result<(
                     history_reader(&[])?,
                     Default::default(),
                     Default::default(),
+                    alloy::primitives::Address::ZERO,
                 )
                 .hydrate(&mut ctx, &snapshot)
                 .await?;

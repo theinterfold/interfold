@@ -58,7 +58,8 @@ pub use state::{
 pub(crate) use transitions::{HonestSelection, PublicKeyAggregation};
 pub(crate) use validation::{
     c5_proof_matches_keyshares, check_c1_keyshare_commitments, committee_h_for,
-    extract_pk_commitment, verify_dkg_fold_attestation,
+    expected_node_fold_circuit, extract_lbfv_key_envelope_commitment, extract_pk_commitment,
+    verify_dkg_fold_attestation,
 };
 
 #[cfg(test)]

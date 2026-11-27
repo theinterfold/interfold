@@ -134,6 +134,9 @@ impl PublicKeyAggregator {
         no_proof_parties: Vec<u64>,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
+        if self.is_lbfv() {
+            return Ok(());
+        }
         self.mark_started_as_aggregator(&ec)?;
         // Warn here, once per dispatch: matching a verdict also plans the request.
         for party_id in &no_proof_parties {
