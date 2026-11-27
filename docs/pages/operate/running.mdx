@@ -515,10 +515,11 @@ interfold config check
 ```
 
 The command downloads `manifest.json` from the latest GitHub release and compares each chain entry.
-Example output for a current Sepolia entry:
+Until the next release, check Sepolia against the manifest on `main` (see the note below). Example
+output for a current Sepolia entry:
 
 ```text
-Deployment manifest: release v0.20.0
+Deployment manifest: https://raw.githubusercontent.com/theinterfold/interfold/main/deployments/manifest.json
 sepolia: up to date
   note  sepolia is a mock deployment - proofs are accepted without being verified
 ```

@@ -156,11 +156,9 @@ decryption, and DKG verifiers are real. The ciphertext verifier and CRISP use
 proofs. CRISP uses `MockCrispDataAvailabilityVerifier` because Avail Turing is down. `MockUSDC` is
 the fee token. Anyone can mint it.
 
-<Callout type='warning'>
-  E3 requests on Sepolia are paused. `requestsPaused()` on the `Interfold` contract returns `true`,
-  and `request` reverts with `RequestsPaused`. The owner of the Interfold contract unpauses requests
-  after operators that run the 0.19.0-test.3 release (`protocol_version` 8, `node_generation` 2)
-  register.
+<Callout type='info'>
+  E3 requests on Sepolia are open. Nodes on Sepolia must run the 0.20.0 release (`protocol_version`
+  10, `node_generation` 2). Earlier releases cannot join committees.
 </Callout>
 
 ### Sepolia contracts
