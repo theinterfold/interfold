@@ -217,6 +217,7 @@ impl PublicKeyAggregator {
                         &self.e3_id,
                         msg.party_id,
                         proof,
+                        expected_node_fold_circuit(self.params_profile.threshold_preset()),
                         attestation,
                         expected_context,
                         expected_node,

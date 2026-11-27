@@ -3568,6 +3568,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "e3-bfv-client",
+ "e3-ciphernode-config",
  "e3-committee",
  "e3-committee-hash",
  "e3-data",

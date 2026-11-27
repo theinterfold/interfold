@@ -64,6 +64,7 @@ impl ThresholdPlaintextAggregator {
                 .unwrap_or_default(),
             &state.plaintext,
             state.threshold_m as usize + 1,
+            self.params_profile.threshold_preset(),
         ) {
             warn!("Ignoring C7 proofs for a different decryption batch");
             return self.dispatch_c7_proof_request(
@@ -112,6 +113,7 @@ impl ThresholdPlaintextAggregator {
         plaintext: &[ArcBytes],
         threshold_m: u64,
     ) -> Option<TypedEvent<AggregationProofSigned>> {
+        let preset = self.params_profile.threshold_preset();
         let honest_c6 = self
             .pending
             .honest_c6_proofs_for_agg
@@ -126,7 +128,13 @@ impl ThresholdPlaintextAggregator {
                     .iter()
                     .map(|sp| sp.payload.proof.clone())
                     .collect();
-                c7_proofs_match_batch(&proofs, honest_c6, plaintext, threshold_m as usize + 1)
+                c7_proofs_match_batch(
+                    &proofs,
+                    honest_c6,
+                    plaintext,
+                    threshold_m as usize + 1,
+                    preset,
+                )
             })
     }
 

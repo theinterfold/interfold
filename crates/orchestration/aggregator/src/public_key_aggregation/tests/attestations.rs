@@ -68,6 +68,11 @@ async fn c1_result_waits_for_replayed_inputs() -> Result<()> {
             committee_size: CiphernodesCommitteeSize::Minimum,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
@@ -246,6 +251,11 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: e3_data::Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
@@ -256,6 +266,11 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
     let dishonest: BTreeSet<u64> = (circuit_h as u64..threshold_n as u64).collect();
     let verified = c1_verified(&aggregator, dishonest);
     aggregator.handle_c1_verification_complete(verified)?;
+
+    assert!(matches!(
+        aggregator.state.get(),
+        Some(PublicKeyAggregatorState::GeneratingC5Proof { .. })
+    ));
 
     let event = next_event(&history).await?;
     assert!(matches!(
@@ -299,6 +314,11 @@ async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Resul
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: e3_data::Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,

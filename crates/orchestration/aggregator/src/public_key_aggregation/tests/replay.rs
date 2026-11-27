@@ -169,6 +169,7 @@ async fn replay_selection() -> Result<ReplayedAggregator> {
         history_reader(&[])?,
         Default::default(),
         Default::default(),
+        alloy::primitives::Address::ZERO,
     )
     .on_event(
         &mut ctx,

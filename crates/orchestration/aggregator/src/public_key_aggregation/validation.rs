@@ -21,11 +21,23 @@ pub(crate) fn committee_h_for(threshold_m: usize, threshold_n: usize) -> Result<
 /// Must stay in lock-step with the Noir circuit's output ABI declaration.
 const C5_PK_COMMITMENT_FIELD: &str = "commitment";
 
+/// The node-fold circuit a peer's DKG fold must carry for an E3 on `preset`: the V2 fold on the
+/// l-BFV path and `NodeFold` on the trBFV path. `extract_node_fold_agg_commits` accepts any
+/// node-fold circuit by the proof's own `circuit` field, so this is the only path binding.
+pub(crate) fn expected_node_fold_circuit(preset: e3_fhe_params::BfvPreset) -> CircuitName {
+    if e3_fhe_params::is_lbfv_path(preset) {
+        CircuitName::NodeFoldV2
+    } else {
+        CircuitName::NodeFold
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_dkg_fold_attestation(
     e3_id: &E3id,
     party_id: u64,
     proof: &Proof,
+    expected_circuit: CircuitName,
     attestation: &SignedDkgFoldAttestation,
     expected_context: DkgFoldAttestationContext,
     expected_node: &str,
@@ -55,6 +67,10 @@ pub(crate) fn verify_dkg_fold_attestation(
     ensure!(
         attestation.verify_signer(&expected)?,
         "fold attestation signer does not match committee node for party {party_id}"
+    );
+    ensure!(
+        proof.circuit == expected_circuit,
+        "NodeFold circuit mismatch"
     );
     let (extracted_party, commits) =
         extract_node_fold_agg_commits(proof, committee_n, committee_h, n_moduli)
@@ -112,6 +128,35 @@ pub(crate) fn c5_proof_matches_keyshares(
             )
             .is_ok_and(|commitment| signal == commitment)
         })
+}
+
+/// Extract the versioned key-envelope commitment from a V2 DKG proof.
+pub(crate) fn extract_lbfv_key_envelope_commitment(
+    proof: &Proof,
+    committee_h: usize,
+    lbfv_row_count: usize,
+) -> Result<[u8; 32]> {
+    ensure!(
+        proof.circuit == CircuitName::DkgAggregatorV2,
+        "key-envelope commitment requires a DkgAggregatorV2 proof"
+    );
+    let layout =
+        e3_zk_config::output_layout::DkgAggregatorV2PublicLayout::new(committee_h, lbfv_row_count);
+    let expected_len = layout
+        .field_count
+        .checked_mul(e3_zk_config::FIELD_BYTE_LEN)
+        .ok_or_else(|| anyhow!("V2 public-signal length overflow"))?;
+    ensure!(
+        proof.public_signals.len() == expected_len,
+        "DkgAggregatorV2 proof has {} public-signal bytes, expected {expected_len}",
+        proof.public_signals.len()
+    );
+    let bytes = layout
+        .extract_key_envelope_commitment(&proof.public_signals)
+        .ok_or_else(|| anyhow!("V2 proof is missing the key-envelope commitment"))?;
+    Ok(bytes
+        .try_into()
+        .expect("the V2 commitment slice has a fixed length"))
 }
 
 /// Outcome of cross-checking each honest party's keyshare against its signed C1
@@ -199,6 +244,13 @@ mod tests {
     }
 
     fn verify_with_context(expected_context: DkgFoldAttestationContext) -> Result<()> {
+        verify_with_circuit(expected_context, CircuitName::NodeFold)
+    }
+
+    fn verify_with_circuit(
+        expected_context: DkgFoldAttestationContext,
+        expected_circuit: CircuitName,
+    ) -> Result<()> {
         let (attestation, signer) = signed_attestation();
         verify_dkg_fold_attestation(
             &attestation.payload.e3_id,
@@ -208,6 +260,7 @@ mod tests {
                 ArcBytes::from_bytes(&[1]),
                 ArcBytes::from_bytes(&[2]),
             ),
+            expected_circuit,
             &attestation,
             expected_context,
             &signer.address().to_string(),
@@ -228,6 +281,19 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_fold_proof_of_the_other_path() {
+        let err = verify_with_circuit(
+            DkgFoldAttestationContext {
+                registry: Address::repeat_byte(0x11),
+                verifying_contract: Address::repeat_byte(0x22),
+            },
+            CircuitName::NodeFoldV2,
+        )
+        .expect_err("a fold of another path's circuit must fail");
+        assert!(err.to_string().contains("circuit mismatch"));
+    }
+
+    #[test]
     fn rejects_attestation_for_another_verifier() {
         let err = verify_with_context(DkgFoldAttestationContext {
             registry: Address::repeat_byte(0x11),
@@ -235,5 +301,35 @@ mod tests {
         })
         .expect_err("verifier mismatch must fail");
         assert!(err.to_string().contains("verifying contract mismatch"));
+    }
+
+    #[test]
+    fn extracts_minimum_v2_key_envelope_commitment_from_layout() {
+        let mut public_signals = vec![0u8; 60 * 32];
+        let expected = [0xabu8; 32];
+        public_signals[27 * 32..28 * 32].copy_from_slice(&expected);
+        let proof = Proof::new(
+            CircuitName::DkgAggregatorV2,
+            ArcBytes::from_bytes(&[]),
+            ArcBytes::from_bytes(&public_signals),
+        );
+
+        assert_eq!(
+            extract_lbfv_key_envelope_commitment(&proof, 2, 5).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn rejects_v2_proof_with_another_public_signal_shape() {
+        let proof = Proof::new(
+            CircuitName::DkgAggregatorV2,
+            ArcBytes::from_bytes(&[]),
+            ArcBytes::from_bytes(&vec![0u8; 61 * 32]),
+        );
+
+        let err = extract_lbfv_key_envelope_commitment(&proof, 2, 5)
+            .expect_err("an incompatible public-signal shape must fail");
+        assert!(err.to_string().contains("expected 1920"));
     }
 }
