@@ -343,6 +343,13 @@ impl Setup {
                 u_rns: try_poly_ntt_from_bytes(&request.u_rns_raw.access(cipher)?, params)?,
                 e0_rns: try_poly_ntt_from_bytes(&request.e0_rns_raw.access(cipher)?, params)?,
                 e1_rns: try_poly_ntt_from_bytes(&request.e1_rns_raw.access(cipher)?, params)?,
+                committee: request.committee_size.values(),
+                party_idx: request.recipient_party_id as u32,
+                mod_idx: request.row_index as u32,
+                chunk_size: e3_zk_config::chunks::c2_chunk_size(
+                    self.config.threshold.degree(),
+                    request.committee_size.values().n,
+                ) as u32,
             },
         )
     }

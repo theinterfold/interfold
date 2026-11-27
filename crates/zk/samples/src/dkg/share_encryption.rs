@@ -62,6 +62,10 @@ pub fn generate(
         u_rns: intermediates.randomness().clone(),
         e0_rns: intermediates.error_0().clone(),
         e1_rns: intermediates.error_1().clone(),
+        party_idx: 0,
+        mod_idx: 0,
+        chunk_size: e3_zk_config::chunks::c2_chunk_size(dkg_params.degree(), committee.n) as u32,
+        committee,
     })
 }
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-use crate::{artifacts, identity, policy, vk_tree, Request};
+use crate::{artifacts, identity, vk_tree, Request};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, path::Path, process::Command};
@@ -21,10 +21,10 @@ const LBFV_LEAVES: &[&str] = &["threshold/decrypted_shares_aggregation_wide"];
 /// The leaf circuits a pair's archive builds, in catalogue order.
 fn leaves(preset: &str) -> Vec<&'static str> {
     let mut leaves = Vec::new();
-    if policy::has_trbfv(preset) {
+    if e3_fhe_params::artifacts_dir_serves_trbfv(preset) {
         leaves.extend(LEAVES);
     }
-    if policy::has_lbfv(preset) {
+    if e3_fhe_params::artifacts_dir_serves_lbfv(preset) {
         leaves.extend(LBFV_LEAVES);
     }
     leaves

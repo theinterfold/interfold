@@ -1,0 +1,6 @@
+{
+  "insecure-64": ["trbfv"],
+  "insecure-lbfv": ["trbfv", "lbfv"],
+  "secure-8192": ["trbfv"],
+  "secure-16384": ["lbfv"]
+}

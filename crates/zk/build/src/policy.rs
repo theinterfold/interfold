@@ -87,33 +87,24 @@ fn in_lbfv_tree(circuit: &Circuit) -> bool {
     })
 }
 
-pub fn has_lbfv(preset: &str) -> bool {
-    matches!(preset, "insecure-lbfv" | "secure-16384")
-}
-
-pub fn has_trbfv(preset: &str) -> bool {
-    preset != "secure-16384"
-}
-
+/// The required artifacts of a pair of the preset artifact directory `preset`. This build reads the
+/// inventory files that the prover's installer and release validation read
+/// (`ZkBackend::required_artifacts`) and selects them with the same `e3_fhe_params` path
+/// predicates. It does not call the prover: the prover's build script runs this build.
 pub fn required_artifacts(preset: &str) -> Vec<String> {
-    let mut files: Vec<String> =
-        serde_json::from_str(include_str!("../../prover/required-artifacts.json"))
-            .expect("valid common artifact manifest");
-    if has_trbfv(preset) {
-        files.extend(
-            serde_json::from_str::<Vec<String>>(include_str!(
-                "../../prover/required-artifacts-trbfv.json"
-            ))
-            .expect("valid trBFV artifact manifest"),
-        );
+    let inventory = |json: &str| -> Vec<String> {
+        serde_json::from_str(json).expect("invalid required circuit artifact inventory")
+    };
+    let mut required = inventory(include_str!("../../prover/required-artifacts.json"));
+    if e3_fhe_params::artifacts_dir_serves_trbfv(preset) {
+        required.extend(inventory(include_str!(
+            "../../prover/required-artifacts-trbfv.json"
+        )));
     }
-    if has_lbfv(preset) {
-        files.extend(
-            serde_json::from_str::<Vec<String>>(include_str!(
-                "../../prover/required-artifacts-lbfv.json"
-            ))
-            .expect("valid l-BFV artifact manifest"),
-        );
+    if e3_fhe_params::artifacts_dir_serves_lbfv(preset) {
+        required.extend(inventory(include_str!(
+            "../../prover/required-artifacts-lbfv.json"
+        )));
     }
-    files
+    required
 }

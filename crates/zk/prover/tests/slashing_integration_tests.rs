@@ -471,9 +471,9 @@ fn sign_vote(
 
 /// Encode attestation evidence for `proposeSlash()`.
 ///
-/// Format: `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes,
-/// uint256 issuedAt, uint256 deadline, bytes[] signatures)`. Voters are sorted
-/// ascending by address.
+/// Format: `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes, bytes evidence,
+/// uint256 issuedAt, uint256 deadline, bytes[] signatures)`. The single-row proof types have no
+/// `proofInstance` field. Voters are sorted ascending by address.
 fn encode_attestation_evidence(
     proof_type: u8,
     mut votes: Vec<(Address, FixedBytes<32>, Bytes)>,
@@ -1647,7 +1647,7 @@ async fn test_onchain_actor_signed_vote_accepted() {
         outcome: AccusationOutcome::AccusedFaulted,
         evidence: raw_evidence_bytes,
     };
-    let evidence = encode_attestation_evidence(&quorum)
+    let evidence = encode_attestation_evidence(&quorum.clone().into())
         .expect("encode_attestation_evidence must produce bytes for nonempty votes_for");
 
     // Submit. If anything in the actor → writer → Solidity chain disagrees,

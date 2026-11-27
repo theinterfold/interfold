@@ -37,7 +37,9 @@ use e3_zk_prover::{
     ShareComputationCircuit, ShareEncryptionCircuit,
 };
 use e3_zk_witness::dkg::share_computation::Inputs as ShareComputationInputs;
+
 use e3_zk_witness::dkg::share_decryption::ShareDecryptionCircuitData;
+
 use node_fold_witness::{
     pk_generation_sample_with_esi, share_computation_esm_from_esi, share_computation_sk_from_pk,
     share_encryption_for_slot,
@@ -547,15 +549,22 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
             continue;
         }
 
-        let da =
-            share_encryption_for_slot(preset, &dkg_pk, &sk_inputs, slot, DkgInputType::SecretKey)
-                .expect("C3a slot encrypt");
+        let da = share_encryption_for_slot(
+            preset,
+            &dkg_pk,
+            &sk_inputs,
+            slot,
+            DkgInputType::SecretKey,
+            committee.clone(),
+        )
+        .expect("C3a slot encrypt");
         let db = share_encryption_for_slot(
             preset,
             &dkg_pk,
             &esm_inputs,
             slot,
             DkgInputType::SmudgingNoise,
+            committee.clone(),
         )
         .expect("C3b slot encrypt");
 
@@ -590,6 +599,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
 
     let c3a_folded = generate_c3_chonk_chain(
         &prover,
+        CircuitName::ShareEncryption,
         &c3a_inners,
         &slot_indices,
         total_slots,
@@ -599,6 +609,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     .expect("c3 chonk sk chain");
     let c3b_folded = generate_c3_chonk_chain(
         &prover,
+        CircuitName::ShareEncryption,
         &c3b_inners,
         &slot_indices,
         total_slots,

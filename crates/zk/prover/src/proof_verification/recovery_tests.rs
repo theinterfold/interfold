@@ -167,8 +167,10 @@ fn assert_no_blame(events: &[InterfoldEventData]) {
             InterfoldEventData::SignedProofFailed(_)
                 | InterfoldEventData::ProofVerificationFailed(_)
                 | InterfoldEventData::ProofFailureAccusation(_)
+                | InterfoldEventData::LbfvProofFailureAccusation(_)
                 | InterfoldEventData::AccusationVote(_)
                 | InterfoldEventData::AccusationQuorumReached(_)
+                | InterfoldEventData::LbfvAccusationQuorumReached(_)
         )),
         "local verification failure produced peer-failure evidence"
     );

@@ -160,6 +160,7 @@ async fn c3_chonk_chain_proves_and_exposes_its_key_list() {
     let f = c3_fixture().await;
     let chain = generate_c3_chonk_chain(
         &f.prover,
+        CircuitName::ShareEncryption,
         &f.inners,
         &[0u32, 1u32],
         f.total_slots,
@@ -237,6 +238,7 @@ async fn c3_chonk_rejects_a_corrupted_leaf_or_a_substituted_key() {
     );
     let error = generate_c3_chonk_chain(
         &f.prover,
+        CircuitName::ShareEncryption,
         &[f.inners[0].clone(), corrupted],
         &slots,
         f.total_slots,

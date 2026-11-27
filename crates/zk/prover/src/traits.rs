@@ -62,20 +62,7 @@ pub trait Provable: Send + Sync {
         variant: CircuitVariant,
         artifacts_dir: &str,
     ) -> Result<Proof, ZkError> {
-        let inputs = self.build_inputs(config, input)?;
-
-        let resolved_name = self.resolve_circuit_name(config, input);
-        let circuit_path = prover
-            .circuits_dir(variant, artifacts_dir)
-            .join(resolved_name.dir_path())
-            .join(format!("{}.json", resolved_name.as_str()));
-
-        let circuit = CompiledCircuit::from_file(&circuit_path)?;
-
-        let witness_gen = WitnessGenerator::new();
-        let witness = witness_gen.generate_witness(&circuit, inputs)?;
-
-        prover.generate_proof_with_variant(resolved_name, &witness, e3_id, variant, artifacts_dir)
+        prove_single_circuit(self, prover, config, input, e3_id, variant, artifacts_dir)
     }
 
     fn verify(
@@ -119,4 +106,32 @@ pub trait Provable: Send + Sync {
         );
         prover.verify_proof_with_variant(proof, e3_id, party_id, variant, artifacts_dir)
     }
+}
+
+/// Proves `input` with the one circuit [`Provable::resolve_circuit_name`] selects, from
+/// [`Provable::build_inputs`]. This is the default [`Provable::prove_with_variant`]; a circuit that
+/// proves a chain on one path calls it for its other path.
+pub(crate) fn prove_single_circuit<P: Provable + ?Sized>(
+    provable: &P,
+    prover: &ZkProver,
+    config: &P::Config,
+    input: &P::Input,
+    e3_id: &str,
+    variant: CircuitVariant,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    let inputs = provable.build_inputs(config, input)?;
+
+    let resolved_name = provable.resolve_circuit_name(config, input);
+    let circuit_path = prover
+        .circuits_dir(variant, artifacts_dir)
+        .join(resolved_name.dir_path())
+        .join(format!("{}.json", resolved_name.as_str()));
+
+    let circuit = CompiledCircuit::from_file(&circuit_path)?;
+
+    let witness_gen = WitnessGenerator::new();
+    let witness = witness_gen.generate_witness(&circuit, inputs)?;
+
+    prover.generate_proof_with_variant(resolved_name, &witness, e3_id, variant, artifacts_dir)
 }

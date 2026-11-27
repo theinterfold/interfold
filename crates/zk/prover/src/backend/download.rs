@@ -37,8 +37,31 @@ const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// eight-pair circuit archive, is about 352 MB, so 1 GiB leaves room for growth.
 const MAX_DOWNLOAD_BYTES: u64 = 1 << 30;
 
-// Release validation and installation use the same per-configuration inventory.
+// Release validation and installation use the same per-configuration inventory: the circuits
+// that both protocol paths use, plus the circuits of each path that the preset directory serves.
 const REQUIRED_ARTIFACTS: &str = include_str!("../../required-artifacts.json");
+const REQUIRED_TRBFV_ARTIFACTS: &str = include_str!("../../required-artifacts-trbfv.json");
+const REQUIRED_LBFV_ARTIFACTS: &str = include_str!("../../required-artifacts-lbfv.json");
+
+impl ZkBackend {
+    /// The artifacts every pair of the preset artifact directory `preset_dir` must contain: the
+    /// shared inventory, plus the trBFV and l-BFV inventories of the protocol paths its presets
+    /// serve. Release validation, installation and the CLI use this inventory; the circuit build
+    /// reads the same files with the same `e3_fhe_params` path selection.
+    pub fn required_artifacts(preset_dir: &str) -> Vec<&'static str> {
+        let inventory = |json: &'static str| -> Vec<&'static str> {
+            serde_json::from_str(json).expect("invalid required circuit artifact inventory")
+        };
+        let mut required = inventory(REQUIRED_ARTIFACTS);
+        if e3_fhe_params::artifacts_dir_serves_trbfv(preset_dir) {
+            required.extend(inventory(REQUIRED_TRBFV_ARTIFACTS));
+        }
+        if e3_fhe_params::artifacts_dir_serves_lbfv(preset_dir) {
+            required.extend(inventory(REQUIRED_LBFV_ARTIFACTS));
+        }
+        required
+    }
+}
 
 fn supported_configurations() -> Vec<(&'static str, &'static str)> {
     serde_json::from_str(include_str!("../../supported-configurations.json"))
@@ -121,8 +144,6 @@ fn is_plain_relative_path(path: &str) -> bool {
 /// configuration present on disk, so an extra configuration in a subset archive, or one left by an
 /// earlier installation, must also be complete.
 fn missing_required_artifact(circuits_dir: &Path, required: &[(&str, &str)]) -> Option<String> {
-    let artifacts: Vec<&str> = serde_json::from_str(REQUIRED_ARTIFACTS)
-        .expect("invalid required circuit artifact inventory");
     let mut configurations: HashSet<PathBuf> = required
         .iter()
         .map(|(preset, committee)| circuits_dir.join(preset).join(committee))
@@ -141,15 +162,24 @@ fn missing_required_artifact(circuits_dir: &Path, required: &[(&str, &str)]) -> 
         }
     }
     configurations.iter().find_map(|configuration| {
-        artifacts.iter().find_map(|artifact| {
-            let path = configuration.join(artifact);
-            (!path.is_file()).then(|| {
-                path.strip_prefix(circuits_dir)
-                    .expect("configuration is inside circuits directory")
-                    .display()
-                    .to_string()
+        let preset_dir = configuration
+            .strip_prefix(circuits_dir)
+            .expect("configuration is inside circuits directory")
+            .components()
+            .next()
+            .and_then(|component| component.as_os_str().to_str())
+            .unwrap_or_default();
+        ZkBackend::required_artifacts(preset_dir)
+            .into_iter()
+            .find_map(|artifact| {
+                let path = configuration.join(artifact);
+                (!path.is_file()).then(|| {
+                    path.strip_prefix(circuits_dir)
+                        .expect("configuration is inside circuits directory")
+                        .display()
+                        .to_string()
+                })
             })
-        })
     })
 }
 
@@ -807,12 +837,11 @@ mod tests {
     }
 
     fn fixture_artifacts() -> Vec<String> {
-        let artifacts: Vec<&str> = serde_json::from_str(REQUIRED_ARTIFACTS).unwrap();
         supported_configurations()
             .into_iter()
             .flat_map(|(preset, committee)| {
-                artifacts
-                    .iter()
+                ZkBackend::required_artifacts(preset)
+                    .into_iter()
                     .map(move |artifact| format!("{preset}/{committee}/{artifact}"))
             })
             .collect()
@@ -1150,35 +1179,41 @@ mod tests {
 
     #[tokio::test]
     async fn download_requires_all_release_configurations() {
-        let temp = TempDir::new().unwrap();
-        let mut backend = test_backend(&temp);
-        let previous_version = seed_installation(&backend).await;
-        let mut manifest = fixture_manifest(b"circuit");
-        let artifacts = fixture_artifacts();
-        let omitted: Vec<&str> = artifacts
-            .iter()
-            .filter(|path| path.starts_with("secure-8192/small/"))
-            .map(String::as_str)
-            .collect();
-        for path in &omitted {
-            manifest.remove(*path);
+        for missing_pair in [
+            "secure-8192/small/",
+            "secure-16384/micro/",
+            "secure-16384/small/",
+        ] {
+            let temp = TempDir::new().unwrap();
+            let mut backend = test_backend(&temp);
+            let previous_version = seed_installation(&backend).await;
+            let mut manifest = fixture_manifest(b"circuit");
+            let artifacts = fixture_artifacts();
+            let omitted: Vec<&str> = artifacts
+                .iter()
+                .filter(|path| path.starts_with(missing_pair))
+                .map(String::as_str)
+                .collect();
+            for path in &omitted {
+                manifest.remove(*path);
+            }
+            let archive = circuit_archive_with_manifest(b"circuit", Some(manifest), &[], &omitted);
+            backend
+                .config
+                .circuits_checksums
+                .insert("candidate".into(), sha256_hex(&archive));
+            let (url, server) = serve_archive(archive).await;
+            backend.config.circuits_download_url = url;
+
+            let result = backend.download_circuits().await;
+            server.await.unwrap();
+
+            assert!(
+                matches!(result, Err(ZkError::CircuitNotFound(ref path)) if path.starts_with(missing_pair)),
+                "{result:?}"
+            );
+            assert_installation_unchanged(&backend, &previous_version);
         }
-        let archive = circuit_archive_with_manifest(b"circuit", Some(manifest), &[], &omitted);
-        backend
-            .config
-            .circuits_checksums
-            .insert("candidate".into(), sha256_hex(&archive));
-        let (url, server) = serve_archive(archive).await;
-        backend.config.circuits_download_url = url;
-
-        let result = backend.download_circuits().await;
-        server.await.unwrap();
-
-        assert!(
-            matches!(result, Err(ZkError::CircuitNotFound(ref path)) if path.starts_with("secure-8192/small/")),
-            "{result:?}"
-        );
-        assert_installation_unchanged(&backend, &previous_version);
     }
 
     #[cfg(unix)]
@@ -1436,6 +1471,72 @@ mod tests {
             fs::read(recovery_dir.join("previous-circuits/installed.txt")).unwrap(),
             b"installed"
         );
+    }
+
+    #[test]
+    fn each_preset_dir_requires_the_artifacts_of_the_paths_it_serves() {
+        let required_artifacts = ZkBackend::required_artifacts;
+        let inventory =
+            |json: &'static str| -> Vec<&'static str> { serde_json::from_str(json).unwrap() };
+        let shared = inventory(REQUIRED_ARTIFACTS);
+        let trbfv = inventory(REQUIRED_TRBFV_ARTIFACTS);
+        let lbfv = inventory(REQUIRED_LBFV_ARTIFACTS);
+        assert!(!shared.is_empty() && !trbfv.is_empty() && !lbfv.is_empty());
+        let both = [shared.clone(), trbfv.clone(), lbfv.clone()].concat();
+        assert_eq!(required_artifacts("insecure-lbfv"), both);
+        assert_eq!(
+            required_artifacts("insecure-64"),
+            [shared.clone(), trbfv.clone()].concat()
+        );
+        assert_eq!(
+            required_artifacts("secure-8192"),
+            [shared.clone(), trbfv].concat()
+        );
+        assert_eq!(required_artifacts("secure-16384"), [shared, lbfv].concat());
+        let c5 = "default/threshold/pk_aggregation/pk_aggregation.json";
+        assert!(required_artifacts("insecure-lbfv").contains(&c5));
+        assert!(required_artifacts("secure-8192").contains(&c5));
+        assert!(!required_artifacts("secure-16384").contains(&c5));
+        // Secure-16384 proves C7 with the wide circuit only; the bounded C7 does not hold there.
+        let narrow_c7 =
+            "default/threshold/decrypted_shares_aggregation/decrypted_shares_aggregation.json";
+        let wide_c7 =
+            "default/threshold/decrypted_shares_aggregation_wide/decrypted_shares_aggregation_wide.json";
+        assert!(!required_artifacts("secure-16384").contains(&narrow_c7));
+        assert!(required_artifacts("secure-16384").contains(&wide_c7));
+        assert!(required_artifacts("insecure-lbfv").contains(&narrow_c7));
+        assert_eq!(
+            both.iter().collect::<HashSet<_>>().len(),
+            both.len(),
+            "an artifact is listed in more than one inventory"
+        );
+    }
+
+    /// `scripts/circuits/artifacts.ts` reads `preset-protocol-paths.json` to build the same
+    /// per-preset inventory, so the file must state what the BFV preset table implies.
+    #[test]
+    fn preset_protocol_paths_match_the_preset_table() {
+        let paths: HashMap<String, Vec<String>> =
+            serde_json::from_str(include_str!("../../preset-protocol-paths.json")).unwrap();
+        let preset_dirs: HashSet<&str> = supported_configurations()
+            .into_iter()
+            .map(|(preset, _)| preset)
+            .collect();
+        assert_eq!(
+            paths.keys().map(String::as_str).collect::<HashSet<_>>(),
+            preset_dirs
+        );
+        for (preset_dir, served) in &paths {
+            let serves = |path: &str| served.iter().any(|entry| entry == path);
+            assert_eq!(
+                e3_fhe_params::artifacts_dir_serves_trbfv(preset_dir),
+                serves("trbfv")
+            );
+            assert_eq!(
+                e3_fhe_params::artifacts_dir_serves_lbfv(preset_dir),
+                serves("lbfv")
+            );
+        }
     }
 
     #[test]

@@ -23,6 +23,27 @@ pub fn is_lbfv_path(preset: BfvPreset) -> bool {
     supports_lbfv(preset.threshold_counterpart().unwrap_or(preset))
 }
 
+/// The presets whose circuit artifacts live in the preset artifact directory `dir`.
+fn presets_of_artifacts_dir(dir: &str) -> impl Iterator<Item = BfvPreset> + '_ {
+    BfvPreset::PAIR_PRESETS
+        .iter()
+        .copied()
+        .filter(move |preset| preset.artifacts_dir() == dir)
+}
+
+/// Whether the preset artifact directory `dir` serves an l-BFV preset.
+#[must_use]
+pub fn artifacts_dir_serves_lbfv(dir: &str) -> bool {
+    presets_of_artifacts_dir(dir).any(supports_lbfv)
+}
+
+/// Whether the preset artifact directory `dir` serves the trBFV path: every directory except one
+/// that serves only l-BFV presets (secure-16384).
+#[must_use]
+pub fn artifacts_dir_serves_trbfv(dir: &str) -> bool {
+    !(artifacts_dir_serves_lbfv(dir) && presets_of_artifacts_dir(dir).all(supports_lbfv))
+}
+
 /// Return the number of CRT rows required by the l-BFV preset.
 ///
 /// The row count comes from the threshold parameter metadata. Callers must use

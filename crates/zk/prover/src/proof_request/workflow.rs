@@ -17,9 +17,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use e3_events::{
-    DkgShareDecryptionProofRequest, E3id, EncryptionKey, EventContext, PkAggregationProofRequest,
-    PkGenerationProofRequest, Proof, Sequenced, ShareComputationProofRequest,
-    ShareEncryptionProofRequest, ThresholdShare, ZkRequest,
+    DkgShareDecryptionProofRequest, E3id, EncryptionKey, EventContext,
+    LbfvDkgShareDecryptionProofRequest, PkAggregationProofRequest, PkGenerationProofRequest, Proof,
+    Sequenced, ShareComputationProofRequest, ShareEncryptionProofRequest, ThresholdShare,
+    ZkRequest,
 };
 use e3_utils::utility_types::ArcBytes;
 

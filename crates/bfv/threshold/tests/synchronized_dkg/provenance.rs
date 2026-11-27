@@ -337,6 +337,13 @@ fn real_dealer_and_recipient_joins_reject_valid_but_unrelated_children() -> Resu
             u_rns: witness.u_rns,
             e0_rns: witness.e0_rns,
             e1_rns: witness.e1_rns,
+            committee: config.committee.values(),
+            party_idx: 2,
+            mod_idx: 1,
+            chunk_size: e3_zk_config::chunks::c2_chunk_size(
+                config.threshold.degree(),
+                config.committee.values().n,
+            ) as u32,
         },
     )?;
     let wrong = prove_json(
@@ -754,6 +761,13 @@ fn real_dealer_and_recipient_joins_reject_valid_but_unrelated_children() -> Resu
             u_rns: fresh.u_rns,
             e0_rns: fresh.e0_rns,
             e1_rns: fresh.e1_rns,
+            committee: config.committee.values(),
+            party_idx: 1,
+            mod_idx: 0,
+            chunk_size: e3_zk_config::chunks::c2_chunk_size(
+                config.threshold.degree(),
+                config.committee.values().n,
+            ) as u32,
         },
     )?;
     let fresh = prove_json(

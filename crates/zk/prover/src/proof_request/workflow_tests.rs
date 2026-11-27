@@ -228,10 +228,60 @@ fn threshold_plan_assigns_canonical_seqs() {
 }
 
 #[test]
+fn lbfv_threshold_plan_proves_no_c1() {
+    let enc = |recipient: usize, row: usize, esi: usize| share_encryption_req(recipient, row, esi);
+    let mut c1_request = pk_generation_req();
+    c1_request.params_profile = BfvProfile::SsInsecureLbfv;
+    let plan = plan_threshold_dispatch(
+        c1_request,
+        share_computation_req(),
+        Some(share_computation_req()),
+        vec![enc(2, 0, 0)],
+        vec![enc(2, 0, 0)],
+    )
+    .unwrap();
+    let seqs: Vec<usize> = plan.iter().map(|i| i.seq).collect();
+    assert_eq!(seqs, vec![2, 3, 4, 5]);
+    assert!(plan
+        .iter()
+        .all(|item| !matches!(item.request, ZkRequest::PkGeneration(_))));
+
+    let mut p = PendingThresholdProofs::new(
+        E3id::new("1", 1),
+        full_share(),
+        ec(),
+        1,
+        1,
+        vec![1, 2, 3],
+        BfvProfile::SsInsecureLbfv,
+    );
+    assert_eq!(p.total_expected(), 4);
+    p.store_proof(&ThresholdProofKind::SkShareComputation, proof(2));
+    p.store_proof(&ThresholdProofKind::ESmShareComputation, proof(3));
+    p.store_proof(
+        &ThresholdProofKind::SkShareEncryption {
+            recipient_party_id: 2,
+            row_index: 0,
+        },
+        proof(4),
+    );
+    p.store_proof(
+        &ThresholdProofKind::ESmShareEncryption {
+            esi_index: 0,
+            recipient_party_id: 2,
+            row_index: 0,
+        },
+        proof(5),
+    );
+    assert!(p.is_complete());
+}
+
+#[test]
 fn decryption_plan_assigns_offset_seqs() {
     let plan = plan_decryption_dispatch(
         dkg_share_decryption_req(),
         vec![dkg_share_decryption_req(), dkg_share_decryption_req()],
+        3,
         7,
     );
     let seqs: Vec<usize> = plan.iter().map(|i| i.seq).collect();
@@ -241,6 +291,36 @@ fn decryption_plan_assigns_offset_seqs() {
         plan[1].kind,
         DecryptionProofKind::SmudgingNoise { esi_idx: 0 }
     ));
+}
+
+/// A trBFV E3 keeps the request that earlier releases stored. An l-BFV E3 names the recipient,
+/// which is this node's own party.
+#[test]
+fn decryption_requests_follow_the_proving_path() {
+    let lbfv = |request: &mut DkgShareDecryptionProofRequest| {
+        request.params_profile = BfvProfile::SsInsecureLbfv;
+    };
+    let trbfv_plan = plan_decryption_dispatch(
+        dkg_share_decryption_req(),
+        vec![dkg_share_decryption_req()],
+        3,
+        7,
+    );
+    assert!(trbfv_plan
+        .iter()
+        .all(|item| matches!(item.request, ZkRequest::DkgShareDecryption(_))));
+
+    let (mut sk, mut esm) = (dkg_share_decryption_req(), dkg_share_decryption_req());
+    lbfv(&mut sk);
+    lbfv(&mut esm);
+    let lbfv_plan = plan_decryption_dispatch(sk, vec![esm], 3, 7);
+    assert_eq!(lbfv_plan.len(), 2);
+    for item in &lbfv_plan {
+        assert!(matches!(
+            &item.request,
+            ZkRequest::LbfvDkgShareDecryption(request) if request.recipient_party_id == 3
+        ));
+    }
 }
 
 #[test]

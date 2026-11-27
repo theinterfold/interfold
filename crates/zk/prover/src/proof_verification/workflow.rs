@@ -12,7 +12,7 @@
 
 use alloy::primitives::Address;
 use e3_events::{E3Stage, E3id, EncryptionKeyReceived, Proof, ProofType, SignedProofPayload};
-use e3_fhe_params::BfvProfile;
+use e3_fhe_params::{BfvPreset, BfvProfile};
 use e3_zk_witness::compute_dkg_pk_commitment_from_public_key_bytes;
 
 /// A validated external key, ready to be queued for ZK verification.
@@ -34,6 +34,7 @@ pub(crate) fn validate_received_key(
 ) -> Result<ValidatedExternalKey, String> {
     let validated = validate_external_key(
         &input.e3_id,
+        profile.threshold_preset(),
         expected_signer,
         input.key.party_id,
         input.key.proof.as_ref(),
@@ -60,6 +61,7 @@ pub(crate) fn validate_received_key(
 /// bound to the outer E3, canonical committee party, C0 proof type, and advertised key bytes.
 pub(crate) fn validate_external_key(
     expected_e3_id: &E3id,
+    preset: BfvPreset,
     expected_signer: &Address,
     party_id: u64,
     key_proof: Option<&Proof>,
@@ -102,7 +104,7 @@ pub(crate) fn validate_external_key(
     }
 
     // Validate circuit name matches expected ProofType circuits.
-    let expected_circuits = signed.payload.proof_type.circuit_names();
+    let expected_circuits = signed.payload.proof_type.circuit_names_for(preset);
     if !expected_circuits.contains(&signed.payload.proof.circuit) {
         return Err(format!(
             "Circuit name mismatch for key from party {}: expected {:?}, got {:?}",
@@ -199,7 +201,14 @@ mod tests {
         proof: Option<&Proof>,
         signed: Option<&SignedProofPayload>,
     ) -> Result<ValidatedExternalKey, String> {
-        let validated = validate_external_key(&e3_id(), &signer().address(), 1, proof, signed)?;
+        let validated = validate_external_key(
+            &e3_id(),
+            BfvPreset::InsecureThreshold64,
+            &signer().address(),
+            1,
+            proof,
+            signed,
+        )?;
         validate_external_key_commitment(
             1,
             proof.expect("validated proof exists"),
@@ -281,7 +290,15 @@ mod tests {
         let p = proof();
         let signed = valid_signed(&p);
         let different_commitment = [0x24; 32];
-        validate_external_key(&e3_id(), &signer().address(), 1, Some(&p), Some(&signed)).unwrap();
+        validate_external_key(
+            &e3_id(),
+            BfvPreset::InsecureThreshold64,
+            &signer().address(),
+            1,
+            Some(&p),
+            Some(&signed),
+        )
+        .unwrap();
         let err = validate_external_key_commitment(1, &p, &different_commitment).unwrap_err();
         assert!(err.contains("does not match advertised BFV key"));
     }

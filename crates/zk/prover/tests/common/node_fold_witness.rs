@@ -14,6 +14,7 @@ use e3_fhe_params::BfvPreset;
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_polynomial_fhe::FromFhePolynomial as _;
 use e3_zk_config::DkgInputType;
+use e3_zk_prover::c2_chunk_size;
 use e3_zk_witness::dkg::share_computation::{
     Inputs as ShareComputationInputs, ShareComputationCircuitData,
 };
@@ -23,7 +24,7 @@ use e3_zk_witness::WitnessError;
 use fhe::bfv::Encoding;
 use fhe::bfv::SecretKey;
 use fhe::mbfv::PublicKeyShare;
-use fhe::trbfv::{ShareManager, SmudgingBoundCalculatorConfig, SsSmudgingNoiseGenerator};
+use fhe::trbfv::ShareManager;
 use fhe::{bfv::Plaintext, bfv::PublicKey};
 use fhe_traits::FheEncoder;
 use ndarray::Array2;
@@ -75,17 +76,16 @@ pub fn pk_generation_sample_with_esi(
     let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
         .map_err(|e| WitnessError::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
 
-    let noise = SsSmudgingNoiseGenerator::new(SmudgingBoundCalculatorConfig::new(
+    let esi_coeffs: Vec<BigInt> = e3_fhe_params::generate_smudging_error(
+        preset,
         threshold_params.clone(),
         num_parties,
         num_ciphertexts as usize,
+        defaults.mult_depth,
         lambda,
-    )?)?;
-    let esi_coeffs = fhe_math::rq::sample_uniform_coefficients_bigint(
-        &noise.smudging_bound().clone().into(),
-        noise.degree(),
         &mut rng,
-    );
+    )
+    .map_err(|e| WitnessError::Sample(format!("Failed to generate smudging error: {:?}", e)))?;
 
     let e_sm_rns_zeroizing = share_manager
         .bigints_to_poly(&esi_coeffs)
@@ -178,6 +178,7 @@ pub fn share_encryption_for_slot(
     share_inputs: &ShareComputationInputs,
     slot: usize,
     dkg_input_type: DkgInputType,
+    committee: CiphernodesCommittee,
 ) -> Result<ShareEncryptionCircuitData, WitnessError> {
     let (threshold_params, _) = build_pair_for_preset(preset)
         .map_err(|e| WitnessError::Sample(format!("Failed to build pair for preset: {:?}", e)))?;
@@ -215,5 +216,9 @@ pub fn share_encryption_for_slot(
         u_rns: encryption.randomness().clone(),
         e0_rns: encryption.error_0().clone(),
         e1_rns: encryption.error_1().clone(),
+        party_idx: party as u32,
+        mod_idx: mod_ix as u32,
+        chunk_size: c2_chunk_size(threshold_params.degree(), committee.n) as u32,
+        committee,
     })
 }

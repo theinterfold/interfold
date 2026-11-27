@@ -22,8 +22,11 @@ use e3_polynomial_fhe::FromFhePolynomial as _;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField, Zero};
 use common::{
-    extract_field, extract_field_from_end, find_bb, require_minimum_circuits,
-    setup_chunked_dkg_circuits, setup_compiled_circuit, setup_test_prover,
+    compiled_circuit_artifacts_available, extract_field, extract_field_from_end, find_bb,
+    recursive_circuit_artifacts_available, require_minimum_circuits,
+    require_minimum_circuits_for_preset, setup_chunked_dkg_circuits, setup_compiled_circuit,
+    setup_compiled_circuit_for_preset, setup_recursive_aggregation_fold_circuit_for_preset,
+    setup_test_prover,
 };
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::Proof;
@@ -118,6 +121,14 @@ fn bigint_to_field_bytes32(b: &num_bigint::BigInt) -> [u8; 32] {
 fn fr_to_bigint(f: Fr) -> num_bigint::BigInt {
     let le = f.into_bigint().to_bytes_le();
     num_bigint::BigInt::from_bytes_le(num_bigint::Sign::Plus, &le)
+}
+
+/// Convert raw public signals bytes (32-byte big-endian chunks) to ark_bn254::Fr field elements.
+fn public_signals_to_fields(signals: &[u8]) -> Vec<Fr> {
+    signals
+        .chunks(32)
+        .map(Fr::from_be_bytes_mod_order)
+        .collect()
 }
 
 /// Verify `proof` with bb and fail the test if bb rejects it.
@@ -605,6 +616,229 @@ async fn test_pk_bfv_commitment_consistency() {
         "Commitment from proof must match independently calculated commitment"
     );
 
+    prover.cleanup(e3_id).unwrap();
+}
+
+/// Chunked C2 is the l-BFV proof path; its circuits are built from `circuits/bin/lbfv`. Returns
+/// `None` (skipping the test) unless they are built for `preset` at the minimum committee.
+async fn setup_chunked_share_computation_test(
+    input_type: DkgInputType,
+    preset: BfvPreset,
+    e3_id: &'static str,
+) -> Option<(
+    ZkBackend,
+    tempfile::TempDir,
+    ZkProver,
+    e3_zk_config::dkg::share_computation::Configs,
+    ShareComputationCircuitData,
+    &'static str,
+)> {
+    let committee = CiphernodesCommitteeSize::Minimum;
+    let Some(bb) = find_bb().await else {
+        println!("skipping: bb not found");
+        return None;
+    };
+    require_minimum_circuits_for_preset(preset)?;
+    let (chunk, finalize) = match input_type {
+        DkgInputType::SecretKey => (
+            CircuitName::SkShareComputationChunk,
+            CircuitName::SkC2ChunkFinalize,
+        ),
+        DkgInputType::SmudgingNoise => (
+            CircuitName::ESmShareComputationChunk,
+            CircuitName::ESmC2ChunkFinalize,
+        ),
+    };
+    let fold_circuits = [CircuitName::C2ChunkBatch, finalize];
+    if !compiled_circuit_artifacts_available(chunk)
+        || fold_circuits
+            .iter()
+            .any(|circuit| !recursive_circuit_artifacts_available(*circuit))
+    {
+        println!("skipping: chunked C2 circuit artifacts are not staged");
+        return None;
+    }
+    let (backend, temp) = setup_test_prover(&bb).await;
+
+    setup_compiled_circuit_for_preset(&backend, chunk, preset, committee.as_str()).await;
+    for circuit in fold_circuits {
+        setup_recursive_aggregation_fold_circuit_for_preset(
+            &backend,
+            circuit,
+            preset,
+            committee.as_str(),
+        )
+        .await;
+    }
+
+    let config =
+        e3_zk_config::dkg::share_computation::Configs::for_preset(preset, committee).ok()?;
+    let sample =
+        e3_zk_samples::dkg::share_computation::generate(&config, preset, input_type).ok()?;
+    let prover = ZkProver::new(&backend);
+    Some((backend, temp, prover, config, sample, e3_id))
+}
+
+#[tokio::test]
+async fn test_chunked_share_computation_proof() {
+    let preset = BfvPreset::InsecureThresholdLbfv;
+    let Some((_backend, _temp, prover, config, sample, e3_id)) =
+        setup_chunked_share_computation_test(DkgInputType::SecretKey, preset, "1").await
+    else {
+        return;
+    };
+
+    let artifacts_dir =
+        preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
+    let result = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        &config,
+        &sample,
+        e3_id,
+        &artifacts_dir,
+    )
+    .expect("chunked C2 proof generation should succeed");
+
+    assert_eq!(result.proof.circuit, CircuitName::SkC2ChunkFinalize);
+    assert_eq!(result.chunk_count, 1);
+    let chunk_vk = e3_zk_prover::test_utils::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
+        CircuitName::SkShareComputationChunk,
+    )
+    .expect("SK C2 chunk VK");
+    let chunk_key_hash = Fr::from_be_bytes_mod_order(
+        &hex::decode(chunk_vk.key_hash.trim_start_matches("0x")).expect("chunk VK hash"),
+    );
+    assert_eq!(
+        public_signals_to_fields(&result.proof.public_signals)[0],
+        chunk_key_hash
+    );
+    let expected_fields =
+        3 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
+    assert_eq!(result.proof.public_signals.len() / 32, expected_fields);
+    assert!(prover
+        .verify_proof_with_variant(
+            &result.proof,
+            e3_id,
+            1,
+            CircuitVariant::Recursive,
+            &artifacts_dir,
+        )
+        .expect("chunked C2 terminal proof verification should succeed"));
+
+    prover.cleanup(e3_id).unwrap();
+}
+
+#[tokio::test]
+async fn test_chunked_esm_share_computation_proof() {
+    // The chunked e_sm circuit is l-BFV's, whose witness carries the smudging split.
+    let preset = BfvPreset::InsecureThresholdLbfv;
+    let Some((_backend, _temp, prover, config, sample, e3_id)) =
+        setup_chunked_share_computation_test(DkgInputType::SmudgingNoise, preset, "2").await
+    else {
+        return;
+    };
+
+    let artifacts_dir =
+        preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
+    let result = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        &config,
+        &sample,
+        e3_id,
+        &artifacts_dir,
+    )
+    .expect("chunked ESM C2 proof generation should succeed");
+
+    assert_eq!(result.proof.circuit, CircuitName::ESmC2ChunkFinalize);
+    assert_eq!(result.chunk_count, 1);
+    let fields = public_signals_to_fields(&result.proof.public_signals);
+    let chunk_vk = e3_zk_prover::test_utils::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
+        CircuitName::ESmShareComputationChunk,
+    )
+    .expect("ESM C2 chunk VK");
+    let chunk_key_hash = Fr::from_be_bytes_mod_order(
+        &hex::decode(chunk_vk.key_hash.trim_start_matches("0x")).expect("chunk VK hash"),
+    );
+    assert_eq!(fields[0], chunk_key_hash);
+    let expected_fields =
+        3 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
+    assert_eq!(fields.len(), expected_fields);
+    assert!(prover
+        .verify_proof_with_variant(
+            &result.proof,
+            e3_id,
+            1,
+            CircuitVariant::Recursive,
+            &artifacts_dir,
+        )
+        .expect("chunked ESM C2 terminal proof verification should succeed"));
+
+    prover.cleanup(e3_id).unwrap();
+}
+
+#[tokio::test]
+async fn test_secure_chunked_share_computation_proof() {
+    let preset = BfvPreset::SecureThreshold16384;
+    let Some((_backend, _temp, prover, config, sample, e3_id)) =
+        setup_chunked_share_computation_test(DkgInputType::SecretKey, preset, "secure-sk").await
+    else {
+        return;
+    };
+    let artifacts_dir = preset.artifacts_dir_for_committee("minimum");
+    let result = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        &config,
+        &sample,
+        e3_id,
+        &artifacts_dir,
+    )
+    .expect("secure chunked C2a proof generation should succeed");
+    assert_eq!(result.proof.circuit, CircuitName::SkC2ChunkFinalize);
+    // Degree 16384 at the minimum committee: two 8192-coefficient leaves.
+    assert_eq!(result.chunk_count, 2);
+    assert!(prover
+        .verify_proof_with_variant(
+            &result.proof,
+            e3_id,
+            1,
+            CircuitVariant::Recursive,
+            &artifacts_dir,
+        )
+        .expect("secure chunked C2a terminal proof verification should succeed"));
+    prover.cleanup(e3_id).unwrap();
+}
+
+#[tokio::test]
+async fn test_secure_chunked_esm_share_computation_proof() {
+    let preset = BfvPreset::SecureThreshold16384;
+    let Some((_backend, _temp, prover, config, sample, e3_id)) =
+        setup_chunked_share_computation_test(DkgInputType::SmudgingNoise, preset, "secure-esm")
+            .await
+    else {
+        return;
+    };
+    let artifacts_dir = preset.artifacts_dir_for_committee("minimum");
+    let result = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        &config,
+        &sample,
+        e3_id,
+        &artifacts_dir,
+    )
+    .expect("secure chunked C2b proof generation should succeed");
+    assert_eq!(result.proof.circuit, CircuitName::ESmC2ChunkFinalize);
+    assert_eq!(result.chunk_count, 2);
+    assert!(prover
+        .verify_proof_with_variant(
+            &result.proof,
+            e3_id,
+            1,
+            CircuitVariant::Recursive,
+            &artifacts_dir,
+        )
+        .expect("secure chunked C2b terminal proof verification should succeed"));
     prover.cleanup(e3_id).unwrap();
 }
 
