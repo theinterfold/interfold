@@ -34,7 +34,9 @@
 
 use std::path::Path;
 
-use e3_aggregator::{PublicKeyRepositoryFactory, TrBfvPlaintextRepositoryFactory};
+use e3_aggregator::{
+    LbfvContributionRepositoryFactory, PublicKeyRepositoryFactory, TrBfvPlaintextRepositoryFactory,
+};
 use e3_data::{Repositories, Repository};
 use e3_events::{
     AggregateId, E3id, Event, EventConstructorWithTimestamp, EventSource, InterfoldEvent,
@@ -46,7 +48,7 @@ use e3_evm::{
 };
 use e3_fhe::FheRepositoryFactory;
 use e3_keyshare::ThresholdKeyshareRepositoryFactory;
-use e3_layout_lock::{assert_fixture, sample_rows};
+use e3_layout_lock::{assert_fixture, sample_rows, sample_rows_pinned};
 use e3_net::events::GossipData;
 use e3_net::NetRepositoryFactory;
 use e3_request::{
@@ -78,6 +80,23 @@ fn repository<T: Serialize + DeserializeOwned>(
     rows: &mut Vec<String>,
 ) {
     rows.extend(sample_rows::<T, _>(root, none));
+}
+
+/// [`repository`] for a value whose decoder accepts only its current schema version and needs the
+/// option fields in `present`.
+fn versioned_repository<T: Serialize + DeserializeOwned>(
+    root: &str,
+    schema_version: u32,
+    present: &[&str],
+    _accessor: fn(&Repositories) -> Repository<T>,
+    rows: &mut Vec<String>,
+) {
+    rows.extend(sample_rows_pinned::<T, _>(
+        root,
+        &[("schema_version", u64::from(schema_version))],
+        present,
+        none,
+    ));
 }
 
 /// The event ID that production assigns to the payload.
@@ -124,6 +143,13 @@ fn layout_rows() -> Vec<String> {
         |r| r.threshold_keyshare_recovery(&e3()),
         &mut rows,
     );
+    versioned_repository(
+        "threshold_keyshare_lbfv_generation",
+        e3_keyshare::LBFV_GENERATION_SCHEMA_VERSION,
+        &[],
+        |r| r.threshold_keyshare_lbfv_generation(&e3()),
+        &mut rows,
+    );
     // This node's BFV keypair, which `threshold_keyshare_bfv_key` records directly.
     rows.extend(sample_rows::<e3_keyshare::BfvKeyIntent, _>(
         "threshold_keyshare_bfv_key",
@@ -155,6 +181,30 @@ fn layout_rows() -> Vec<String> {
     repository(
         "publickey_recovery",
         |r| r.publickey_recovery(&e3()),
+        &mut rows,
+    );
+    versioned_repository(
+        "publickey_lbfv_collection",
+        e3_aggregator::LBFV_CONTRIBUTION_COLLECTION_SCHEMA_VERSION,
+        &["params_preset"],
+        |r| r.publickey_lbfv_collection(&e3()),
+        &mut rows,
+    );
+    versioned_repository(
+        "publickey_lbfv_aggregation",
+        e3_aggregator::LBFV_AGGREGATION_SCHEMA_VERSION,
+        &[],
+        |r| r.publickey_lbfv_aggregation(&e3()),
+        &mut rows,
+    );
+    repository(
+        "publickey_lbfv_publication",
+        |r| r.publickey_lbfv_publication(&e3()),
+        &mut rows,
+    );
+    repository(
+        "publickey_lbfv_document",
+        |r| r.publickey_lbfv_document(&e3(), &Default::default()),
         &mut rows,
     );
     // e3-fhe
@@ -198,6 +248,11 @@ fn layout_rows() -> Vec<String> {
     repository(
         "slashing_writer_recovery",
         |r| r.slashing_writer_recovery(1),
+        &mut rows,
+    );
+    repository(
+        "slashing_writer_lbfv_recovery",
+        |r| r.slashing_writer_lbfv_recovery(1),
         &mut rows,
     );
     repository(

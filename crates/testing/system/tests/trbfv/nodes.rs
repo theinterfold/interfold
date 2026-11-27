@@ -33,6 +33,9 @@ use std::sync::{Arc, Mutex};
 pub const DKG_FOLD_ATTESTATION_VERIFIER: &str = "0x7969c5eD335650692Bc04293B07F5BF2e7A673C0";
 /// Slashing manager used as the EIP-712 `verifyingContract` of accusation votes.
 const SLASHING_MANAGER: &str = "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707";
+/// Interfold contract the scenarios run against. l-BFV binds it into every proof domain and
+/// rejects the zero address, so it must be a real-looking address even with no chain behind it.
+pub const INTERFOLD: &str = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
 /// Chain every scenario event is observed on.
 pub const CHAIN_ID: u64 = 1;
 /// Every operator's ticket price and balance, so each holds `TICKET_BALANCE / TICKET_PRICE`
@@ -187,7 +190,7 @@ impl NodeFactory {
             rpc_url: "http://localhost:8545".into(),
             rpc_auth: Default::default(),
             contracts: e3_evm_config::ContractAddresses {
-                interfold: address_only(&zero),
+                interfold: address_only(INTERFOLD),
                 ciphernode_registry: address_only(&zero),
                 bonding_registry: address_only(&zero),
                 e3_program: None,

@@ -8,13 +8,14 @@
 //! circuit benchmark tool (`crates/zk/benchmarks`) reads. Nothing here decides whether the run was
 //! correct; [`run_and_check`] already asserted that before returning.
 //!
-//! Environment (set by that tool): `BENCHMARK_MODE` (`insecure`, the default, or `secure`),
+//! Environment (set by that tool): `BENCHMARK_MODE` (`insecure`, the default, `secure`,
+//! `insecure-lbfv` or `secure-16384`),
 //! `BENCHMARK_MULTITHREAD_JOBS` (Rayon jobs at once, default 1), `BENCHMARK_SUMMARY_OUTPUT` and
 //! `BENCHMARK_FOLDED_OUTPUT` (files to write, each optional), and
 //! `BENCHMARK_PUBKEY_FLOW_TIMEOUT_SECS` / `BENCHMARK_PLAINTEXT_FLOW_TIMEOUT_SECS` (longer harness
 //! waits for slow or shared hosts; protocol deadlines stay frozen).
 
-use super::nodes::DKG_FOLD_ATTESTATION_VERIFIER;
+use super::nodes::{CHAIN_ID, DKG_FOLD_ATTESTATION_VERIFIER, INTERFOLD};
 use super::run_and_check;
 use super::runner::Observations;
 use super::scenario::{FlowTimeouts, Preset, Scenario};
@@ -217,6 +218,29 @@ fn folded_artifacts_json(run: &Observations, indent: &str) -> String {
     )
 }
 
+/// What the EVM gas replay (`benchmarkGasFromRaw.ts`) needs to verify an l-BFV (V2 DKG) proof: the
+/// chain and Interfold address the proof domain binds, the E3 id, a zero committee root (the
+/// replay runs against `MockCiphernodeRegistry`) and the committee in ascending address order.
+/// Empty on the trBFV path, whose DKG proof binds none of these.
+fn replay_context_json(run: &Observations) -> String {
+    if !run.config.preset.is_lbfv() {
+        return String::new();
+    }
+    let mut committee = run.key.committee_addresses.clone();
+    committee.sort();
+    let context = serde_json::json!({
+        "chain_id": CHAIN_ID,
+        "e3_id": run.e3_id.e3_id(),
+        "interfold": INTERFOLD,
+        "committee_root": "0",
+        "committee_addresses": committee
+            .iter()
+            .map(|address| address.to_string())
+            .collect::<Vec<_>>(),
+    });
+    format!("  \"replay_context\": {context},\n")
+}
+
 fn summary_json(run: &Observations, mode: &str, report: &Report) -> String {
     let mt = &run.multithread;
     let config = &run.config;
@@ -259,6 +283,8 @@ fn summary_json(run: &Observations, mode: &str, report: &Report) -> String {
         String::new()
     };
 
+    let replay_context_json = replay_context_json(run);
+
     let benchmark_config_json = format!(
         concat!(
             "  \"benchmark_config\": {{\n",
@@ -295,6 +321,7 @@ fn summary_json(run: &Observations, mode: &str, report: &Report) -> String {
             "{benchmark_config_json}",
             "  \"proof_aggregation_enabled\": {},\n",
             "{dkg_fold_verifier_json}",
+            "{replay_context_json}",
             "  \"multithread\": {{\n",
             "    \"rayon_threads\": {},\n",
             "    \"max_simultaneous_rayon_tasks\": {},\n",
@@ -321,5 +348,6 @@ fn summary_json(run: &Observations, mode: &str, report: &Report) -> String {
         folded_section,
         benchmark_config_json = benchmark_config_json,
         dkg_fold_verifier_json = dkg_fold_verifier_json,
+        replay_context_json = replay_context_json,
     )
 }

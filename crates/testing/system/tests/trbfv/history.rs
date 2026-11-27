@@ -250,7 +250,7 @@ impl PublishedKey {
         key: &LbfvPublicKeyAggregated,
         preset: e3_fhe_params::BfvPreset,
     ) -> Result<Self> {
-        let (_, encryption_key) =
+        let (_, encryption_key, _) =
             e3_bfv_client::validate_lbfv_key_envelope(&key.pubkey, key.pk_commitment, preset)?;
         Ok(Self {
             pubkey: key.pubkey.clone(),
